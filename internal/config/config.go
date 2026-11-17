@@ -20,8 +20,11 @@ import (
 // for example "3h" or "15m".
 type Duration time.Duration
 
-// MarshalYAML renders the duration in the shortest human-readable form,
+// String returns the duration in the shortest human-readable form,
 // for example "3h", "1h30m", or "15m".
+func (d Duration) String() string { return shortDuration(time.Duration(d)) }
+
+// MarshalYAML renders the duration in the shortest human-readable form.
 func (d Duration) MarshalYAML() (interface{}, error) {
 	return shortDuration(time.Duration(d)), nil
 }
@@ -242,6 +245,7 @@ func parse(data []byte) (Config, error) {
 }
 
 // Validate checks that the config values are in range.
+// Errors are worded for the user and passed through to the UI.
 func Validate(c Config) error {
 	if c.Port < 0 || c.Port > 65535 {
 		return fmt.Errorf("port: must be between 0 and 65535, got %d", c.Port)
@@ -249,20 +253,19 @@ func Validate(c Config) error {
 	minInterval := Duration(15 * time.Minute)
 	maxInterval := Duration(168 * time.Hour)
 	if c.Collection.Interval < minInterval || c.Collection.Interval > maxInterval {
-		return fmt.Errorf("collection.interval: must be between 15m and 168h (7 days), got %s",
-			shortDuration(time.Duration(c.Collection.Interval)))
+		return fmt.Errorf("The interval must be between 15 minutes and 7 days.")
 	}
 	seen := make(map[string]bool, len(c.Sources))
-	for i, s := range c.Sources {
+	for _, s := range c.Sources {
+		if utf8.RuneCountInString(s.Name) > 100 {
+			return fmt.Errorf("The name is at most 100 characters.")
+		}
 		key, err := SourceKey(s.URL)
 		if err != nil {
-			return fmt.Errorf("sources[%d].url: %w", i, err)
-		}
-		if utf8.RuneCountInString(s.Name) > 100 {
-			return fmt.Errorf("sources[%d].name: at most 100 characters", i)
+			return fmt.Errorf("Enter an http(s) address.")
 		}
 		if seen[key] {
-			return fmt.Errorf("sources[%d].url: duplicate source (same key as an earlier source)", i)
+			return fmt.Errorf("This source is already in the list.")
 		}
 		seen[key] = true
 	}

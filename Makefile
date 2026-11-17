@@ -15,7 +15,7 @@ dev: build
 	@if [ ! -d .dev/data ] && [ -n "$$SIFTY_V1_DIR" ]; then \
 	  $(BINARY) import-v1 --from "$$SIFTY_V1_DIR" --data-dir .dev/data; \
 	fi
-	$(BINARY) serve --offline --data-dir .dev/data --port 7374 & \
+	$(BINARY) serve --offline $$([ -n "$$SIFTY_REPLAY_DIR" ] && echo "--replay $$SIFTY_REPLAY_DIR") --data-dir .dev/data --port 7374 & \
 	sifty_pid=$$!; \
 	trap "kill $$sifty_pid 2>/dev/null" INT TERM EXIT; \
 	npm --prefix web run dev; \

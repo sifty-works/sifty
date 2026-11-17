@@ -62,10 +62,11 @@ func cmdConfig(args []string, stdout, stderr io.Writer) error {
 // port == -1 means --port was not given (use the settings value).
 // port == 0 means --port 0 was given explicitly (take a free port).
 type serveFlags struct {
-	dataDir string
-	port    int // -1 when not set
-	offline bool
-	debug   bool
+	dataDir   string
+	port      int // -1 when not set
+	offline   bool
+	debug     bool
+	replayDir string // non-empty when --replay is given
 }
 
 // parseServeFlags parses serve command flags and returns them.
@@ -79,6 +80,7 @@ func parseServeFlags(args []string) (serveFlags, error) {
 	fs.IntVar(&portVal, "port", 0, "listen port (0 = take a free port; omit = use settings or default 7373)")
 	fs.BoolVar(&f.offline, "offline", false, "disable all network requests and model calls")
 	fs.BoolVar(&f.debug, "debug", false, "enable debug mode")
+	fs.StringVar(&f.replayDir, "replay", "", "answer requests from recorded responses in this folder")
 
 	if err := fs.Parse(args); err != nil {
 		return f, err

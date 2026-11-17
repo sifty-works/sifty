@@ -13,6 +13,15 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// isAppErr reports whether err is already a typed application error.
+func isAppErr(err error) bool {
+	switch err.(type) {
+	case apperr.Invalid, apperr.NotFound, apperr.Conflict, apperr.Busy:
+		return true
+	}
+	return false
+}
+
 // Update applies fn to a copy of the current configuration, validates the
 // result, and writes only the changed keys back to the settings file while
 // preserving comments and the order of untouched keys. A backup is written
@@ -33,6 +42,9 @@ func (s *Store) Update(fn func(c *Config) error) error {
 		copy(newCfg.Sources, s.cfg.Sources)
 	}
 	if err := fn(&newCfg); err != nil {
+		if isAppErr(err) {
+			return err
+		}
 		return apperr.Invalid{Message: err.Error()}
 	}
 

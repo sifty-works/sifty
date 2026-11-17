@@ -35,6 +35,26 @@ var (
 	srcFeed       Source = &feedSource{}
 )
 
+// Host returns the API host used when requesting u's board.
+// Greenhouse, Lever and Ashby boards make requests to a shared API host that
+// differs from the board's URL host. Every other source uses its own host.
+func Host(u *url.URL) string {
+	switch strings.ToLower(u.Host) {
+	case "boards.greenhouse.io", "job-boards.greenhouse.io":
+		return "boards-api.greenhouse.io"
+	case "boards.eu.greenhouse.io", "job-boards.eu.greenhouse.io":
+		return "boards-api.eu.greenhouse.io"
+	case "jobs.lever.co":
+		return "api.lever.co"
+	case "jobs.eu.lever.co":
+		return "api.eu.lever.co"
+	case "jobs.ashbyhq.com":
+		return "api.ashbyhq.com"
+	default:
+		return strings.ToLower(u.Host)
+	}
+}
+
 // For returns the first Source that matches u, or the feed source for any other address.
 func For(u *url.URL) Source {
 	for _, s := range []Source{srcGreenhouse, srcLever, srcAshby} {

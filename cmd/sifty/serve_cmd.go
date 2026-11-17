@@ -12,9 +12,14 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/sifty-works/sifty/internal/catalog"
+	"github.com/sifty-works/sifty/internal/collect"
 	"github.com/sifty-works/sifty/internal/config"
 	"github.com/sifty-works/sifty/internal/db"
+	"github.com/sifty-works/sifty/internal/fetch"
+	"github.com/sifty-works/sifty/internal/fetch/fetchtest"
 	"github.com/sifty-works/sifty/internal/inbox"
+	"github.com/sifty-works/sifty/internal/runner"
 	"github.com/sifty-works/sifty/internal/server"
 	"github.com/sifty-works/sifty/web"
 )
@@ -91,7 +96,25 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	}
 	defer database.Close()
 
-	// 8. Listen.
+	// 8. Build the fetcher: replay dir overrides the real client.
+	var fetcher fetch.Fetcher
+	if flags.replayDir != "" {
+		fetcher = newReplayFetcher(fetchtest.NewDir(flags.replayDir), logger)
+	} else {
+		fetcher = fetch.New(fetch.Options{
+			BlockStore: fetch.NewMemBlockStore(),
+			Offline:    offline,
+		})
+	}
+
+	// 9. Build the catalogue, runner and collector.
+	cat := catalog.New(database, time.Now)
+	r := runner.New(database, map[string]int{"browser": 1, "net": 4, "cpu": 1}, time.Now, logger)
+	blocked := offline && flags.replayDir == ""
+	col := collect.New(store, cat, r, fetcher, blocked, nil, logger)
+	col.Register()
+
+	// 10. Listen.
 	addr := fmt.Sprintf("127.0.0.1:%d", cfg.Port)
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
@@ -106,8 +129,10 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		Debug:   cfg.Debug,
 		Logger:  logger,
 		Static:  web.StaticFS(),
+		Status:  col.StatusFunc(),
 	}, func(mux *http.ServeMux) {
 		mux.Handle("GET /api/vacancies", inbox.Handler(database, time.Now, logger))
+		col.RegisterRoutes(mux)
 	})
 
 	srv := &http.Server{
@@ -121,6 +146,12 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	logger.Info(listenMsg)
 	fmt.Fprintln(stdout, listenMsg)
 
+	// Start runner and ticker; both stop when bgCtx is cancelled on shutdown.
+	bgCtx, bgCancel := context.WithCancel(context.Background())
+	defer bgCancel()
+	go r.Start(bgCtx) //nolint:errcheck
+	go col.Ticker(bgCtx)
+
 	serveErr := make(chan error, 1)
 	go func() {
 		serveErr <- srv.Serve(ln)
@@ -128,6 +159,7 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 
 	select {
 	case <-ctx.Done():
+		bgCancel()
 		shutCtx, shutCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer shutCancel()
 		return srv.Shutdown(shutCtx)
@@ -137,6 +169,26 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		}
 		return nil
 	}
+}
+
+// replayFetcher wraps fetchtest.Dir and logs addresses not in the index.
+type replayFetcher struct {
+	dir *fetchtest.Dir
+	log *slog.Logger
+}
+
+func newReplayFetcher(dir *fetchtest.Dir, log *slog.Logger) *replayFetcher {
+	return &replayFetcher{dir: dir, log: log}
+}
+
+func (r *replayFetcher) Get(ctx context.Context, u string, opt fetch.Opt) (fetch.Response, error) {
+	resp, err := r.dir.Get(ctx, u, opt)
+	if err != nil && len(r.dir.Unknown()) > 0 {
+		// fetchtest.Dir only appends to Unknown when u is not in the index,
+		// so a new entry means this specific request was not recorded.
+		r.log.Info("replay: not recorded " + u)
+	}
+	return resp, err
 }
 
 // acquireLock opens (or creates) the lock file and acquires an exclusive

@@ -175,9 +175,9 @@ type Response struct { Text string; InTokens, OutTokens int }
 ## Build and commands
 
 - `make build`: frontend build, then `go build` with the frontend embedded; one binary. The browser script for form reading is embedded and written to the user's cache on first use; form reading needs Node.js and Playwright on the machine. DOCX text is read in Go.
-- `make dev`: the frontend dev server proxying to `sifty serve --offline` on a copy of the data. `--offline` forbids every network request and model call. Until switch-over, the copy is a fresh `import-v1` of a copy of the old database.
+- `make dev`: the frontend dev server proxying to `sifty serve --offline` on a copy of the data. `--offline` forbids every network request and model call. `SIFTY_REPLAY_DIR=<folder>` adds `--replay <folder>`, which serves requests from recorded responses in that folder instead of making real HTTP calls; unrecorded addresses are logged. Until switch-over, the copy is a fresh `import-v1` of a copy of the old database.
 - `make check`, `make budget`, `make release`, `make rollback`: see `PROCESS.md`.
-- Commands: `serve`, `backup` (database copy and the user's files in one archive), `import-v1`, `config defaults`, `version`.
+- Commands: `serve` (`--offline`, `--replay <folder>`, `--port`, `--debug`, `--data-dir`), `backup` (database copy and the user's files in one archive), `import-v1`, `config defaults`, `version`.
 
 ## Frontend
 
@@ -190,7 +190,7 @@ type Response struct { Text string; InTokens, OutTokens int }
 |---|---|
 | Lists and vacancies | `GET /api/vacancies?profile&stage&q&sort&filters` (rows of about 350 bytes, counts per stage and per filter value); `GET /api/vacancies/{id}?profile`; `POST /api/vacancies/{id}/decision {from,to,reason?,confirmed?}`; `POST /api/vacancies/{id}/seen`; `DELETE /api/vacancies/{id}`; `POST /api/vacancies/{id}/refresh` |
 | Exclusions and industries | `GET/POST/DELETE /api/exclusions`, `GET /api/exclusions/preview`; `GET/PUT /api/industries` |
-| Collection | `GET/POST/DELETE /api/sources`; `POST /api/collect {force}` |
+| Collection | `GET/POST/PATCH/DELETE /api/sources`; `PUT /api/sources/schedule`; `POST /api/collect {force}` |
 | Profiles | `GET/PATCH /api/me`, `PUT/DELETE /api/me/photo`; `GET/POST/PATCH/DELETE /api/profiles`, `PUT /api/active-profile`; `POST /api/me/skills` (+ and − from a vacancy) |
 | Documents | `POST/DELETE /api/documents`, `POST /api/documents/{id}/analyze`, `POST /api/documents/{id}/refresh`; `POST /api/proposals/{id}/accept`, `/reject` |
 | Questions & Answers | `GET/POST/PATCH/DELETE /api/qa` |

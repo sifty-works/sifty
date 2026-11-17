@@ -126,8 +126,8 @@ func TestInvalidConfigsRejected(t *testing.T) {
 	cases := []struct{ yaml, errContains string }{
 		{"unknown_key: true\n", "unknown_key"},
 		{"port: 99999\n", "port"},
-		{"collection:\n  interval: 10m\n", "collection.interval"},
-		{"collection:\n  interval: 200h\n", "collection.interval"},
+		{"collection:\n  interval: 10m\n", "The interval must be between 15 minutes and 7 days."},
+		{"collection:\n  interval: 200h\n", "The interval must be between 15 minutes and 7 days."},
 		{"collection:\n  unknown: true\n", "collection.unknown"},
 	}
 	for _, tc := range cases {
@@ -186,8 +186,8 @@ func TestSourceInvalidURL(t *testing.T) {
 			t.Errorf("invalid url %q should be rejected", bad)
 			continue
 		}
-		if !strings.Contains(err.Error(), "sources[0].url") {
-			t.Errorf("error should name sources[0].url for %q: %v", bad, err)
+		if !strings.Contains(err.Error(), "Enter an http(s) address.") {
+			t.Errorf("error should say %q for %q: %v", "Enter an http(s) address.", bad, err)
 		}
 	}
 }
@@ -206,8 +206,8 @@ func TestSourceNameLimitCountsCharactersNotBytes(t *testing.T) {
 	_, err := loadContent(t, yaml101)
 	if err == nil {
 		t.Error("101-character non-ASCII name should be rejected")
-	} else if !strings.Contains(err.Error(), "sources[0].name") {
-		t.Errorf("error should name sources[0].name: %v", err)
+	} else if !strings.Contains(err.Error(), "The name is at most 100 characters.") {
+		t.Errorf("error should say %q: %v", "The name is at most 100 characters.", err)
 	}
 }
 
@@ -221,8 +221,8 @@ func TestDuplicateSourceKey(t *testing.T) {
 	if err == nil {
 		t.Fatal("duplicate source key should be rejected")
 	}
-	if !strings.Contains(err.Error(), "sources[1].url") {
-		t.Errorf("error should name sources[1].url: %v", err)
+	if !strings.Contains(err.Error(), "This source is already in the list.") {
+		t.Errorf("error should say %q: %v", "This source is already in the list.", err)
 	}
 }
 

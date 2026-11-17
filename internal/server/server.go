@@ -38,7 +38,8 @@ type Options struct {
 	Offline bool
 	Debug   bool
 	Logger  *slog.Logger
-	Static  fs.FS // web/dist subtree; nil when the frontend was not built
+	Static  fs.FS                 // web/dist subtree; nil when the frontend was not built
+	Status  func() map[string]any // extra keys merged into GET /api/status; nil is allowed
 }
 
 // New builds and returns the HTTP handler for the application.
@@ -46,13 +47,19 @@ type Options struct {
 func New(opts Options, routes func(*http.ServeMux)) http.Handler {
 	mux := http.NewServeMux()
 
-	// Status endpoint.
+	// Status endpoint: fixed keys plus any keys from the Status function.
 	mux.HandleFunc("GET /api/status", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]any{
+		out := map[string]any{
 			"version": opts.Version,
 			"offline": opts.Offline,
 			"debug":   opts.Debug,
-		})
+		}
+		if opts.Status != nil {
+			for k, v := range opts.Status() {
+				out[k] = v
+			}
+		}
+		writeJSON(w, http.StatusOK, out)
 	})
 
 	// Register capability routes.
