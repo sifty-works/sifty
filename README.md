@@ -19,6 +19,7 @@ Sifty is being rewritten from scratch. The documents come first and the code fol
   - `settings-and-data.md`: settings, model providers, where data lives, import of the previous version.
 - `docs/ARCHITECTURE.md` describes how the code, the data and the background work are arranged, and the size and cost budgets the code must stay within.
 - `docs/PROCESS.md` describes how the repository is developed.
+- `docs/ROADMAP.md` gives the order in which the application is built.
 
 ## License
 
