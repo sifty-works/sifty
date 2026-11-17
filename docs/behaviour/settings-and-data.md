@@ -1,16 +1,29 @@
 # Settings, data and models
 
-What the user gets: the application starts on an empty data folder with no setup, keeps everything in that one folder on the user's machine, sends data only to job sites, web search and the model providers the user configured, and lets the user choose a provider for each kind of model work. Nothing paid is used in bulk without the user's explicit permission.
+What the user gets: the application is one program that starts on an empty data folder with no setup, keeps everything it stores in that one folder on the user's machine, contacts only the sites and services listed below, and lets the user choose a provider for each kind of model work. Nothing paid is used in bulk without the user's explicit permission.
 
 ## Where data lives
 
-- All data lives in one folder, chosen by `--data-dir`, then the `SIFTY_DATA_DIR` environment variable, then `./data`. The path is made absolute. The folder is created with access for its owner only. Nothing is written outside it.
-- The server listens on `127.0.0.1` only. It checks the Host and Origin of every request, requires JSON for every request that changes something, and limits a request body to 1 MB, except uploads of profile documents.
-- **What leaves the machine:** requests to job sites, requests to web search providers, and prompts to the model providers the user configured. There is no telemetry.
+- Everything the application stores lives in one folder, chosen by `--data-dir`, then the `SIFTY_DATA_DIR` environment variable, then `./data`. The path is made absolute. The folder is created with access for the user who runs the application only. The browser that reads application forms uses its own installation outside this folder.
+- Only a browser on this machine can use the application; other web pages cannot make it act. A second copy started on the same data folder refuses to start.
+- **What leaves the machine:**
+  - requests to the job sites of the sources, and to the pages of vacancies;
+  - requests to public applicant tracking boards and to employers' sites, including application forms read by the browser;
+  - requests to the web search provider the user configured;
+  - requests to pages the user adds as link documents;
+  - prompts to the model providers the user configured.
+- There is no telemetry.
 
 ## First start
 
-The application starts on an empty data folder without copying any template. All settings live in one file in the data folder, and every key in it is optional; a missing key takes its default. The first run shows empty lists and a hint to add sources.
+The application is one program to run; reading application forms additionally needs Node.js and Playwright on the machine (see `application.md`). It starts on an empty data folder without copying any template. Every key of the settings file is optional; a missing key takes its default. The first run shows empty lists and a hint to add sources, and model work shows "Configure a provider" until one is set.
+
+## Where settings live
+
+- **The settings file**, one file in the data folder, holds what the user configures: sources, the collection interval and switch, providers and the provider of each kind of model work, "Allow paid bulk work", the daily limit of background model calls, the web search provider, weights and rates.
+- **The database** holds what the application remembers about its use: the active profile and the switch that pauses background model work.
+- **Vocabularies** the user edits, such as industries, are kept as separate files in the data folder.
+- Forms in Settings edit all of these. Advanced shows the settings file only.
 
 ## Settings
 
@@ -18,21 +31,25 @@ The application starts on an empty data folder without copying any template. All
 - **Exclusions:** the one list of exclusions (see `inbox.md`).
 - **Industries:** the vocabulary of industries and their keywords (see `collection.md`).
 - **Models:**
-  - a provider for each kind of model work: **Reading** (requirements of vacancies and facts of profile documents), **Shortlist check**, and **Preparation** (form labels, drafts, cover letters, pasted forms);
+  - the providers, each marked local, free or paid;
+  - a provider for each kind of model work: **Reading** (facts and requirements of vacancies, and facts of profile documents), **Shortlist check**, and **Preparation** (form labels, drafts, cover letters, pasted forms);
   - the state of each provider and a "Check" button that sends a fixed test prompt with no user data;
   - "Allow paid bulk work", off by default;
   - a switch that pauses background model work, and a daily limit of background model calls.
+- **Web search:** the provider used to find employers' pages (Tavily, Brave, DuckDuckGo, or none), with its key taken from the environment or the secrets file. With none, the employer search uses only applicant tracking boards.
 - **Background work:** what is running, what is waiting and what failed, with the reason (see `application.md`).
-- **Advanced:** the settings file in a text editor, next to the forms. Saving checks the file first and keeps a backup; the last ten backups are kept, and the editor names the folder where they are.
+- **Advanced:** the settings file in a text editor, next to the forms. Saving checks the file first and keeps a backup in the data folder; the last ten backups are kept, and the editor names the folder where they are. A change made in a form keeps the comments of the settings file.
 
 A change applies at once without a restart, except a change of the port. A change that affects results (weights, vocabularies) starts a background recomputation and the answer returns at once.
 
+**Debug mode**, started with `--debug` or `debug: true` in the settings file, shows the diagnostic panels of application preparation (see `application.md`).
+
 ## Model providers
 
-- The first version supports four kinds of provider: **Ollama**, **OpenAI-compatible** (local or remote, with an API key), **Claude CLI** and **opencode CLI**.
+- The first version supports four kinds of provider: **Ollama**, **OpenAI-compatible** (local or remote, with an API key), **Claude CLI** and **opencode CLI**. Anthropic models are reached through the Claude CLI or an OpenAI-compatible endpoint.
 - Each kind of model work uses its own provider. There is no silent fallback to another provider, and no fallback to a paid one.
 - Data leaves the machine only to the providers the user configured.
-- Bulk work (reading vacancy texts) refuses a provider that is neither local nor marked free, unless "Allow paid bulk work" is on.
+- Bulk work (reading vacancy texts) refuses a provider marked paid, unless "Allow paid bulk work" is on.
 - A user's action goes ahead of background model work. One model serves one call at a time.
 - **API keys** come only from the environment or from a secrets file in the data folder, read at start without overriding variables already set. Saving settings that contain a key in plain text is refused.
 - **Command-line providers** run with a reduced environment and with tools, extensions and project settings turned off. An answer in which the model tried to call a tool is rejected.
@@ -42,34 +59,40 @@ A change applies at once without a restart, except a change of the port. A chang
 ## Keeping data
 
 - Vacancies are never deleted automatically. Dismissed vacancies stay, so that collection does not bring them back as new. A vacancy is removed only by "Delete role…" (see `inbox.md`), which leaves a mark of its addresses so collection keeps it away.
-- **Text retention.** The text of a vacancy that is dismissed or was never opened, and that its source has not shown for 60 days, is dropped together with its full-text index entry. Its row stays: title, company, addresses, dates and decision. Search no longer finds it by its text. When a source shows it again, its text is fetched again and its decision stays. Vacancies in Shortlist or Applied keep their text.
+- **Text retention.** Once a day, the text of a vacancy is removed when the vacancy is in no profile's Shortlist or Applied, was never opened or is dismissed in every profile that decided it, and has not been seen at any source for 60 days. The model's reading of that text goes with it. The row stays: title, company, addresses, dates, industries and decisions. The vacancy page says "Text removed after 60 days unseen; it returns if the source shows the role again", and search finds it only by its title, company and tags. When a source shows it again, its text is fetched again and its decisions stay.
 - A full-text index of vacancy texts is kept for search.
 - Of My data and of each profile only the latest version is kept; there is no history of edits.
 - The application is for one user; it keeps no user accounts.
-- Changes of the database layout are applied automatically at start, inside one transaction, after the application has copied the database next to it. An older version of the application refuses to open a database of a newer layout.
+- Changes of the database layout are applied automatically at start, inside one transaction, after the application has copied the database into the backups folder of the data folder; the last five copies are kept. An older version of the application refuses to open a database of a newer layout.
 
 ## Errors
 
-- An error is shown to the user in words, with what to do when there is something to do. An internal failure shows a short message and is written to the log with its details; it never shows a stack or an internal value.
+- An error is shown to the user in words, with what to do when there is something to do. An internal failure shows a short message with a reference to the log and is written to the log with its details; it never shows a stack or an internal value.
 - An unknown address of the server's interface answers "Refresh the page…".
 - A request that takes 500 ms or more, other than a model call, is written to the log.
 
 ## Not carried over
 
-- Copying templates by hand before the first start, and the four configuration files that had to exist.
+- Copying templates by hand before the first start, the four configuration files that had to exist, and the separate frontend and worker folders that had to sit next to the program.
 - The candidate configuration file and the Settings › Candidate context screen (see `profiles.md`).
 - The assessment queue page with its switch and its table (see `assessment.md`); the Background work page replaces it.
-- The "Extraction" stage label that promised a fallback no code used, the hidden matching stage, and runtime keys that were read and never applied.
+- The "Extraction" stage label that promised a fallback no code used, the hidden matching stage, and settings that were read and never applied.
 - The order of background work following the sort.
 - Prompt copies in the configuration folder that nothing read.
 - Loopback-only HTTP providers; remote providers with an API key are allowed.
 - A lock on the local model shared between several application processes on one machine; one process uses one model.
 - Revision histories of My data, profiles and drafts.
+- Answers and corrections kept as Markdown files in the data folder; they live in the database.
 - Unlimited configuration backups.
 - Raw error values and panic texts shown in the interface.
 
 ## Data from the old application
 
-The import reads a copy of the old database, opened read-only, and writes into an empty data folder; it refuses an unknown database version and makes no network request and no model call. It carries over everything the user made or paid for: vacancies with their ids, sightings, aliases, removal marks, exclusions, profiles, documents and their files, the photo, Questions & Answers, learned label phrasings, decisions, applications, drafts, requirements already read by a model, and the secrets file. The old configuration files become one settings file holding only the values that differ from the defaults, and the import report lists them. Full-text index, sections and Fits you are rebuilt. Page originals, snapshots, old candidate contexts, old detailed assessments, intermediate result tables, run journals (except the time of the last successful collection) and locks are dropped. The import report counts every kind of record before, after and dropped, with the reason, and gives a SHA-256 of every copied file.
+The import reads a copy of the old database, opened read-only, and writes into an empty data folder; it refuses an unknown database version and makes no network request and no model call. It carries over what the user made and the model readings still in use: vacancies with their ids, structured fields, sightings, aliases and removal marks, with industries assigned at import; exclusions; My data and profiles; the active profile; documents and their files; the photo; Questions & Answers; learned label phrasings; decisions, applications and read marks; drafts; requirements and facts read by a model; corrections written on vacancies, which become Confirmed by you; and the secrets file. The old answers folder, empty in use, is not imported. The old configuration files become one settings file holding only the values that differ from the defaults, and the import report lists them. The full-text index and Fits you are rebuilt. Page originals, snapshots, old candidate contexts, old detailed assessments, model matching results, intermediate result tables, run journals (except the start time of the last collection run, which keeps the interval) and locks are dropped. The import report counts every kind of record before, after and dropped, with the reason, and gives a SHA-256 of every copied file.
 
-The old application keeps running unchanged until switch-over. Until then the new one runs daily on a fresh copy, in its own data folder and on another port, only to compare: per profile the list ids, order and stages; twenty saved searches; Fits you on every vacancy, with the expected differences listed beforehand; and a hundred vacancy pages. Switch-over is: stop the old application, run the final import, check it, start the new one on the old port. The old data folder stays untouched for a rollback; there is no double writing.
+**Comparison before switch-over.** The old application keeps running unchanged, apart from security fixes, until switch-over. Until then the new one runs daily on a fresh copy, in its own data folder and on another port, with background work paused, only to compare. The comparison runs twice:
+
+1. With the weights of the new criteria (onsite work authorization and requirements) set to zero and the industries filter off: per profile, the list ids, order and stages; twenty saved searches; Fits you of every vacancy; and a hundred vacancy pages. Every difference is explained.
+2. With the new settings: the same comparison against a list of expected differences written beforehand (see `inbox.md`).
+
+Switch-over is: stop the old application, run the final import, check it, start the new one on the old port. The old data folder stays untouched for a rollback; there is no double writing, so work done in the new application after switch-over is lost on a rollback.
