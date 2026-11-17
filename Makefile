@@ -6,24 +6,17 @@ GO_BUILD := go build -ldflags "$(LDFLAGS)"
 .PHONY: build dev check budget clean
 
 build:
-ifeq ($(wildcard web/package.json),)
-else
 	@if [ ! -d web/node_modules ]; then npm --prefix web ci; fi
 	npm --prefix web run build
-endif
 	mkdir -p bin
 	$(GO_BUILD) -o $(BINARY) ./cmd/sifty
 
 dev: build
-ifeq ($(wildcard web/package.json),)
-	$(BINARY) serve --offline --data-dir .dev/data --port 7374
-else
 	$(BINARY) serve --offline --data-dir .dev/data --port 7374 & \
 	sifty_pid=$$!; \
 	trap "kill $$sifty_pid 2>/dev/null" INT TERM EXIT; \
 	npm --prefix web run dev; \
 	kill $$sifty_pid 2>/dev/null; true
-endif
 
 check: build
 	@echo "--- gofmt ---"
@@ -35,11 +28,8 @@ check: build
 	go vet ./...
 	@echo "--- go test ---"
 	go test ./...
-ifeq ($(wildcard web/package.json),)
-else
 	@echo "--- npm check ---"
 	npm --prefix web run check
-endif
 
 budget:
 	@bash scripts/budget.sh
