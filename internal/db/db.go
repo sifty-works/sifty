@@ -19,11 +19,23 @@ import (
 	_ "modernc.org/sqlite" // register the "sqlite" driver
 )
 
-// Migrations is the embedded migration folder shipped with the binary.
-// It is empty in this card; the mechanism is tested with fixture migrations.
+// embedded holds the raw embed.FS for the migrations folder.
 //
 //go:embed all:migrations
-var Migrations embed.FS
+var embedded embed.FS
+
+// Migrations is the embedded migration folder shipped with the binary.
+// Files are served at the top level (e.g. "001_catalog.sql"), not under a
+// "migrations/" prefix, so callers pass db.Migrations directly to db.Open.
+var Migrations fs.FS
+
+func init() {
+	sub, err := fs.Sub(embedded, "migrations")
+	if err != nil {
+		panic("db: cannot sub migrations FS: " + err.Error())
+	}
+	Migrations = sub
+}
 
 // DB wraps a *sql.DB with the applied migration version.
 type DB struct {
@@ -47,7 +59,9 @@ func Open(path string, migrations fs.FS) (*DB, error) {
 		return nil, fmt.Errorf("db: listing migrations: %w", err)
 	}
 
-	dsn := path + "?_journal_mode=WAL&_foreign_keys=on&_busy_timeout=5000"
+	// modernc.org/sqlite reads only _pragma parameters; the previous
+	// _journal_mode / _foreign_keys / _busy_timeout forms had no effect.
+	dsn := path + "?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)"
 	sqldb, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("db: open %s: %w", path, err)

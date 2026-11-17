@@ -198,6 +198,29 @@ func TestFailingMigrationLeavesVersionUnchanged(t *testing.T) {
 	}
 }
 
+// TestMigrationsFS_VacancyTableExists opens a fresh database using the
+// embedded db.Migrations FS and checks that the vacancy table exists and
+// that user_version is 1.
+func TestMigrationsFS_VacancyTableExists(t *testing.T) {
+	dir := t.TempDir()
+	d, err := db.Open(filepath.Join(dir, "test.db"), db.Migrations)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer d.Close()
+
+	if d.Version != 1 {
+		t.Errorf("user_version: got %d, want 1", d.Version)
+	}
+
+	var n int
+	if err := d.QueryRow(
+		`SELECT count(*) FROM sqlite_master WHERE type='table' AND name='vacancy'`,
+	).Scan(&n); err != nil || n == 0 {
+		t.Error("vacancy table not found after applying db.Migrations")
+	}
+}
+
 // makeMigrations generates n SQL migration files numbered 001..n.
 func makeMigrations(n int) map[string]string {
 	out := make(map[string]string, n)
