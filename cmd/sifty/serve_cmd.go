@@ -103,8 +103,8 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		fetcher = newReplayFetcher(fetchtest.NewDir(flags.replayDir), logger)
 	} else {
 		fetcher = fetch.New(fetch.Options{
-			BlockStore: fetch.NewMemBlockStore(),
-			Offline:    offline,
+			Blocks:  fetch.NewDomainBlocks(database),
+			Offline: offline,
 		})
 	}
 

@@ -4,6 +4,7 @@ Notable changes of Sifty, newest first. Versions follow `MAJOR.MINOR.PATCH`.
 
 ## Unreleased
 
+- A site that blocked Sifty is left alone for 24 hours even across a restart.
 - Each source on the Sources page shows its last success with vacancies seen and new, or the error of its last run in words, or "No vacancies in 30 days"; sources failing three runs in a row are marked, and the header shows "N sources need attention".
 - A role that moves from one applicant tracking system to another (same company and title) stays one vacancy; a board's name taken from its address no longer replaces a known company name.
 - Vacancy texts no longer run words together where the source wrapped a space in bold or italics, and keep no empty bold or italic marks.

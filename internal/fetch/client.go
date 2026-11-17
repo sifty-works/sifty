@@ -29,8 +29,8 @@ const (
 
 // Options configure a fetcher built by New.
 type Options struct {
-	// BlockStore remembers blocked domains (required).
-	BlockStore BlockStore
+	// Blocks is the persistent domain block store (required).
+	Blocks *DomainBlocks
 	// Clock returns the current time. Defaults to time.Now.
 	Clock func() time.Time
 	// Sleep pauses for d, honouring ctx. Defaults to a real sleep.
@@ -55,7 +55,7 @@ type domainState struct {
 
 // client implements Fetcher.
 type client struct {
-	blocks  BlockStore
+	blocks  *DomainBlocks
 	clock   func() time.Time
 	sleep   func(ctx context.Context, d time.Duration) error
 	rng     *rand.Rand
@@ -88,7 +88,7 @@ func New(opt Options) Fetcher {
 	}
 
 	c := &client{
-		blocks:  opt.BlockStore,
+		blocks:  opt.Blocks,
 		clock:   opt.Clock,
 		sleep:   opt.Sleep,
 		rng:     opt.Rand,

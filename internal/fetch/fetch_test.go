@@ -8,11 +8,13 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/sifty-works/sifty/internal/db"
 	"github.com/sifty-works/sifty/internal/fetch"
 )
 
@@ -38,25 +40,36 @@ func (s *sleepRecorder) Sleep(_ context.Context, d time.Duration) error {
 	return nil
 }
 
+// testBlocks opens a fresh fixture database and returns a DomainBlocks backed by it.
+func testBlocks(t *testing.T) *fetch.DomainBlocks {
+	t.Helper()
+	database, err := db.Open(filepath.Join(t.TempDir(), "test.db"), db.Migrations)
+	if err != nil {
+		t.Fatalf("open fixture database: %v", err)
+	}
+	t.Cleanup(func() { database.Close() })
+	return fetch.NewDomainBlocks(database)
+}
+
 // newTestFetcher builds a client wired with a loopback policy, fake clock,
 // and sleep recorder. The httptest server address is not needed here since
 // we pass the URL explicitly.
-func newTestFetcher(bs fetch.BlockStore, clk *fakeClock, sl *sleepRecorder) fetch.Fetcher {
+func newTestFetcher(bs *fetch.DomainBlocks, clk *fakeClock, sl *sleepRecorder) fetch.Fetcher {
 	return fetch.New(fetch.Options{
-		BlockStore: bs,
-		Clock:      clk.Now,
-		Sleep:      sl.Sleep,
-		Rand:       rand.New(rand.NewSource(0)), //nolint:gosec
-		Policy:     fetch.AllowLoopback,
-		Timeout:    5 * time.Second,
+		Blocks:  bs,
+		Clock:   clk.Now,
+		Sleep:   sl.Sleep,
+		Rand:    rand.New(rand.NewSource(0)), //nolint:gosec
+		Policy:  fetch.AllowLoopback,
+		Timeout: 5 * time.Second,
 	})
 }
 
 // newTestFetcherWithPolicy builds a client with a custom policy.
-func newTestFetcherWithPolicy(policy fetch.AddressPolicy) fetch.Fetcher {
+func newTestFetcherWithPolicy(t *testing.T, policy fetch.AddressPolicy) fetch.Fetcher {
 	return fetch.New(fetch.Options{
-		BlockStore: fetch.NewMemBlockStore(),
-		Clock:      time.Now,
+		Blocks: testBlocks(t),
+		Clock:  time.Now,
 		Sleep: func(_ context.Context, _ time.Duration) error {
 			return nil
 		},
@@ -100,7 +113,7 @@ func TestPublicOnly(t *testing.T) {
 // --- URL validation ---
 
 func TestGet_credentials_refused(t *testing.T) {
-	f := newTestFetcherWithPolicy(fetch.AllowLoopback)
+	f := newTestFetcherWithPolicy(t, fetch.AllowLoopback)
 	_, err := f.Get(context.Background(), "http://user:pass@example.com/", fetch.Opt{})
 	if !errors.Is(err, fetch.ErrRefused) {
 		t.Fatalf("credentials in URL: got %v, want ErrRefused", err)
@@ -108,7 +121,7 @@ func TestGet_credentials_refused(t *testing.T) {
 }
 
 func TestGet_unsupported_scheme_refused(t *testing.T) {
-	f := newTestFetcherWithPolicy(fetch.AllowLoopback)
+	f := newTestFetcherWithPolicy(t, fetch.AllowLoopback)
 	_, err := f.Get(context.Background(), "ftp://example.com/", fetch.Opt{})
 	if !errors.Is(err, fetch.ErrRefused) {
 		t.Fatalf("ftp scheme: got %v, want ErrRefused", err)
@@ -124,7 +137,7 @@ func TestGet_loopback_refused_by_policy(t *testing.T) {
 	defer srv.Close()
 
 	// Use PublicOnly policy: dialer control should refuse loopback.
-	f := newTestFetcherWithPolicy(fetch.PublicOnly)
+	f := newTestFetcherWithPolicy(t, fetch.PublicOnly)
 	_, err := f.Get(context.Background(), srv.URL+"/", fetch.Opt{})
 	if !errors.Is(err, fetch.ErrRefused) {
 		t.Fatalf("loopback with PublicOnly: got %v, want ErrRefused", err)
@@ -141,7 +154,7 @@ func TestGet_redirect_to_private_refused(t *testing.T) {
 	defer srv.Close()
 
 	sl := &sleepRecorder{}
-	f := newTestFetcher(fetch.NewMemBlockStore(), newFakeClock(), sl)
+	f := newTestFetcher(testBlocks(t), newFakeClock(), sl)
 	_, err := f.Get(context.Background(), srv.URL+"/", fetch.Opt{})
 	if !errors.Is(err, fetch.ErrRefused) {
 		t.Fatalf("redirect to private: got %v, want ErrRefused", err)
@@ -155,7 +168,7 @@ func TestGet_200_is_content(t *testing.T) {
 	defer srv.Close()
 
 	sl := &sleepRecorder{}
-	f := newTestFetcher(fetch.NewMemBlockStore(), newFakeClock(), sl)
+	f := newTestFetcher(testBlocks(t), newFakeClock(), sl)
 	resp, err := f.Get(context.Background(), srv.URL+"/", fetch.Opt{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -172,14 +185,14 @@ func TestGet_403_is_blocked(t *testing.T) {
 	defer srv.Close()
 
 	sl := &sleepRecorder{}
-	f := newTestFetcher(fetch.NewMemBlockStore(), newFakeClock(), sl)
+	f := newTestFetcher(testBlocks(t), newFakeClock(), sl)
 	_, err := f.Get(context.Background(), srv.URL+"/", fetch.Opt{})
 	if !errors.Is(err, fetch.ErrBlocked) {
 		t.Fatalf("403: got %v, want ErrBlocked", err)
 	}
 }
 
-func TestGet_403_blocks_domain_for_24h(t *testing.T) {
+func TestGet_block_survives_restart_and_expires(t *testing.T) {
 	var calls atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
@@ -187,24 +200,23 @@ func TestGet_403_blocks_domain_for_24h(t *testing.T) {
 	}))
 	defer srv.Close()
 	clk := newFakeClock()
-	f := newTestFetcher(fetch.NewMemBlockStore(), clk, &sleepRecorder{})
+	blocks := testBlocks(t)
 	ctx := context.Background()
-
-	if _, err := f.Get(ctx, srv.URL+"/", fetch.Opt{}); !errors.Is(err, fetch.ErrBlocked) {
-		t.Fatalf("403: got %v, want ErrBlocked", err)
-	}
+	// First 403 blocks the domain and writes the row.
+	newTestFetcher(blocks, clk, &sleepRecorder{}).Get(ctx, srv.URL+"/", fetch.Opt{}) //nolint:errcheck
 	n := calls.Load()
-	clk.Advance(23 * time.Hour)
-	if _, err := f.Get(ctx, srv.URL+"/", fetch.Opt{}); !errors.Is(err, fetch.ErrBlocked) {
-		t.Fatalf("within 24h: got %v, want ErrBlocked", err)
+	// A new fetcher on the same database (simulates a restart) refuses without a request.
+	if _, err := newTestFetcher(blocks, clk, &sleepRecorder{}).Get(ctx, srv.URL+"/", fetch.Opt{}); !errors.Is(err, fetch.ErrBlocked) {
+		t.Fatalf("new fetcher: want ErrBlocked, got %v", err)
 	}
 	if calls.Load() != n {
-		t.Errorf("second call made HTTP request (want no request during block)")
+		t.Error("new fetcher made HTTP request during block")
 	}
-	clk.Advance(2 * time.Hour)
-	f.Get(ctx, srv.URL+"/", fetch.Opt{}) //nolint:errcheck
+	// After 24 hours the block expires; the domain is requested again.
+	clk.Advance(25 * time.Hour)
+	newTestFetcher(blocks, clk, &sleepRecorder{}).Get(ctx, srv.URL+"/", fetch.Opt{}) //nolint:errcheck
 	if calls.Load() == n {
-		t.Errorf("after 24h, no request made; expected block to expire")
+		t.Error("after 24h, no request made; block should have expired")
 	}
 }
 
@@ -214,7 +226,7 @@ func TestGet_challenge_header_is_blocked(t *testing.T) {
 		fmt.Fprint(w, "verify")
 	}))
 	defer srv.Close()
-	f := newTestFetcher(fetch.NewMemBlockStore(), newFakeClock(), &sleepRecorder{})
+	f := newTestFetcher(testBlocks(t), newFakeClock(), &sleepRecorder{})
 	if _, err := f.Get(context.Background(), srv.URL+"/", fetch.Opt{}); !errors.Is(err, fetch.ErrBlocked) {
 		t.Errorf("cf-mitigated: challenge: got %v, want ErrBlocked", err)
 	}
@@ -226,7 +238,7 @@ func TestGet_challenge_platform_on_503_is_blocked(t *testing.T) {
 		fmt.Fprint(w, `<html><body><script src="/cdn-cgi/challenge-platform/x"></script></body></html>`)
 	}))
 	defer srv.Close()
-	f := newTestFetcher(fetch.NewMemBlockStore(), newFakeClock(), &sleepRecorder{})
+	f := newTestFetcher(testBlocks(t), newFakeClock(), &sleepRecorder{})
 	if _, err := f.Get(context.Background(), srv.URL+"/", fetch.Opt{}); !errors.Is(err, fetch.ErrBlocked) {
 		t.Errorf("challenge-platform on 503: got %v, want ErrBlocked", err)
 	}
@@ -236,7 +248,7 @@ func TestGet_challenge_platform_on_200_is_content(t *testing.T) {
 	body := `<html><body><script src="/cdn-cgi/challenge-platform/x"></script><p>job listing</p></body></html>`
 	srv := okServer(t, body)
 	defer srv.Close()
-	f := newTestFetcher(fetch.NewMemBlockStore(), newFakeClock(), &sleepRecorder{})
+	f := newTestFetcher(testBlocks(t), newFakeClock(), &sleepRecorder{})
 	if resp, err := f.Get(context.Background(), srv.URL+"/", fetch.Opt{}); err != nil || resp.Status != 200 {
 		t.Errorf("challenge-platform on 200: err=%v status=%d, want 200 content", err, resp.Status)
 	}
@@ -247,7 +259,7 @@ func TestGet_just_a_moment_title_is_blocked(t *testing.T) {
 		fmt.Fprint(w, "<html><head><title>Just a moment...</title></head></html>")
 	}))
 	defer srv.Close()
-	f := newTestFetcher(fetch.NewMemBlockStore(), newFakeClock(), &sleepRecorder{})
+	f := newTestFetcher(testBlocks(t), newFakeClock(), &sleepRecorder{})
 	if _, err := f.Get(context.Background(), srv.URL+"/", fetch.Opt{}); !errors.Is(err, fetch.ErrBlocked) {
 		t.Errorf("'Just a moment...' title: got %v, want ErrBlocked", err)
 	}
@@ -257,7 +269,7 @@ func TestGet_recaptcha_form_on_200_is_content(t *testing.T) {
 	body := `<html><body><div class="g-recaptcha">captcha</div></body></html>`
 	srv := okServer(t, body)
 	defer srv.Close()
-	f := newTestFetcher(fetch.NewMemBlockStore(), newFakeClock(), &sleepRecorder{})
+	f := newTestFetcher(testBlocks(t), newFakeClock(), &sleepRecorder{})
 	if resp, err := f.Get(context.Background(), srv.URL+"/", fetch.Opt{}); err != nil || resp.Status != 200 {
 		t.Errorf("reCAPTCHA on 200: err=%v status=%d, want 200 content", err, resp.Status)
 	}
@@ -271,7 +283,7 @@ func TestGet_not_found_statuses(t *testing.T) {
 			fmt.Fprint(w, "not found")
 		}))
 		defer srv.Close()
-		f := newTestFetcher(fetch.NewMemBlockStore(), newFakeClock(), &sleepRecorder{})
+		f := newTestFetcher(testBlocks(t), newFakeClock(), &sleepRecorder{})
 		resp, err := f.Get(context.Background(), srv.URL+"/", fetch.Opt{})
 		if !errors.Is(err, fetch.ErrNotFound) {
 			t.Errorf("HTTP %d: got %v, want ErrNotFound", status, err)
@@ -296,7 +308,7 @@ func TestGet_backoff_exponential_then_reset(t *testing.T) {
 	}))
 	defer srv.Close()
 	clk := newFakeClock()
-	f := newTestFetcher(fetch.NewMemBlockStore(), clk, &sleepRecorder{})
+	f := newTestFetcher(testBlocks(t), clk, &sleepRecorder{})
 	ctx := context.Background()
 
 	mustTransient := func(path string) {
@@ -333,7 +345,7 @@ func TestGet_backoff_cap_at_one_hour(t *testing.T) {
 	}))
 	defer srv.Close()
 	clk := newFakeClock()
-	f := newTestFetcher(fetch.NewMemBlockStore(), clk, &sleepRecorder{})
+	f := newTestFetcher(testBlocks(t), clk, &sleepRecorder{})
 	ctx := context.Background()
 	for _, step := range []time.Duration{
 		30 * time.Second, 60 * time.Second, 2 * time.Minute,
@@ -361,7 +373,7 @@ func TestGet_spacing_within_domain(t *testing.T) {
 
 	clk := newFakeClock()
 	sl := &sleepRecorder{}
-	f := newTestFetcher(fetch.NewMemBlockStore(), clk, sl)
+	f := newTestFetcher(testBlocks(t), clk, sl)
 
 	// First request: no sleep.
 	_, err := f.Get(context.Background(), srv.URL+"/a", fetch.Opt{})
@@ -399,7 +411,7 @@ func TestGet_body_over_8MB_is_transient(t *testing.T) {
 	defer srv.Close()
 
 	sl := &sleepRecorder{}
-	f := newTestFetcher(fetch.NewMemBlockStore(), newFakeClock(), sl)
+	f := newTestFetcher(testBlocks(t), newFakeClock(), sl)
 	_, err := f.Get(context.Background(), srv.URL+"/", fetch.Opt{})
 	if !errors.Is(err, fetch.ErrTransient) {
 		t.Fatalf("body > 8MB: got %v, want ErrTransient", err)
@@ -415,8 +427,8 @@ func TestGet_timeout_is_transient(t *testing.T) {
 	defer close(done)
 
 	f := fetch.New(fetch.Options{
-		BlockStore: fetch.NewMemBlockStore(),
-		Clock:      time.Now,
+		Blocks: testBlocks(t),
+		Clock:  time.Now,
 		Sleep: func(_ context.Context, _ time.Duration) error {
 			return nil
 		},
@@ -436,7 +448,7 @@ func TestGet_cancellation_does_not_trigger_backoff(t *testing.T) {
 
 	clk := newFakeClock()
 	sl := &sleepRecorder{}
-	f := newTestFetcher(fetch.NewMemBlockStore(), clk, sl)
+	f := newTestFetcher(testBlocks(t), clk, sl)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -463,8 +475,8 @@ func TestGet_offline_returns_ErrOffline_no_request(t *testing.T) {
 	defer srv.Close()
 
 	f := fetch.New(fetch.Options{
-		BlockStore: fetch.NewMemBlockStore(),
-		Clock:      time.Now,
+		Blocks: testBlocks(t),
+		Clock:  time.Now,
 		Sleep: func(_ context.Context, _ time.Duration) error {
 			return nil
 		},
@@ -515,7 +527,7 @@ func TestGet_user_agent(t *testing.T) {
 	defer srv.Close()
 
 	sl := &sleepRecorder{}
-	f := newTestFetcher(fetch.NewMemBlockStore(), newFakeClock(), sl)
+	f := newTestFetcher(testBlocks(t), newFakeClock(), sl)
 	_, err := f.Get(context.Background(), srv.URL+"/", fetch.Opt{})
 	if err != nil {
 		t.Fatal(err)
@@ -548,7 +560,7 @@ func TestGet_redirect_chain_of_six_followed(t *testing.T) {
 	}
 
 	sl := &sleepRecorder{}
-	f := newTestFetcher(fetch.NewMemBlockStore(), newFakeClock(), sl)
+	f := newTestFetcher(testBlocks(t), newFakeClock(), sl)
 	resp, err := f.Get(context.Background(), chain[0].URL+"/", fetch.Opt{})
 	if err != nil {
 		t.Fatalf("chain of 6: unexpected error: %v", err)
@@ -582,7 +594,7 @@ func TestGet_seventh_redirect_refused(t *testing.T) {
 	}
 
 	sl := &sleepRecorder{}
-	f := newTestFetcher(fetch.NewMemBlockStore(), newFakeClock(), sl)
+	f := newTestFetcher(testBlocks(t), newFakeClock(), sl)
 	_, err := f.Get(context.Background(), chain[0].URL+"/", fetch.Opt{})
 	if !errors.Is(err, fetch.ErrTransient) {
 		t.Fatalf("7th redirect: got %v, want ErrTransient", err)
@@ -599,7 +611,7 @@ func TestGet_response_url_is_final_after_redirect(t *testing.T) {
 	defer srv.Close()
 
 	sl := &sleepRecorder{}
-	f := newTestFetcher(fetch.NewMemBlockStore(), newFakeClock(), sl)
+	f := newTestFetcher(testBlocks(t), newFakeClock(), sl)
 	resp, err := f.Get(context.Background(), srv.URL+"/", fetch.Opt{})
 	if err != nil {
 		t.Fatal(err)

@@ -8,8 +8,6 @@ import (
 	"fmt"
 	"net"
 	"strings"
-	"sync"
-	"time"
 )
 
 // Fetcher retrieves a URL and returns the response. Errors are one of
@@ -79,36 +77,6 @@ func PublicOnly(ip net.IP) bool {
 		!ip.IsLinkLocalMulticast() &&
 		!ip.IsMulticast() &&
 		!ip.IsUnspecified()
-}
-
-// BlockStore remembers which domains are blocked and until when.
-type BlockStore interface {
-	Blocked(domain string) (until time.Time, ok bool)
-	Block(domain string, until time.Time)
-}
-
-// MemBlockStore is an in-memory BlockStore.
-type MemBlockStore struct {
-	mu     sync.Mutex
-	blocks map[string]time.Time
-}
-
-// NewMemBlockStore returns a new, empty in-memory block store.
-func NewMemBlockStore() *MemBlockStore {
-	return &MemBlockStore{blocks: make(map[string]time.Time)}
-}
-
-func (s *MemBlockStore) Blocked(domain string) (time.Time, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	t, ok := s.blocks[domain]
-	return t, ok
-}
-
-func (s *MemBlockStore) Block(domain string, until time.Time) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.blocks[domain] = until
 }
 
 // domainKey returns the lowercased host without a leading "www.".
