@@ -84,15 +84,13 @@ func (c *Catalog) Upsert(ctx context.Context, p listing.Posting, src string) (in
 		return 0, 0, fmt.Errorf("catalog: upsert: canonical url: %w", err)
 	}
 
-	// canonApply is the best canonical form of the apply URL.
-	// atsApply is the ConcreteATS form; only it drives match rule (b).
+	// The apply address is kept only when it is one concrete vacancy in an
+	// applicant tracking system, never the root of a board or another page.
 	var canonApply, atsApply string
 	if p.ApplyURL != "" {
 		if ca, ok := listing.ConcreteATS(p.ApplyURL); ok {
 			canonApply = ca
 			atsApply = ca
-		} else if ca, err2 := listing.Canonical(p.ApplyURL); err2 == nil {
-			canonApply = ca
 		}
 	}
 

@@ -439,14 +439,14 @@ func TestUpsert_ApplyURLRules(t *testing.T) {
 	if got2 != orig {
 		t.Errorf("apply_url overwritten: got %q, want %q", got2, orig)
 	}
-	// Non-ATS apply URL is also stored.
+	// An apply address that is not one concrete ATS vacancy is not kept.
 	p3 := posting("https://example.com/jobs/72", "Designer", "Acme")
-	p3.ApplyURL = "https://apply.acmecorp.com/"
+	p3.ApplyURL = "https://apply.acmecorp.example/"
 	id3, _, _ := cat.Upsert(context.Background(), p3, "src")
 	var got3 string
 	d.QueryRow(`SELECT apply_url FROM vacancy WHERE id = ?`, id3).Scan(&got3) //nolint:errcheck
-	if got3 == "" {
-		t.Error("non-ATS apply_url not stored")
+	if got3 != "" {
+		t.Errorf("apply_url kept for a non-ATS address: %q", got3)
 	}
 }
 
