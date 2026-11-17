@@ -32,6 +32,7 @@ func (s *ashbySource) List(ctx context.Context, f fetch.Fetcher, cfg SiteConfig)
 		return nil, ErrNothingRecognised
 	}
 	company := trim(cfg.Name)
+	guessed := company == ""
 	if company == "" {
 		company = trim(body.Organization.Name)
 	}
@@ -57,15 +58,16 @@ func (s *ashbySource) List(ctx context.Context, f fetch.Fetcher, cfg SiteConfig)
 			salary = job.Compensation.TierSummary
 		}
 		p := listing.Posting{
-			URL:      job.JobURL,
-			ApplyURL: applyURL,
-			Title:    job.Title,
-			Company:  company,
-			Location: loc,
-			Tags:     []string{job.Department, job.Team},
-			Fields:   setFields("employment_type", job.EmploymentType, "salary", salary),
-			Text:     job.DescriptionHTML,
-			TextKind: listing.HTML,
+			URL:            job.JobURL,
+			ApplyURL:       applyURL,
+			Title:          job.Title,
+			Company:        company,
+			CompanyGuessed: guessed,
+			Location:       loc,
+			Tags:           []string{job.Department, job.Team},
+			Fields:         setFields("employment_type", job.EmploymentType, "salary", salary),
+			Text:           job.DescriptionHTML,
+			TextKind:       listing.HTML,
 		}
 		if pub, ok := parseDate(job.PublishedAt); ok {
 			p.Published = pub

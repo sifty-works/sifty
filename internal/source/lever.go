@@ -39,6 +39,7 @@ func (s *leverSource) List(ctx context.Context, f fetch.Fetcher, cfg SiteConfig)
 		return nil, ErrNothingRecognised
 	}
 	company := trim(cfg.Name)
+	guessed := company == ""
 	if company == "" {
 		company = site
 	}
@@ -72,15 +73,16 @@ func (s *leverSource) List(ctx context.Context, f fetch.Fetcher, cfg SiteConfig)
 			}
 		}
 		p := listing.Posting{
-			URL:      post.HostedURL,
-			ApplyURL: post.HostedURL,
-			Title:    post.Text,
-			Company:  company,
-			Location: post.Categories.Location,
-			Tags:     []string{post.Categories.Team, post.Categories.Department},
-			Fields:   setFields("employment_type", post.Categories.Commitment, "workplace_type", post.WorkplaceType, "salary", salary),
-			Text:     tb.String(),
-			TextKind: listing.HTML,
+			URL:            post.HostedURL,
+			ApplyURL:       post.HostedURL,
+			Title:          post.Text,
+			Company:        company,
+			CompanyGuessed: guessed,
+			Location:       post.Categories.Location,
+			Tags:           []string{post.Categories.Team, post.Categories.Department},
+			Fields:         setFields("employment_type", post.Categories.Commitment, "workplace_type", post.WorkplaceType, "salary", salary),
+			Text:           tb.String(),
+			TextKind:       listing.HTML,
 		}
 		if post.CreatedAt > 0 {
 			p.Published = time.UnixMilli(post.CreatedAt).UTC()

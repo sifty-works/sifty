@@ -46,6 +46,7 @@ func (s *greenhouseSource) List(ctx context.Context, f fetch.Fetcher, cfg SiteCo
 	var postings []listing.Posting
 	for _, job := range body.Jobs {
 		company := trim(job.CompanyName)
+		companyGuessed := company == ""
 		if company == "" {
 			company = boardCompany
 		}
@@ -54,14 +55,15 @@ func (s *greenhouseSource) List(ctx context.Context, f fetch.Fetcher, cfg SiteCo
 			tags = append(tags, d.Name)
 		}
 		p := listing.Posting{
-			URL:      job.AbsoluteURL,
-			ApplyURL: fmt.Sprintf("https://boards.greenhouse.io/%s/jobs/%d", board, job.ID),
-			Title:    job.Title,
-			Company:  company,
-			Location: job.Location.Name,
-			Tags:     tags,
-			Text:     job.Content,
-			TextKind: listing.EscapedHTML,
+			URL:            job.AbsoluteURL,
+			ApplyURL:       fmt.Sprintf("https://boards.greenhouse.io/%s/jobs/%d", board, job.ID),
+			Title:          job.Title,
+			Company:        company,
+			CompanyGuessed: companyGuessed,
+			Location:       job.Location.Name,
+			Tags:           tags,
+			Text:           job.Content,
+			TextKind:       listing.EscapedHTML,
 		}
 		if pub, ok := parseDate(job.FirstPublished); ok {
 			p.Published = pub

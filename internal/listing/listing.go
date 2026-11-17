@@ -31,9 +31,14 @@ type Posting struct {
 	ApplyURL string // apply address (optional)
 	Title    string
 	Company  string
-	Location string
-	Tags     []string
-	Fields   map[string]string // structured fields (salary, employment type…)
+	// CompanyGuessed is true when the source derived the company from the board's
+	// address (e.g. Lever or Ashby without a configured source name, or Greenhouse
+	// without a per-job company_name). A guessed company is used for a new vacancy
+	// but never replaces a stored company that is already named.
+	CompanyGuessed bool
+	Location       string
+	Tags           []string
+	Fields         map[string]string // structured fields (salary, employment type…)
 
 	Published      time.Time // only a stated publication date
 	PublishedBasis string    // e.g. "datePosted", "pubDate"

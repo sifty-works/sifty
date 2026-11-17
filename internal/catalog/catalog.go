@@ -234,7 +234,9 @@ func (c *Catalog) Upsert(ctx context.Context, p listing.Posting, src string) (in
 	upd := ex // start from existing
 
 	upd.title = p.Title // always from posting
-	if company != "Unknown" && company != "" {
+	// A guessed company (derived from the board's address) does not replace a
+	// stored company that is already named; it may replace Unknown.
+	if company != "Unknown" && company != "" && (!p.CompanyGuessed || ex.company == "Unknown") {
 		upd.company = company
 		upd.identity = listing.Identity(company, p.Title)
 	} else {
@@ -415,14 +417,17 @@ func findMatches(ctx context.Context, tx *sql.Tx, canonURL, atsApply, canonApply
 			ids = appendUnique(ids, rid)
 			continue
 		}
-		// Match (c): different host, no apply conflict, company not Unknown.
+		// Match (c): different host, company not Unknown, apply addresses do not
+		// conflict. Two apply addresses conflict only when they name different
+		// concrete vacancies on the same applicant tracking system; addresses on
+		// different systems (e.g. Ashby and Greenhouse) do not conflict.
 		if company == "Unknown" {
 			continue
 		}
 		if urlHost(rURL) == newHost {
 			continue
 		}
-		if canonApply != "" && rApply != "" && canonApply != rApply {
+		if canonApply != "" && rApply != "" && canonApply != rApply && urlHost(canonApply) == urlHost(rApply) {
 			continue
 		}
 		ids = appendUnique(ids, rid)

@@ -777,3 +777,113 @@ func TestFTS_Merge(t *testing.T) {
 		t.Errorf("FTS row for kept vacancy %d should contain full text", keptID)
 	}
 }
+
+// --- Cross-ATS matching rules ---
+
+// TestUpsert_CrossATSApplyRules checks the same-system conflict test for rule (c).
+func TestUpsert_CrossATSApplyRules(t *testing.T) {
+	// A role with an Ashby apply URL and the same company+title on a different
+	// host but with a Greenhouse apply URL must match (different ATS systems).
+	t.Run("cross-ATS apply addresses match", func(t *testing.T) {
+		d := openTestDB(t)
+		cat := catalog.New(d, fixedNow())
+		p1 := posting("https://acme.com/jobs/engineer", "Platform Engineer", "Acme Corp")
+		p1.ApplyURL = "https://jobs.ashbyhq.com/acme/550e8400-e29b-41d4-a716-446655440000"
+		id1, _, _ := cat.Upsert(context.Background(), p1, "src1")
+		p2 := posting("https://anotherjobs.com/engineer", "Platform Engineer", "Acme Corp")
+		p2.ApplyURL = "https://boards.greenhouse.io/acme/jobs/9999"
+		id2, outcome, err := cat.Upsert(context.Background(), p2, "src2")
+		if err != nil {
+			t.Fatalf("second upsert: %v", err)
+		}
+		if id2 != id1 {
+			t.Errorf("id: got %d, want %d (should match across ATS systems)", id2, id1)
+		}
+		if outcome == catalog.OutcomeNew {
+			t.Error("outcome: should not be OutcomeNew for a cross-ATS match")
+		}
+		// Kept vacancy keeps the original (Ashby) apply address.
+		var kept string
+		d.QueryRow(`SELECT apply_url FROM vacancy WHERE id = ?`, id1).Scan(&kept) //nolint:errcheck
+		if kept == "" || !strings.Contains(kept, "ashbyhq.com") {
+			t.Errorf("apply_url: got %q, want the Ashby address (kept on match)", kept)
+		}
+	})
+
+	// Two different concrete Greenhouse vacancies for the same company+title on
+	// different posting hosts must not match (same ATS system).
+	t.Run("same ATS system apply addresses do not match", func(t *testing.T) {
+		d := openTestDB(t)
+		cat := catalog.New(d, fixedNow())
+		p1 := posting("https://acme.com/jobs/sre", "Site Reliability Engineer", "Acme Corp")
+		p1.ApplyURL = "https://boards.greenhouse.io/acme/jobs/1111"
+		id1, _, _ := cat.Upsert(context.Background(), p1, "src1")
+		p2 := posting("https://anotherjobs.com/sre", "Site Reliability Engineer", "Acme Corp")
+		p2.ApplyURL = "https://boards.greenhouse.io/acme/jobs/2222"
+		id2, outcome, err := cat.Upsert(context.Background(), p2, "src2")
+		if err != nil {
+			t.Fatalf("second upsert: %v", err)
+		}
+		if id2 == id1 {
+			t.Error("should not match: two different concrete vacancies on the same ATS")
+		}
+		if outcome != catalog.OutcomeNew {
+			t.Errorf("outcome: got %v, want OutcomeNew", outcome)
+		}
+	})
+}
+
+// --- Guessed company rules ---
+
+// TestUpsert_GuessedCompanyRules checks that a guessed company does not replace
+// a stored named company but does replace Unknown, and that new vacancies keep it.
+func TestUpsert_GuessedCompanyRules(t *testing.T) {
+	// A guessed company must not replace a stored company that is already named.
+	t.Run("guessed company does not replace named", func(t *testing.T) {
+		d := openTestDB(t)
+		cat := catalog.New(d, fixedNow())
+		p1 := posting("https://acme.com/jobs/swe", "Software Engineer", "Acme Corp")
+		id1, _, _ := cat.Upsert(context.Background(), p1, "src1")
+		p2 := posting("https://acme.com/jobs/swe", "Software Engineer", "acme-board")
+		p2.CompanyGuessed = true
+		cat.Upsert(context.Background(), p2, "src2") //nolint:errcheck
+		var company string
+		d.QueryRow(`SELECT company FROM vacancy WHERE id = ?`, id1).Scan(&company) //nolint:errcheck
+		if company != "Acme Corp" {
+			t.Errorf("company: got %q, want Acme Corp (guessed must not replace named)", company)
+		}
+	})
+
+	// A guessed company may replace Unknown.
+	t.Run("guessed company replaces Unknown", func(t *testing.T) {
+		d := openTestDB(t)
+		cat := catalog.New(d, fixedNow())
+		p1 := posting("https://acme.com/jobs/analyst", "Data Analyst", "")
+		id1, _, _ := cat.Upsert(context.Background(), p1, "src1")
+		p2 := posting("https://acme.com/jobs/analyst", "Data Analyst", "acme-board")
+		p2.CompanyGuessed = true
+		cat.Upsert(context.Background(), p2, "src2") //nolint:errcheck
+		var company string
+		d.QueryRow(`SELECT company FROM vacancy WHERE id = ?`, id1).Scan(&company) //nolint:errcheck
+		if company != "acme-board" {
+			t.Errorf("company: got %q, want acme-board (guessed should replace Unknown)", company)
+		}
+	})
+
+	// A new vacancy always keeps its company, even when guessed.
+	t.Run("new vacancy keeps guessed company", func(t *testing.T) {
+		d := openTestDB(t)
+		cat := catalog.New(d, fixedNow())
+		p := posting("https://newboard.com/jobs/dev", "Developer", "newboard-slug")
+		p.CompanyGuessed = true
+		id, outcome, err := cat.Upsert(context.Background(), p, "src1")
+		if err != nil || outcome != catalog.OutcomeNew {
+			t.Fatalf("upsert: %v / %v", err, outcome)
+		}
+		var company string
+		d.QueryRow(`SELECT company FROM vacancy WHERE id = ?`, id).Scan(&company) //nolint:errcheck
+		if company != "newboard-slug" {
+			t.Errorf("company: got %q, want newboard-slug (guessed company kept for new vacancy)", company)
+		}
+	})
+}

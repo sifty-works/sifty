@@ -253,13 +253,21 @@ func TestGreenhouse_maps_all_fields(t *testing.T) {
 		t.Errorf("text state = %q, want full", p.TextState)
 	}
 
-	// Second posting: company_name empty → fall back to board company name.
+	// First posting: company_name present → not guessed.
+	if p.CompanyGuessed {
+		t.Error("CompanyGuessed should be false when company_name is set")
+	}
+
+	// Second posting: company_name empty → fall back to board company name, guessed.
 	p2 := postings[1]
 	if p2.Company != "Brightway Software" {
 		t.Errorf("item2 company = %q, want Brightway Software (board name fallback)", p2.Company)
 	}
 	if len(p2.Tags) != 2 {
 		t.Errorf("item2 tags = %v, want 2 departments", p2.Tags)
+	}
+	if !p2.CompanyGuessed {
+		t.Error("CompanyGuessed should be true when company_name is absent")
 	}
 }
 
@@ -328,6 +336,10 @@ func TestLever_maps_all_fields(t *testing.T) {
 	if p.TextKind != listing.HTML {
 		t.Errorf("text kind = %v, want HTML", p.TextKind)
 	}
+	// Source name set → not guessed.
+	if p.CompanyGuessed {
+		t.Error("CompanyGuessed should be false when source name is set")
+	}
 }
 
 func TestLever_company_falls_back_to_site_slug(t *testing.T) {
@@ -347,6 +359,10 @@ func TestLever_company_falls_back_to_site_slug(t *testing.T) {
 	}
 	if postings[0].Company != "techstartup" {
 		t.Errorf("company = %q, want techstartup (site slug)", postings[0].Company)
+	}
+	// No source name → guessed.
+	if !postings[0].CompanyGuessed {
+		t.Error("CompanyGuessed should be true without source name")
 	}
 }
 
@@ -407,6 +423,10 @@ func TestAshby_maps_all_fields(t *testing.T) {
 	if p.TextKind != listing.HTML {
 		t.Errorf("text kind = %v, want HTML", p.TextKind)
 	}
+	// Source name set → not guessed.
+	if p.CompanyGuessed {
+		t.Error("CompanyGuessed should be false when source name is set")
+	}
 }
 
 func TestAshby_company_falls_back_to_board_name(t *testing.T) {
@@ -426,6 +446,10 @@ func TestAshby_company_falls_back_to_board_name(t *testing.T) {
 	}
 	if postings[0].Company != "NexGen AI" {
 		t.Errorf("company = %q, want NexGen AI (org name from API)", postings[0].Company)
+	}
+	// No source name → guessed.
+	if !postings[0].CompanyGuessed {
+		t.Error("CompanyGuessed should be true without source name")
 	}
 }
 
