@@ -4,7 +4,7 @@ What the user gets from collection: vacancies from the sites they chose appear i
 
 ## Sources
 
-A source is a name, a public http(s) address and an enabled switch, on by default. The user manages sources on the Sources page: a table of name, address, enabled switch and a remove action, and a form to add a source. The address is required. The address of an existing source cannot be edited; the user removes the source and adds it again.
+A source is a name, a public http(s) address and an enabled switch, on by default. The user manages sources on the Sources page: a table of name, address, enabled switch and a remove action, and a form to add a source. Removing a source has no confirmation; the source can be added again. The address is required; the form shows the server's error text when the address is not accepted. The form clears on success. The address of an existing source cannot be edited; the user removes the source and adds it again.
 
 Collection visits the enabled sources. Each source is recognised by its address:
 
@@ -22,7 +22,7 @@ The company of a Greenhouse vacancy is the company name the API gives, not the b
 
 ## When collection runs
 
-- Collection runs on an interval, by default every 3 hours, measured from the start of the last run of any kind. The interval is at least 15 minutes and at most 168 hours (7 days). The Sources page carries the switch that turns automatic collection on or off and the interval.
+- Collection runs on an interval, by default every 3 hours, measured from the start of the last run of any kind. The interval is at least 15 minutes and at most 168 hours (7 days); the Sources page offers the choices 15 minutes, 30 minutes, 1, 3, 6 and 12 hours, 1 day and 7 days, and shows the current value when it is another one. The Sources page carries the switch that turns automatic collection on or off and the interval.
 - Opening or reloading the application starts a run when the interval has passed and automatic collection is on.
 - The "Collect jobs" button starts a run at once, ignoring the interval. It is disabled while a run is in progress.
 - Only one run happens at a time.
