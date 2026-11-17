@@ -19,9 +19,11 @@ type MapEntry struct {
 
 // Map is a Fetcher that answers from an in-memory map of URL → entry.
 // A missing URL returns fetch.ErrNotFound.
+// Requests records every URL passed to Get, in order.
 type Map struct {
-	mu      sync.Mutex
-	entries map[string]MapEntry
+	mu       sync.Mutex
+	entries  map[string]MapEntry
+	requests []string
 }
 
 // NewMap returns an empty Map fetcher.
@@ -36,10 +38,11 @@ func (m *Map) Set(url string, entry MapEntry) {
 	m.entries[url] = entry
 }
 
-// Get implements fetch.Fetcher.
+// Get implements fetch.Fetcher. It records the URL in Requests.
 func (m *Map) Get(_ context.Context, url string, _ fetch.Opt) (fetch.Response, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.requests = append(m.requests, url)
 	e, ok := m.entries[url]
 	if !ok {
 		return fetch.Response{}, fetch.ErrNotFound
@@ -48,6 +51,15 @@ func (m *Map) Get(_ context.Context, url string, _ fetch.Opt) (fetch.Response, e
 		return fetch.Response{}, e.Err
 	}
 	return e.Response, nil
+}
+
+// Requests returns all URLs passed to Get, in order.
+func (m *Map) Requests() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]string, len(m.requests))
+	copy(out, m.requests)
+	return out
 }
 
 // dirIndex is the JSON structure of index.json in a Dir fixture folder.

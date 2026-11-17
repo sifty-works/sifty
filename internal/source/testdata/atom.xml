@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Atom Jobs Feed</title>
+  <entry>
+    <title>DevOps Engineer</title>
+    <link rel="alternate" href="/devops-engineer"/>
+    <link href="http://jobs.example.com/devops-engineer/apply"/>
+    <published>2024-03-05T12:00:00Z</published>
+    <updated>2024-03-10T12:00:00Z</updated>
+    <content type="html"><![CDATA[<p>DevOps role at Example Corp.</p>]]></content>
+    <category term="Infrastructure"/>
+    <category term="Cloud"/>
+  </entry>
+</feed>

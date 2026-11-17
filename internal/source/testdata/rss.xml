@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"
+  xmlns:content="http://purl.org/rss/1.0/modules/content/"
+  xmlns:job="http://job.example.com/">
+  <channel>
+    <title>Jobs at Acme</title>
+    <link>http://jobs.acme.example.com</link>
+    <item>
+      <title>Acme: Senior Developer</title>
+      <link>/post/1</link>
+      <pubDate>Mon, 11 Mar 2024 10:00:00 +0000</pubDate>
+      <content:encoded><![CDATA[<p>Senior Developer role at Acme.</p>]]></content:encoded>
+      <description><![CDATA[<p>Summary only.</p>]]></description>
+      <category>Engineering</category>
+      <category>Backend</category>
+    </item>
+    <item>
+      <title>Job at Example Co</title>
+      <link>http://jobs.acme.example.com/post/2</link>
+      <pubDate>Tue, 12 Mar 2024 10:00:00 +0000</pubDate>
+      <description><![CDATA[<p>A job at Example Co.</p>]]></description>
+      <job:company>Example Co</job:company>
+    </item>
+  </channel>
+</rss>

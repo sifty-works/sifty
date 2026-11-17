@@ -1,0 +1,21 @@
+[
+  {
+    "id": "abc-def-123",
+    "text": "Full Stack Developer",
+    "hostedUrl": "https://jobs.lever.co/techstartup/abc-def-123",
+    "createdAt": 1709280000000,
+    "categories": {
+      "location": "San Francisco",
+      "team": "Frontend",
+      "department": "Engineering",
+      "commitment": "Full-time"
+    },
+    "workplaceType": "hybrid",
+    "salaryRange": {"min": 120000, "max": 160000, "currency": "USD", "interval": "yearly"},
+    "description": "<p>We are building great things.</p>",
+    "lists": [
+      {"text": "Requirements", "content": "<li>3+ years of Go or Python</li><li>Strong CS fundamentals</li>"}
+    ],
+    "additional": "<p>Apply via our website.</p>"
+  }
+]

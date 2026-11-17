@@ -1,0 +1,27 @@
+{
+  "company": {"name": "Brightway Software"},
+  "jobs": [
+    {
+      "id": 1001,
+      "title": "Backend Engineer",
+      "absolute_url": "https://boards.greenhouse.io/brightway/jobs/1001",
+      "company_name": "Brightway Corp",
+      "location": {"name": "Remote"},
+      "departments": [{"name": "Engineering"}],
+      "first_published": "2024-03-01T09:00:00.000Z",
+      "updated_at": "2024-03-15T12:00:00.000Z",
+      "content": "&lt;p&gt;We are looking for a Backend Engineer.&lt;/p&gt;"
+    },
+    {
+      "id": 1002,
+      "title": "Product Designer",
+      "absolute_url": "https://boards.greenhouse.io/brightway/jobs/1002",
+      "company_name": "",
+      "location": {"name": "New York"},
+      "departments": [{"name": "Design"}, {"name": "Product"}],
+      "first_published": "2024-02-15T08:00:00.000Z",
+      "updated_at": "2024-02-20T10:00:00.000Z",
+      "content": "&lt;p&gt;Join our design team.&lt;/p&gt;"
+    }
+  ]
+}
