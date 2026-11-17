@@ -7,16 +7,103 @@ package config
 import (
 	"bytes"
 	"fmt"
+	"net/url"
 	"os"
+	"strings"
+	"time"
+	"unicode/utf8"
 
 	"gopkg.in/yaml.v3"
 )
 
+// Duration is a time.Duration that serializes as a Go duration string in YAML,
+// for example "3h" or "15m".
+type Duration time.Duration
+
+// MarshalYAML renders the duration in the shortest human-readable form,
+// for example "3h", "1h30m", or "15m".
+func (d Duration) MarshalYAML() (interface{}, error) {
+	return shortDuration(time.Duration(d)), nil
+}
+
+// shortDuration formats d as the shortest form a user would type:
+// whole hours ("3h"), whole minutes ("15m"), or hours+minutes ("1h30m").
+// Durations with a sub-minute component fall back to time.Duration.String().
+func shortDuration(d time.Duration) string {
+	h := d / time.Hour
+	rem := d % time.Hour
+	m := rem / time.Minute
+	if rem%time.Minute != 0 {
+		return d.String()
+	}
+	switch {
+	case h == 0:
+		return fmt.Sprintf("%dm", m)
+	case m == 0:
+		return fmt.Sprintf("%dh", h)
+	default:
+		return fmt.Sprintf("%dh%dm", h, m)
+	}
+}
+
+// UnmarshalYAML parses a duration string such as "3h" from YAML.
+func (d *Duration) UnmarshalYAML(value *yaml.Node) error {
+	var s string
+	if err := value.Decode(&s); err != nil {
+		return err
+	}
+	parsed, err := time.ParseDuration(s)
+	if err != nil {
+		return fmt.Errorf("collection.interval: invalid duration %q: %w", s, err)
+	}
+	*d = Duration(parsed)
+	return nil
+}
+
+// CollectionConfig holds the automatic collection settings.
+type CollectionConfig struct {
+	Auto     bool     `yaml:"auto"`
+	Interval Duration `yaml:"interval"`
+}
+
+// UnmarshalYAML applies defaults for collection before decoding, so that
+// keys absent from the YAML retain their default values.
+func (c *CollectionConfig) UnmarshalYAML(value *yaml.Node) error {
+	type rawCollection CollectionConfig
+	r := &rawCollection{Auto: true, Interval: Duration(3 * time.Hour)}
+	if err := value.Decode(r); err != nil {
+		return err
+	}
+	*c = CollectionConfig(*r)
+	return nil
+}
+
+// SourceConfig describes one collection source.
+type SourceConfig struct {
+	Name    string `yaml:"name,omitempty"`
+	URL     string `yaml:"url"`
+	Enabled bool   `yaml:"enabled"`
+}
+
+// UnmarshalYAML applies defaults for a source before decoding, so that
+// the absent enabled key defaults to true.
+func (s *SourceConfig) UnmarshalYAML(value *yaml.Node) error {
+	type rawSource SourceConfig
+	r := &rawSource{Enabled: true}
+	if err := value.Decode(r); err != nil {
+		return err
+	}
+	*s = SourceConfig(*r)
+	return nil
+}
+
 // Config holds the application settings loaded from sifty.yaml.
 // All fields are optional; Defaults returns the baseline.
 type Config struct {
-	Port  int  `yaml:"port"`
-	Debug bool `yaml:"debug"`
+	Port       int              `yaml:"port"`
+	Debug      bool             `yaml:"debug"`
+	Collection CollectionConfig `yaml:"collection"`
+	Sources    []SourceConfig   `yaml:"sources"`
 }
 
 // Defaults returns a Config with every field set to its default value.
@@ -25,12 +112,44 @@ func Defaults() Config {
 	return Config{
 		Port:  7373,
 		Debug: false,
+		Collection: CollectionConfig{
+			Auto:     true,
+			Interval: Duration(3 * time.Hour),
+		},
+		Sources: []SourceConfig{},
 	}
 }
 
-// Load reads path, parses it as YAML, merges with defaults and validates it.
+// SourceKey returns the canonical key for a source URL. Two URLs that produce
+// the same key are considered duplicates. The key is the scheme and host in
+// lowercase with a leading "www." stripped, the path without a trailing slash,
+// the query kept, and the fragment dropped.
+func SourceKey(rawURL string) (string, error) {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return "", fmt.Errorf("invalid url: %w", err)
+	}
+	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return "", fmt.Errorf("url must be an absolute http or https address")
+	}
+	if u.User != nil {
+		return "", fmt.Errorf("url must not contain credentials")
+	}
+
+	host := strings.ToLower(u.Host)
+	host = strings.TrimPrefix(host, "www.")
+	path := strings.TrimRight(u.Path, "/")
+
+	key := u.Scheme + "://" + host + path
+	if u.RawQuery != "" {
+		key += "?" + u.RawQuery
+	}
+	return key, nil
+}
+
+// load reads path, parses it as YAML, merges with defaults and validates it.
 // If path does not exist, the defaults are returned with no error.
-func Load(path string) (Config, error) {
+func load(path string) (Config, error) {
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
 		return Defaults(), nil
@@ -45,13 +164,11 @@ func Load(path string) (Config, error) {
 func parse(data []byte) (Config, error) {
 	c := Defaults()
 
-	// Use a node decoder so we can detect unknown keys.
 	var node yaml.Node
 	if err := yaml.Unmarshal(data, &node); err != nil {
 		return c, fmt.Errorf("parsing settings file: %w", err)
 	}
 	if node.Kind == 0 {
-		// Empty file: return defaults.
 		return c, nil
 	}
 	if node.Kind != yaml.DocumentNode || len(node.Content) == 0 {
@@ -62,12 +179,55 @@ func parse(data []byte) (Config, error) {
 		return c, fmt.Errorf("settings file must be a YAML mapping")
 	}
 
-	// Check for unknown keys before decoding.
-	known := map[string]bool{"port": true, "debug": true}
+	// Check for unknown top-level keys.
+	knownTop := map[string]bool{
+		"port": true, "debug": true, "collection": true, "sources": true,
+	}
 	for i := 0; i+1 < len(root.Content); i += 2 {
-		key := root.Content[i].Value
-		if !known[key] {
-			return c, fmt.Errorf("unknown settings key: %q", key)
+		k := root.Content[i].Value
+		if !knownTop[k] {
+			return c, fmt.Errorf("unknown settings key: %q", k)
+		}
+	}
+
+	// Check for unknown keys under collection:.
+	knownCollection := map[string]bool{"auto": true, "interval": true}
+	for i := 0; i+1 < len(root.Content); i += 2 {
+		if root.Content[i].Value != "collection" {
+			continue
+		}
+		collNode := root.Content[i+1]
+		if collNode.Kind != yaml.MappingNode {
+			break
+		}
+		for j := 0; j+1 < len(collNode.Content); j += 2 {
+			k := collNode.Content[j].Value
+			if !knownCollection[k] {
+				return c, fmt.Errorf("unknown settings key: \"collection.%s\"", k)
+			}
+		}
+	}
+
+	// Check for unknown keys within each source entry.
+	knownSource := map[string]bool{"name": true, "url": true, "enabled": true}
+	for i := 0; i+1 < len(root.Content); i += 2 {
+		if root.Content[i].Value != "sources" {
+			continue
+		}
+		seqNode := root.Content[i+1]
+		if seqNode.Kind != yaml.SequenceNode {
+			break
+		}
+		for idx, srcNode := range seqNode.Content {
+			if srcNode.Kind != yaml.MappingNode {
+				continue
+			}
+			for j := 0; j+1 < len(srcNode.Content); j += 2 {
+				k := srcNode.Content[j].Value
+				if !knownSource[k] {
+					return c, fmt.Errorf("unknown settings key: %q in sources[%d]", k, idx)
+				}
+			}
 		}
 	}
 
@@ -85,6 +245,26 @@ func parse(data []byte) (Config, error) {
 func Validate(c Config) error {
 	if c.Port < 0 || c.Port > 65535 {
 		return fmt.Errorf("port: must be between 0 and 65535, got %d", c.Port)
+	}
+	minInterval := Duration(15 * time.Minute)
+	maxInterval := Duration(168 * time.Hour)
+	if c.Collection.Interval < minInterval || c.Collection.Interval > maxInterval {
+		return fmt.Errorf("collection.interval: must be between 15m and 168h (7 days), got %s",
+			shortDuration(time.Duration(c.Collection.Interval)))
+	}
+	seen := make(map[string]bool, len(c.Sources))
+	for i, s := range c.Sources {
+		key, err := SourceKey(s.URL)
+		if err != nil {
+			return fmt.Errorf("sources[%d].url: %w", i, err)
+		}
+		if utf8.RuneCountInString(s.Name) > 100 {
+			return fmt.Errorf("sources[%d].name: at most 100 characters", i)
+		}
+		if seen[key] {
+			return fmt.Errorf("sources[%d].url: duplicate source (same key as an earlier source)", i)
+		}
+		seen[key] = true
 	}
 	return nil
 }

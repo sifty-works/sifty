@@ -22,7 +22,7 @@ The company of a Greenhouse vacancy is the company name the API gives, not the b
 
 ## When collection runs
 
-- Collection runs on an interval, by default every 3 hours, measured from the start of the last run of any kind. The Sources page carries the switch that turns automatic collection on or off and the interval.
+- Collection runs on an interval, by default every 3 hours, measured from the start of the last run of any kind. The interval is at least 15 minutes and at most 168 hours (7 days). The Sources page carries the switch that turns automatic collection on or off and the interval.
 - Opening or reloading the application starts a run when the interval has passed and automatic collection is on.
 - The "Collect jobs" button starts a run at once, ignoring the interval. It is disabled while a run is in progress.
 - Only one run happens at a time.

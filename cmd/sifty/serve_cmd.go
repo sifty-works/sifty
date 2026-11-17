@@ -62,13 +62,14 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	}
 	defer logClose()
 
-	// 5. Load settings.
+	// 5. Open settings store.
 	settingsPath := filepath.Join(dataDir, "sifty.yaml")
-	cfg, err := config.Load(settingsPath)
+	store, err := config.Open(settingsPath)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return err
 	}
+	cfg := store.Get()
 
 	// 6. Apply flag overrides.
 	// flags.port == -1 means --port was not given; keep the settings value.
