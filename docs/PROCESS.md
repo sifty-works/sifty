@@ -31,7 +31,7 @@ The process rests on six arrangements. Each guarantee is held by one of them, no
 - Working copies live in `.worktrees/<name>/` of the main checkout, which this repository also ignores. The branch of a working copy has the card's name and is never pushed.
 - The main checkout receives only merges and releases. No one edits its tracked files.
 - The live data folder lies outside this repository, and only `make release` names it. `make dev` and tests use their own data folders; `/data/` is ignored so a default run cannot add data to a commit.
-- `AGENTS.md` holds all the rules that agents follow here. The process does not rely on any agent configuration from outside this repository.
+- `AGENTS.md` holds all the rules that agents follow here. Tools and agent hooks the owner chooses to use are private: they live in the work repository and are switched on in the untracked `.claude/settings.local.json`. The public process does not depend on them.
 
 ## Cards
 
@@ -120,6 +120,6 @@ An incident is a failure in the way the work is done, such as a broken merge, a 
 
 ## Changing the process
 
-The process consists of this document, `AGENTS.md`, and the scripts behind `make release`, `make rollback` and `make budget`. A change to the process is a card like any other: the owner approves it, and it is merged the same way. After the change, the process has the same number of lines or fewer, unless the owner decides it may grow. The process uses one tool, Claude Code, and adds no git hooks and no agent hooks.
+The process consists of this document, `AGENTS.md`, and the scripts behind `make release`, `make rollback` and `make budget`. A change to the process is a card like any other: the owner approves it, and it is merged the same way. After the change, the process has the same number of lines or fewer, unless the owner decides it may grow. The process uses one tool, Claude Code, and adds no git hooks and no agent hooks to this repository.
 
 The commands named in this document are part of the code. Until a command exists, the coordinator does its steps by hand.
