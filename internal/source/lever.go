@@ -29,10 +29,7 @@ func (s *leverSource) List(ctx context.Context, f fetch.Fetcher, cfg SiteConfig)
 		return nil, ErrNothingRecognised
 	}
 	site := boardSlug(boardURL)
-	apiURL := "https://api.lever.co/v0/postings/" + site + "?mode=json"
-	if strings.Contains(strings.ToLower(boardURL.Host), ".eu.") {
-		apiURL = "https://api.eu.lever.co/v0/postings/" + site + "?mode=json"
-	}
+	apiURL := "https://" + Host(boardURL) + "/v0/postings/" + site + "?mode=json"
 	resp, err := f.Get(ctx, apiURL, fetch.Opt{})
 	if err != nil {
 		return nil, err
@@ -61,21 +58,18 @@ func (s *leverSource) List(ctx context.Context, f fetch.Fetcher, cfg SiteConfig)
 		tb.WriteString(post.Additional)
 		// Build salary field value.
 		var salary string
-		if sr := post.SalaryRange; sr != nil {
-			s := fmt.Sprintf("%d", sr.Min)
+		if sr := post.SalaryRange; sr != nil && (sr.Min != 0 || sr.Max != 0) {
 			if sr.Max > 0 {
-				s = fmt.Sprintf("%d–%d", sr.Min, sr.Max)
-			}
-			if sr.Min == 0 && sr.Max == 0 {
-				s = ""
+				salary = fmt.Sprintf("%d–%d", sr.Min, sr.Max)
+			} else {
+				salary = fmt.Sprintf("%d", sr.Min)
 			}
 			if c := trim(sr.Currency); c != "" {
-				s += " " + c
+				salary += " " + c
 			}
 			if i := trim(sr.Interval); i != "" {
-				s += " " + i
+				salary += " " + i
 			}
-			salary = strings.TrimSpace(s)
 		}
 		p := listing.Posting{
 			URL:      post.HostedURL,

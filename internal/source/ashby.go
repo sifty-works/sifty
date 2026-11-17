@@ -22,7 +22,7 @@ func (s *ashbySource) List(ctx context.Context, f fetch.Fetcher, cfg SiteConfig)
 	if err != nil {
 		return nil, ErrNothingRecognised
 	}
-	apiURL := fmt.Sprintf("https://api.ashbyhq.com/posting-api/job-board/%s?includeCompensation=true", boardSlug(boardURL))
+	apiURL := fmt.Sprintf("https://%s/posting-api/job-board/%s?includeCompensation=true", Host(boardURL), boardSlug(boardURL))
 	resp, err := f.Get(ctx, apiURL, fetch.Opt{})
 	if err != nil {
 		return nil, err
@@ -54,12 +54,12 @@ func (s *ashbySource) List(ctx context.Context, f fetch.Fetcher, cfg SiteConfig)
 		}
 		var salary string
 		if job.Compensation != nil {
-			salary = trim(job.Compensation.TierSummary)
+			salary = job.Compensation.TierSummary
 		}
 		p := listing.Posting{
-			URL:      trim(job.JobURL),
+			URL:      job.JobURL,
 			ApplyURL: applyURL,
-			Title:    trim(job.Title),
+			Title:    job.Title,
 			Company:  company,
 			Location: loc,
 			Tags:     []string{job.Department, job.Team},

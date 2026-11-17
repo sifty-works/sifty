@@ -341,6 +341,13 @@ func TestPostCollectForceTrueIgnoresAutoSetting(t *testing.T) {
 	if j.State != "failed" {
 		t.Errorf("state: got %q (ErrNotFound → all failed)", j.State)
 	}
+	// Status response must carry all expected keys.
+	st := e.get(t, "/api/status")
+	for _, key := range []string{"version", "offline", "debug", "collecting", "lastRun", "catalogue"} {
+		if _, ok := st[key]; !ok {
+			t.Errorf("status key %q missing from response", key)
+		}
+	}
 }
 
 func TestPostCollectNoSecondRunWhileOneQueued(t *testing.T) {
@@ -391,9 +398,7 @@ func TestPostCollectOfflineBlocksAutomatic(t *testing.T) {
 		t.Error("force=false should not enqueue when blocked")
 	}
 	do(map[string]any{"force": true})
-	if len(r.Active()) == 0 {
-		t.Error("force=true should enqueue even when blocked")
-	}
+	waitJob(t, r) // job completes instantly (no sources); waitJob fails on timeout
 }
 
 // --- /api/sources endpoints --------------------------------------------------
@@ -539,27 +544,13 @@ func TestStatusCatalogueCounterIncreasesAfterRun(t *testing.T) {
 	if after <= before {
 		t.Errorf("catalogue should increase after run; before=%v after=%v", before, after)
 	}
-}
-
-func TestStatusCatalogueDoesNotChangeWithoutRun(t *testing.T) {
-	e := newEnv(t)
+	// Counter is stable between runs (no spurious increments).
 	c1 := e.get(t, "/api/status")["catalogue"].(float64)
-	c2 := e.get(t, "/api/status")["catalogue"].(float64)
-	if c1 != c2 {
+	if c2 := e.get(t, "/api/status")["catalogue"].(float64); c1 != c2 {
 		t.Errorf("catalogue changed without a run: %v → %v", c1, c2)
 	}
-}
-
-func TestStatusCollectingKeyNilAfterRun(t *testing.T) {
-	e := newEnv(t)
-	e.fm.Set("https://feeds.example.com/jobs.xml", fetchtest.MapEntry{Err: fetch.ErrNotFound})
-	e.store.Update(func(c *config.Config) error { //nolint:errcheck
-		c.Sources = []config.SourceConfig{{URL: "https://feeds.example.com/jobs.xml", Enabled: true}}
-		return nil
-	})
-	e.r.Enqueue(runner.Spec{Kind: "collect"}) //nolint:errcheck
-	waitJob(t, e.r)
-	if st := e.get(t, "/api/status"); st["collecting"] != nil {
-		t.Errorf("collecting should be nil after run; got %v", st["collecting"])
+	// collecting key is nil once the job has finished.
+	if e.get(t, "/api/status")["collecting"] != nil {
+		t.Error("collecting should be nil after run")
 	}
 }

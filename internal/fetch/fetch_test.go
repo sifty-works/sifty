@@ -133,44 +133,6 @@ func TestGet_loopback_refused_by_policy(t *testing.T) {
 
 // --- redirects ---
 
-func TestGet_redirect_followed(t *testing.T) {
-	target := okServer(t, "final")
-	defer target.Close()
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, target.URL+"/", http.StatusFound)
-	}))
-	defer srv.Close()
-
-	sl := &sleepRecorder{}
-	f := newTestFetcher(fetch.NewMemBlockStore(), newFakeClock(), sl)
-	resp, err := f.Get(context.Background(), srv.URL+"/", fetch.Opt{})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if string(resp.Body) != "final" {
-		t.Errorf("body = %q, want %q", resp.Body, "final")
-	}
-}
-
-func TestGet_too_many_redirects(t *testing.T) {
-	var n atomic.Int32
-	var srvURL string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		n.Add(1)
-		http.Redirect(w, r, srvURL+"/", http.StatusFound)
-	}))
-	defer srv.Close()
-	srvURL = srv.URL
-
-	sl := &sleepRecorder{}
-	f := newTestFetcher(fetch.NewMemBlockStore(), newFakeClock(), sl)
-	_, err := f.Get(context.Background(), srv.URL+"/", fetch.Opt{})
-	if !errors.Is(err, fetch.ErrTransient) {
-		t.Fatalf("too many redirects: got %v, want ErrTransient", err)
-	}
-}
-
 func TestGet_redirect_to_private_refused(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Redirect to a private address.
@@ -564,6 +526,68 @@ func TestGet_user_agent(t *testing.T) {
 }
 
 // --- final redirect URL ---
+
+func TestGet_redirect_chain_of_six_followed(t *testing.T) {
+	final := okServer(t, "done")
+	defer final.Close()
+
+	// Build a chain of 6 redirectors, each pointing to the next.
+	var chain [6]*httptest.Server
+	for i := 5; i >= 0; i-- {
+		i := i
+		var target string
+		if i == 5 {
+			target = final.URL + "/"
+		} else {
+			target = chain[i+1].URL + "/"
+		}
+		chain[i] = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, target, http.StatusFound)
+		}))
+		defer chain[i].Close()
+	}
+
+	sl := &sleepRecorder{}
+	f := newTestFetcher(fetch.NewMemBlockStore(), newFakeClock(), sl)
+	resp, err := f.Get(context.Background(), chain[0].URL+"/", fetch.Opt{})
+	if err != nil {
+		t.Fatalf("chain of 6: unexpected error: %v", err)
+	}
+	if string(resp.Body) != "done" {
+		t.Errorf("body = %q, want %q", resp.Body, "done")
+	}
+	if !strings.HasSuffix(resp.URL, "/") || strings.HasPrefix(resp.URL, chain[0].URL) {
+		t.Errorf("response URL %q does not look like the final server", resp.URL)
+	}
+}
+
+func TestGet_seventh_redirect_refused(t *testing.T) {
+	final := okServer(t, "done")
+	defer final.Close()
+
+	// Build a chain of 7 redirectors. The 7th hop should be refused.
+	var chain [7]*httptest.Server
+	for i := 6; i >= 0; i-- {
+		i := i
+		var target string
+		if i == 6 {
+			target = final.URL + "/"
+		} else {
+			target = chain[i+1].URL + "/"
+		}
+		chain[i] = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, target, http.StatusFound)
+		}))
+		defer chain[i].Close()
+	}
+
+	sl := &sleepRecorder{}
+	f := newTestFetcher(fetch.NewMemBlockStore(), newFakeClock(), sl)
+	_, err := f.Get(context.Background(), chain[0].URL+"/", fetch.Opt{})
+	if !errors.Is(err, fetch.ErrTransient) {
+		t.Fatalf("7th redirect: got %v, want ErrTransient", err)
+	}
+}
 
 func TestGet_response_url_is_final_after_redirect(t *testing.T) {
 	target := okServer(t, "hi")

@@ -112,7 +112,8 @@ func realSleep(ctx context.Context, d time.Duration) error {
 	}
 }
 
-// buildHTTPClient builds an http.Client with our policy-enforcing dialer.
+// buildHTTPClient builds an http.Client with our policy-enforcing dialer and
+// a CheckRedirect that validates each hop and limits the chain to maxRedirects.
 func (c *client) buildHTTPClient() *http.Client {
 	dialer := &net.Dialer{
 		ControlContext: func(_ context.Context, _, address string, _ syscall.RawConn) error {
@@ -130,9 +131,18 @@ func (c *client) buildHTTPClient() *http.Client {
 
 	return &http.Client{
 		Transport: transport,
-		// We handle redirects ourselves to enforce the policy on each hop.
-		CheckRedirect: func(*http.Request, []*http.Request) error {
-			return http.ErrUseLastResponse
+		// CheckRedirect validates each hop: refuse after maxRedirects and
+		// reject any redirect to an unsupported scheme or a URL with credentials.
+		// The dialer's ControlContext checks every resolved IP, so private
+		// address redirection is caught there without an extra pre-check.
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) > maxRedirects {
+				return wrapErr(ErrTransient, "too many redirects (>%d)", maxRedirects)
+			}
+			if _, err := parseAndCheckURL(req.URL.String()); err != nil {
+				return err
+			}
+			return nil
 		},
 	}
 }
@@ -180,12 +190,56 @@ func (c *client) Get(ctx context.Context, rawURL string, opt Opt) (Response, err
 		return Response{}, ctx.Err()
 	}
 
-	resp, err := c.doWithRedirects(ctx, rawURL, opt)
+	reqCtx, cancel := context.WithTimeout(ctx, c.timeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, rawURL, nil)
 	if err != nil {
-		// Do not record back-off for caller cancellation, permanent errors,
-		// or address refusals — only for genuine transient network failures.
-		if !errors.Is(err, ErrBlocked) && !errors.Is(err, ErrNotFound) &&
-			!errors.Is(err, ErrRefused) && ctx.Err() == nil {
+		return Response{}, wrapErr(ErrTransient, "building request: %v", err)
+	}
+	req.Header.Set("User-Agent", userAgent)
+	if opt.Accept != "" {
+		req.Header.Set("Accept", opt.Accept)
+	}
+
+	httpResp, err := c.httpClient.Do(req)
+	if err != nil {
+		// Caller cancelled or its deadline passed: propagate as-is, no back-off.
+		if ctx.Err() != nil {
+			return Response{}, ctx.Err()
+		}
+		// Per-request timeout fired.
+		if reqCtx.Err() != nil {
+			return Response{}, wrapErr(ErrTransient, "request timed out")
+		}
+		// Do not record back-off for permanent errors or address refusals —
+		// only for genuine transient network failures.
+		if !errors.Is(err, ErrBlocked) && !errors.Is(err, ErrNotFound) && !errors.Is(err, ErrRefused) {
+			c.recordTransient(domain)
+		}
+		if errors.Is(err, ErrRefused) || errors.Is(err, ErrTransient) ||
+			errors.Is(err, ErrBlocked) || errors.Is(err, ErrNotFound) {
+			return Response{}, err
+		}
+		return Response{}, wrapErr(ErrTransient, "request failed: %v", err)
+	}
+
+	body, err := io.ReadAll(io.LimitReader(httpResp.Body, maxBodyBytes+1))
+	httpResp.Body.Close()
+	if err != nil {
+		return Response{}, wrapErr(ErrTransient, "reading body: %v", err)
+	}
+	if len(body) > maxBodyBytes {
+		return Response{}, wrapErr(ErrTransient, "response body exceeds 8 MB limit")
+	}
+
+	// resp.Request.URL is the final URL after all redirects.
+	finalURL := httpResp.Request.URL.String()
+	ct := httpResp.Header.Get("Content-Type")
+	resp, err := c.interpretResponse(httpResp.StatusCode, ct, httpResp.Header, body, finalURL)
+	if err != nil {
+		// Back-off: not for blocked (recordBlock already fired) or permanent not-found.
+		if !errors.Is(err, ErrBlocked) && !errors.Is(err, ErrNotFound) {
 			c.recordTransient(domain)
 		}
 		return Response{}, err
@@ -208,103 +262,6 @@ func parseAndCheckURL(raw string) (*url.URL, error) {
 	return u, nil
 }
 
-// doWithRedirects performs the request following up to maxRedirects redirects.
-func (c *client) doWithRedirects(ctx context.Context, rawURL string, opt Opt) (Response, error) {
-	currentURL := rawURL
-	var redirects int
-
-	for {
-		reqCtx, cancel := context.WithTimeout(ctx, c.timeout)
-		httpResp, err := c.doOne(reqCtx, ctx, currentURL, opt)
-		cancel()
-		if err != nil {
-			return Response{}, err
-		}
-
-		switch {
-		case httpResp.StatusCode >= 300 && httpResp.StatusCode < 400:
-			httpResp.Body.Close()
-			if redirects >= maxRedirects {
-				return Response{}, wrapErr(ErrTransient, "too many redirects (>%d)", maxRedirects)
-			}
-			loc := httpResp.Header.Get("Location")
-			if loc == "" {
-				return Response{}, wrapErr(ErrTransient, "redirect with no Location header")
-			}
-			resolved, err := resolveRedirect(currentURL, loc)
-			if err != nil {
-				return Response{}, err
-			}
-			// The dialer's ControlContext checks the actual dialled address,
-			// so no separate pre-check is needed here.
-			currentURL = resolved.String()
-			redirects++
-
-		default:
-			body, err := io.ReadAll(io.LimitReader(httpResp.Body, maxBodyBytes+1))
-			httpResp.Body.Close()
-			if err != nil {
-				return Response{}, wrapErr(ErrTransient, "reading body: %v", err)
-			}
-			if len(body) > maxBodyBytes {
-				return Response{}, wrapErr(ErrTransient, "response body exceeds 8 MB limit")
-			}
-			ct := httpResp.Header.Get("Content-Type")
-			return c.interpretResponse(httpResp.StatusCode, ct, httpResp.Header, body, currentURL)
-		}
-	}
-}
-
-// resolveRedirect parses and resolves a redirect Location against baseURL.
-func resolveRedirect(baseURL, location string) (*url.URL, error) {
-	next, err := url.Parse(location)
-	if err != nil {
-		return nil, wrapErr(ErrTransient, "bad redirect location: %v", err)
-	}
-	base, err := url.Parse(baseURL)
-	if err != nil {
-		return nil, wrapErr(ErrTransient, "bad base URL: %v", err)
-	}
-	resolved := base.ResolveReference(next)
-	if _, err := parseAndCheckURL(resolved.String()); err != nil {
-		return nil, err
-	}
-	return resolved, nil
-}
-
-// doOne performs a single HTTP GET (no redirect following).
-// ctx is the per-request context (already has the per-request timeout applied);
-// callerCtx is the original caller context, used to distinguish cancellation
-// from a per-request timeout.
-func (c *client) doOne(ctx context.Context, callerCtx context.Context, rawURL string, opt Opt) (*http.Response, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
-	if err != nil {
-		return nil, wrapErr(ErrTransient, "building request: %v", err)
-	}
-	req.Header.Set("User-Agent", userAgent)
-	if opt.Accept != "" {
-		req.Header.Set("Accept", opt.Accept)
-	}
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		// Caller cancelled or its deadline passed: propagate as-is, no back-off.
-		if callerCtx.Err() != nil {
-			return nil, callerCtx.Err()
-		}
-		// Per-request timeout fired.
-		if ctx.Err() != nil {
-			return nil, wrapErr(ErrTransient, "request timed out")
-		}
-		// A refused address from the dialer control should stay ErrRefused.
-		if errors.Is(err, ErrRefused) {
-			return nil, wrapErr(ErrRefused, "address check failed: %v", err)
-		}
-		return nil, wrapErr(ErrTransient, "request failed: %v", err)
-	}
-	return resp, nil
-}
-
 // interpretResponse maps HTTP status + body to a Response or error.
 //
 // Block rules (in order):
@@ -316,25 +273,17 @@ func (c *client) doOne(ctx context.Context, callerCtx context.Context, rawURL st
 func (c *client) interpretResponse(status int, ct string, header http.Header, body []byte, finalURL string) (Response, error) {
 	domain := domainKey(hostOf(finalURL))
 
+	cloudflareBlocked := header.Get("cf-mitigated") == "challenge" ||
+		containsTitleExact(body, "Just a moment...") ||
+		(status == 503 && bytes.Contains(body, []byte("challenge-platform")))
+
 	switch {
-	case status == 403:
+	case status == 403 || cloudflareBlocked:
 		c.recordBlock(domain)
-		return Response{}, wrapErr(ErrBlocked, "403 Forbidden from %s", domain)
+		return Response{}, wrapErr(ErrBlocked, "HTTP %d from %s", status, domain)
 
 	case status == 404 || status == 410:
 		return Response{}, wrapErr(ErrNotFound, "HTTP %d from %s", status, domain)
-
-	case header.Get("cf-mitigated") == "challenge":
-		c.recordBlock(domain)
-		return Response{}, wrapErr(ErrBlocked, "Cloudflare challenge (cf-mitigated) from %s", domain)
-
-	case containsTitleExact(body, "Just a moment..."):
-		c.recordBlock(domain)
-		return Response{}, wrapErr(ErrBlocked, "Cloudflare challenge page from %s", domain)
-
-	case status == 503 && bytes.Contains(body, []byte("challenge-platform")):
-		c.recordBlock(domain)
-		return Response{}, wrapErr(ErrBlocked, "Cloudflare challenge (503) from %s", domain)
 
 	case status >= 200 && status < 300:
 		c.recordSuccess(domain)
@@ -359,13 +308,11 @@ func containsTitleExact(body []byte, title string) bool {
 		return false
 	}
 	start += len("<title>")
-	rest := lower[start:]
-	end := bytes.Index(rest, []byte("</title>"))
+	end := bytes.Index(lower[start:], []byte("</title>"))
 	if end < 0 {
 		return false
 	}
-	got := strings.TrimSpace(string(body[start : start+end]))
-	return got == title
+	return strings.TrimSpace(string(body[start:start+end])) == title
 }
 
 // hostOf returns the host from a URL string.

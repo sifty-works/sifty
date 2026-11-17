@@ -53,8 +53,8 @@ func PlainText(h string) string {
 		Data:     "div",
 		DataAtom: atom.Div,
 	})
-	if err != nil || len(nodes) == 0 {
-		return strings.TrimSpace(htmlToText(h))
+	if err != nil {
+		return ""
 	}
 	var b strings.Builder
 	for _, n := range nodes {
@@ -88,14 +88,14 @@ func headingSet() map[string]bool {
 // plainToHTML converts plain text to HTML.
 // Blank lines separate paragraphs. Lines starting with -, * or • start list
 // items. A line whose text (stripped of a trailing colon) is a known section
-// heading becomes its own h3, even when no blank line precedes or follows it.
+// heading becomes its own paragraph; sanitise will promote it to h3.
 func plainToHTML(plain string) string {
 	hset := headingSet()
 	lines := strings.Split(strings.ReplaceAll(plain, "\r\n", "\n"), "\n")
 
 	type block struct {
-		tag   string   // "ul", "h3", or "" (paragraph)
-		lines []string // items for ul; single entry for h3 or paragraph
+		tag   string   // "ul" or "" (paragraph)
+		lines []string // items for ul; single entry for paragraph
 	}
 
 	var blocks []block
@@ -134,7 +134,8 @@ func plainToHTML(plain string) string {
 		} else if isHeadingLine(stripped) {
 			flush()
 			heading := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(stripped), ":"))
-			blocks = append(blocks, block{tag: "h3", lines: []string{heading}})
+			// Output as <p>; sanitise promotes it to <h3> via block flattening.
+			blocks = append(blocks, block{tag: "", lines: []string{heading}})
 		} else {
 			if cur == nil {
 				cur = &block{}
@@ -162,10 +163,6 @@ func plainToHTML(plain string) string {
 				buf.WriteString("</li>")
 			}
 			buf.WriteString("</ul>")
-		case "h3":
-			buf.WriteString("<h3>")
-			buf.WriteString(html.EscapeString(b.lines[0]))
-			buf.WriteString("</h3>")
 		default:
 			for _, para := range b.lines {
 				buf.WriteString("<p>")
@@ -187,10 +184,7 @@ func sanitise(htmlIn string) string {
 	if err != nil {
 		return ""
 	}
-	out := strings.Join(flattenToBlocks(nodes), "")
-	out = removeEmptyElements(out)
-	out = promoteHeadings(out)
-	return out
+	return strings.Join(flattenToBlocks(nodes), "")
 }
 
 // containerBlocks is the set of block container elements whose children are
@@ -221,8 +215,10 @@ func mapHeadingTag(a atom.Atom) string {
 
 // flattenToBlocks processes a slice of nodes in block context and returns a
 // slice of rendered block HTML strings. Container elements are flattened;
-// loose inline content is wrapped in p.
+// loose inline content is wrapped in p. A paragraph whose full text is a
+// known section heading is promoted to h3.
 func flattenToBlocks(nodes []*xhtml.Node) []string {
+	hset := headingSet()
 	var blocks []string
 	var inlineAcc strings.Builder
 
@@ -232,6 +228,24 @@ func flattenToBlocks(nodes []*xhtml.Node) []string {
 		if s != "" {
 			blocks = append(blocks, "<p>"+s+"</p>")
 		}
+	}
+
+	// headingFromContent returns the plain-text heading if the paragraph
+	// content (after stripping strong/em and a trailing colon) is a known
+	// section heading; otherwise returns "".
+	headingFromContent := func(content string) string {
+		t := strings.ReplaceAll(content, "<strong>", "")
+		t = strings.ReplaceAll(t, "</strong>", "")
+		t = strings.ReplaceAll(t, "<em>", "")
+		t = strings.ReplaceAll(t, "</em>", "")
+		t = html.UnescapeString(t)
+		t = strings.TrimSpace(t)
+		t = strings.TrimSuffix(t, ":")
+		t = strings.TrimSpace(t)
+		if t != "" && hset[strings.ToLower(t)] {
+			return t
+		}
+		return ""
 	}
 
 	for _, n := range nodes {
@@ -257,7 +271,11 @@ func flattenToBlocks(nodes []*xhtml.Node) []string {
 				flushInline()
 				content := normalizeInlineContent(renderInlineChildren(n))
 				if content != "" {
-					blocks = append(blocks, "<p>"+content+"</p>")
+					if h := headingFromContent(content); h != "" {
+						blocks = append(blocks, "<h3>"+html.EscapeString(h)+"</h3>")
+					} else {
+						blocks = append(blocks, "<p>"+content+"</p>")
+					}
 				}
 			} else if a == atom.Ul || a == atom.Ol {
 				flushInline()
@@ -307,7 +325,7 @@ func renderInlineChildren(n *xhtml.Node) string {
 }
 
 // renderInlineNode renders a single node as inline HTML. Block elements in
-// inline context are unwrapped.
+// inline context are unwrapped. Empty strong and em elements are dropped.
 func renderInlineNode(n *xhtml.Node) string {
 	switch n.Type {
 	case xhtml.TextNode:
@@ -321,17 +339,19 @@ func renderInlineNode(n *xhtml.Node) string {
 			return "<br>"
 		}
 		if a == atom.Strong || a == atom.Em {
-			var b strings.Builder
-			b.WriteByte('<')
-			b.WriteString(n.Data)
-			b.WriteByte('>')
-			for c := n.FirstChild; c != nil; c = c.NextSibling {
-				b.WriteString(renderInlineNode(c))
+			inner := renderInlineChildren(n)
+			if inner == "" {
+				return "" // truly empty element
 			}
-			b.WriteString("</")
-			b.WriteString(n.Data)
-			b.WriteByte('>')
-			return b.String()
+			// If inner contains no visible text (only whitespace and/or <br>):
+			noText := strings.TrimSpace(strings.ReplaceAll(inner, "<br>", ""))
+			if noText == "" {
+				if strings.Contains(inner, "<br>") {
+					return "" // br-only content: drop element
+				}
+				return " " // whitespace-only text: replace element with one space
+			}
+			return "<" + n.Data + ">" + inner + "</" + n.Data + ">"
 		}
 		var b strings.Builder
 		for c := n.FirstChild; c != nil; c = c.NextSibling {
@@ -344,7 +364,7 @@ func renderInlineNode(n *xhtml.Node) string {
 
 // normalizeInlineContent normalises inline HTML content:
 // collapses whitespace runs in text, trims edges, drops leading/trailing <br>,
-// collapses runs of <br> to one.
+// collapses consecutive <br> to one.
 func normalizeInlineContent(s string) string {
 	s = collapseTextWhitespace(s)
 	s = strings.TrimSpace(s)
@@ -354,7 +374,15 @@ func normalizeInlineContent(s string) string {
 	for strings.HasSuffix(s, "<br>") {
 		s = strings.TrimSpace(s[:len(s)-4])
 	}
-	return collapseBr(s)
+	// Collapse consecutive <br> and strip space immediately after any <br>.
+	prev := ""
+	for s != prev {
+		prev = s
+		s = strings.ReplaceAll(s, "<br> <br>", "<br>")
+		s = strings.ReplaceAll(s, "<br><br>", "<br>")
+		s = strings.ReplaceAll(s, "<br> ", "<br>")
+	}
+	return s
 }
 
 // collapseTextWhitespace collapses runs of ASCII whitespace in the text
@@ -384,115 +412,6 @@ func collapseTextWhitespace(s string) string {
 		}
 	}
 	return b.String()
-}
-
-// collapseBr collapses runs of <br> (with optional whitespace between) to one.
-func collapseBr(s string) string {
-	var b strings.Builder
-	i, n := 0, len(s)
-	for i < n {
-		if strings.HasPrefix(s[i:], "<br>") {
-			b.WriteString("<br>")
-			i += 4
-			for i < n {
-				if strings.HasPrefix(s[i:], "<br>") {
-					i += 4
-				} else if s[i] == ' ' || s[i] == '\t' || s[i] == '\n' || s[i] == '\r' {
-					i++
-				} else {
-					break
-				}
-			}
-		} else {
-			b.WriteByte(s[i])
-			i++
-		}
-	}
-	return b.String()
-}
-
-// removeEmptyElements removes elements whose content is empty or only <br>
-// tags and whitespace, iterating until stable.
-func removeEmptyElements(s string) string {
-	tags := []string{"p", "h2", "h3", "h4", "li", "strong", "em", "ul", "ol"}
-	changed := true
-	for changed {
-		changed = false
-		for _, tag := range tags {
-			open, close := "<"+tag+">", "</"+tag+">"
-			for {
-				start := strings.Index(s, open)
-				if start < 0 {
-					break
-				}
-				end := strings.Index(s[start:], close)
-				if end < 0 {
-					break
-				}
-				inner := s[start+len(open) : start+end]
-				trimmed := strings.TrimSpace(strings.ReplaceAll(inner, "<br>", ""))
-				if trimmed == "" {
-					s = s[:start] + s[start+end+len(close):]
-					changed = true
-				} else {
-					break
-				}
-			}
-		}
-	}
-	return s
-}
-
-// promoteHeadings replaces a <p> whose entire text (stripped of optional
-// strong/em wrappers and trailing colon) is a known section heading with <h3>.
-func promoteHeadings(s string) string {
-	hset := headingSet()
-	var b strings.Builder
-	remaining := s
-	for {
-		start := strings.Index(remaining, "<p>")
-		if start < 0 {
-			b.WriteString(remaining)
-			break
-		}
-		end := strings.Index(remaining[start:], "</p>")
-		if end < 0 {
-			b.WriteString(remaining)
-			break
-		}
-		b.WriteString(remaining[:start])
-		inner := remaining[start+3 : start+end]
-		remaining = remaining[start+end+4:]
-		text := paragraphText(inner)
-		if isHeading(text, hset) {
-			b.WriteString("<h3>")
-			b.WriteString(text)
-			b.WriteString("</h3>")
-		} else {
-			b.WriteString("<p>")
-			b.WriteString(inner)
-			b.WriteString("</p>")
-		}
-	}
-	return b.String()
-}
-
-// paragraphText returns the visible text of paragraph inner HTML, stripping
-// strong/em wrappers, HTML-unescaping, and removing a trailing colon.
-func paragraphText(inner string) string {
-	text := strings.ReplaceAll(inner, "<strong>", "")
-	text = strings.ReplaceAll(text, "</strong>", "")
-	text = strings.ReplaceAll(text, "<em>", "")
-	text = strings.ReplaceAll(text, "</em>", "")
-	text = html.UnescapeString(text)
-	text = strings.TrimSpace(text)
-	text = strings.TrimSuffix(text, ":")
-	return strings.TrimSpace(text)
-}
-
-// isHeading reports whether text (lowercased) is a known heading.
-func isHeading(text string, hset map[string]bool) bool {
-	return hset[strings.ToLower(text)]
 }
 
 // extractText walks a node tree and appends plain text to b, with a newline
@@ -525,22 +444,4 @@ func extractText(n *xhtml.Node, b *strings.Builder) {
 			b.WriteByte('\n')
 		}
 	}
-}
-
-// htmlToText is a fallback plain text extractor for strings that cannot be
-// parsed as HTML fragments.
-func htmlToText(h string) string {
-	var b strings.Builder
-	inTag := false
-	for _, r := range h {
-		switch {
-		case r == '<':
-			inTag = true
-		case r == '>':
-			inTag = false
-		case !inTag:
-			b.WriteRune(r)
-		}
-	}
-	return b.String()
 }

@@ -115,16 +115,13 @@ func parseDate(s string) (time.Time, bool) {
 }
 
 // resolveURL resolves href against base, returning an absolute URL.
-// href is returned unchanged if it is already absolute or base is empty.
+// href is returned unchanged if it is already absolute, empty, or base is empty.
 func resolveURL(href, base string) string {
-	if href == "" {
-		return ""
+	if href == "" || base == "" {
+		return href
 	}
 	hURL, err := url.Parse(href)
 	if err != nil || hURL.IsAbs() {
-		return href
-	}
-	if base == "" {
 		return href
 	}
 	bURL, err := url.Parse(base)

@@ -32,23 +32,6 @@ const (
 	OutcomeTombstoned         // address is on the removed list
 )
 
-// String returns a human-readable name for the outcome.
-func (o Outcome) String() string {
-	switch o {
-	case OutcomeNew:
-		return "New"
-	case OutcomeUpdated:
-		return "Updated"
-	case OutcomeUnchanged:
-		return "Unchanged"
-	case OutcomeMerged:
-		return "Merged"
-	case OutcomeTombstoned:
-		return "Tombstoned"
-	}
-	return fmt.Sprintf("Outcome(%d)", int(o))
-}
-
 // Catalog owns the vacancy tables.
 type Catalog struct {
 	db  *db.DB
@@ -190,14 +173,14 @@ func (c *Catalog) Upsert(ctx context.Context, p listing.Posting, src string) (in
 	}
 
 	// Find matching vacancies.
-	matchIDs, err := findMatches(ctx, tx, canonURL, atsApply, canonApply, identity, company, now)
+	matchIDs, err := findMatches(ctx, tx, canonURL, atsApply, canonApply, identity, company)
 	if err != nil {
 		return 0, 0, fmt.Errorf("catalog: upsert: match: %w", err)
 	}
 
 	// New vacancy.
 	if len(matchIDs) == 0 {
-		id, err := insertVacancy(ctx, tx, vacancyData{
+		row := vacancyRow{
 			identity:       identity,
 			title:          p.Title,
 			company:        company,
@@ -215,14 +198,15 @@ func (c *Catalog) Upsert(ctx context.Context, p listing.Posting, src string) (in
 			contentHash:    newHash,
 			version:        1,
 			body:           newBody,
-		})
+		}
+		id, err := save(ctx, tx, row)
 		if err != nil {
 			return 0, 0, fmt.Errorf("catalog: upsert: insert: %w", err)
 		}
 		if err := WriteFTS(ctx, tx, id, newBody); err != nil {
 			return 0, 0, fmt.Errorf("catalog: upsert: fts: %w", err)
 		}
-		if err := insertSource(ctx, tx, id, src, canonURL, nowStr); err != nil {
+		if err := saveSource(ctx, tx, id, src, canonURL, nowStr); err != nil {
 			return 0, 0, fmt.Errorf("catalog: upsert: insert source: %w", err)
 		}
 		if err := tx.Commit(); err != nil {
@@ -241,8 +225,8 @@ func (c *Catalog) Upsert(ctx context.Context, p listing.Posting, src string) (in
 	vacancyID := matchIDs[0]
 
 	// Load existing vacancy.
-	var ex existingRow
-	if err := loadVacancy(ctx, tx, vacancyID, &ex); err != nil {
+	ex, err := loadVacancy(ctx, tx, vacancyID)
+	if err != nil {
 		return 0, 0, fmt.Errorf("catalog: upsert: load: %w", err)
 	}
 
@@ -288,16 +272,7 @@ func (c *Catalog) Upsert(ctx context.Context, p listing.Posting, src string) (in
 	}
 	upd.lastSeen = nowStr
 
-	if _, err := tx.ExecContext(ctx, `
-		UPDATE vacancy SET
-			identity=?, title=?, company=?, location=?, tags=?, source_fields=?,
-			apply_url=?, published_at=?, published_basis=?, expires_at=?,
-			last_seen=?, text_state=?, content_hash=?, version=?, body=?
-		WHERE id=?`,
-		upd.identity, upd.title, upd.company, upd.location, upd.tagsJSON, upd.fieldsJSON,
-		upd.applyURL, upd.publishedAt, upd.publishedBasis, upd.expiresAt,
-		upd.lastSeen, upd.textState, upd.contentHash, upd.version, upd.body,
-		vacancyID); err != nil {
+	if _, err := save(ctx, tx, upd); err != nil {
 		return 0, 0, fmt.Errorf("catalog: upsert: update: %w", err)
 	}
 
@@ -306,7 +281,7 @@ func (c *Catalog) Upsert(ctx context.Context, p listing.Posting, src string) (in
 			return 0, 0, fmt.Errorf("catalog: upsert: fts: %w", err)
 		}
 	}
-	if err := upsertSource(ctx, tx, vacancyID, src, canonURL, nowStr); err != nil {
+	if err := saveSource(ctx, tx, vacancyID, src, canonURL, nowStr); err != nil {
 		return 0, 0, fmt.Errorf("catalog: upsert: source: %w", err)
 	}
 
@@ -325,17 +300,7 @@ func (c *Catalog) Upsert(ctx context.Context, p listing.Posting, src string) (in
 
 // --- internal helpers ---
 
-type vacancyData struct {
-	identity, title, company, url, applyURL, location string
-	tagsJSON, fieldsJSON                              string
-	publishedAt, publishedBasis, expiresAt            string
-	firstSeen, lastSeen                               string
-	textState, contentHash                            string
-	version                                           int
-	body                                              []byte
-}
-
-type existingRow struct {
+type vacancyRow struct {
 	id             int64
 	identity       string
 	title          string
@@ -356,25 +321,41 @@ type existingRow struct {
 	body           []byte
 }
 
-func insertVacancy(ctx context.Context, tx *sql.Tx, v vacancyData) (int64, error) {
-	res, err := tx.ExecContext(ctx, `
-		INSERT INTO vacancy
-			(identity, title, company, url, apply_url, location, tags, source_fields,
-			 published_at, published_basis, expires_at,
-			 first_seen, last_seen, text_state, content_hash, version, body)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		v.identity, v.title, v.company, v.url, v.applyURL, v.location,
-		v.tagsJSON, v.fieldsJSON,
-		v.publishedAt, v.publishedBasis, v.expiresAt,
-		v.firstSeen, v.lastSeen, v.textState, v.contentHash, v.version, v.body)
-	if err != nil {
-		return 0, err
+// save inserts or updates a vacancy row. When v.id is 0 an INSERT is performed
+// and the new id is returned. Otherwise an UPDATE is performed and v.id is returned.
+func save(ctx context.Context, tx *sql.Tx, v vacancyRow) (int64, error) {
+	if v.id == 0 {
+		res, err := tx.ExecContext(ctx, `
+			INSERT INTO vacancy
+				(identity, title, company, url, apply_url, location, tags, source_fields,
+				 published_at, published_basis, expires_at,
+				 first_seen, last_seen, text_state, content_hash, version, body)
+			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			v.identity, v.title, v.company, v.url, v.applyURL, v.location,
+			v.tagsJSON, v.fieldsJSON,
+			v.publishedAt, v.publishedBasis, v.expiresAt,
+			v.firstSeen, v.lastSeen, v.textState, v.contentHash, v.version, v.body)
+		if err != nil {
+			return 0, err
+		}
+		return res.LastInsertId()
 	}
-	return res.LastInsertId()
+	_, err := tx.ExecContext(ctx, `
+		UPDATE vacancy SET
+			identity=?, title=?, company=?, location=?, tags=?, source_fields=?,
+			apply_url=?, published_at=?, published_basis=?, expires_at=?,
+			last_seen=?, text_state=?, content_hash=?, version=?, body=?
+		WHERE id=?`,
+		v.identity, v.title, v.company, v.location, v.tagsJSON, v.fieldsJSON,
+		v.applyURL, v.publishedAt, v.publishedBasis, v.expiresAt,
+		v.lastSeen, v.textState, v.contentHash, v.version, v.body,
+		v.id)
+	return v.id, err
 }
 
-func loadVacancy(ctx context.Context, tx *sql.Tx, id int64, ex *existingRow) error {
-	return tx.QueryRowContext(ctx, `
+func loadVacancy(ctx context.Context, tx *sql.Tx, id int64) (vacancyRow, error) {
+	var ex vacancyRow
+	err := tx.QueryRowContext(ctx, `
 		SELECT id, identity, title, company, url, apply_url, location, tags, source_fields,
 		       published_at, published_basis, expires_at,
 		       first_seen, last_seen, text_state, content_hash, version, body
@@ -383,16 +364,11 @@ func loadVacancy(ctx context.Context, tx *sql.Tx, id int64, ex *existingRow) err
 		&ex.tagsJSON, &ex.fieldsJSON,
 		&ex.publishedAt, &ex.publishedBasis, &ex.expiresAt,
 		&ex.firstSeen, &ex.lastSeen, &ex.textState, &ex.contentHash, &ex.version, &ex.body)
+	return ex, err
 }
 
-func insertSource(ctx context.Context, tx *sql.Tx, vacancyID int64, src, u, seenAt string) error {
-	_, err := tx.ExecContext(ctx, `
-		INSERT INTO vacancy_source (vacancy_id, source, url, seen_at) VALUES (?, ?, ?, ?)`,
-		vacancyID, src, u, seenAt)
-	return err
-}
-
-func upsertSource(ctx context.Context, tx *sql.Tx, vacancyID int64, src, u, seenAt string) error {
+// saveSource inserts or updates a vacancy_source row. ON CONFLICT updates seen_at.
+func saveSource(ctx context.Context, tx *sql.Tx, vacancyID int64, src, u, seenAt string) error {
 	_, err := tx.ExecContext(ctx, `
 		INSERT INTO vacancy_source (vacancy_id, source, url, seen_at) VALUES (?, ?, ?, ?)
 		ON CONFLICT(url) DO UPDATE SET seen_at = excluded.seen_at`,
@@ -403,7 +379,7 @@ func upsertSource(ctx context.Context, tx *sql.Tx, vacancyID int64, src, u, seen
 // findMatches returns all vacancy ids that match the posting.
 // atsApply is the ConcreteATS form of the apply URL (empty when not concrete).
 // canonApply is the best canonical form used for the conflict guard in rule (c).
-func findMatches(ctx context.Context, tx *sql.Tx, canonURL, atsApply, canonApply, identity, company string, now time.Time) ([]int64, error) {
+func findMatches(ctx context.Context, tx *sql.Tx, canonURL, atsApply, canonApply, identity, company string) ([]int64, error) {
 	var ids []int64
 
 	// Match (a): canonical URL already in vacancy_source.
@@ -416,53 +392,43 @@ func findMatches(ctx context.Context, tx *sql.Tx, canonURL, atsApply, canonApply
 		ids = appendUnique(ids, aid)
 	}
 
-	// Match (b): same concrete ATS apply address (only when posting has one).
-	if atsApply != "" {
-		rows, err := tx.QueryContext(ctx, `SELECT id FROM vacancy WHERE apply_url = ?`, atsApply)
-		if err != nil {
-			return nil, fmt.Errorf("match by apply: %w", err)
-		}
-		for rows.Next() {
-			var bid int64
-			if err := rows.Scan(&bid); err != nil {
-				rows.Close()
-				return nil, err
-			}
-			ids = appendUnique(ids, bid)
-		}
-		if err := rows.Close(); err != nil {
-			return nil, err
-		}
+	// Matches (b) and (c) in one query, filtered in Go.
+	// (b): same concrete ATS apply address.
+	// (c): same identity, company not Unknown, different host, no conflicting apply URL.
+	newHost := urlHost(canonURL)
+	rows, err := tx.QueryContext(ctx, `
+		SELECT id, url, apply_url FROM vacancy
+		WHERE (? != '' AND apply_url = ?) OR (identity = ? AND company != 'Unknown')`,
+		atsApply, atsApply, identity)
+	if err != nil {
+		return nil, fmt.Errorf("match by apply/identity: %w", err)
 	}
-
-	// Match (c): same identity, company not Unknown, different host, no conflicting apply URL.
-	if company != "Unknown" {
-		newHost := urlHost(canonURL)
-		rows, err := tx.QueryContext(ctx,
-			`SELECT id, url, apply_url FROM vacancy WHERE identity = ? AND company != 'Unknown'`,
-			identity)
-		if err != nil {
-			return nil, fmt.Errorf("match by identity: %w", err)
-		}
-		for rows.Next() {
-			var cid int64
-			var storedURL, storedApply string
-			if err := rows.Scan(&cid, &storedURL, &storedApply); err != nil {
-				rows.Close()
-				return nil, err
-			}
-			if urlHost(storedURL) == newHost {
-				continue // same host — no match
-			}
-			// Apply conflict: both set and different.
-			if canonApply != "" && storedApply != "" && canonApply != storedApply {
-				continue
-			}
-			ids = appendUnique(ids, cid)
-		}
-		if err := rows.Close(); err != nil {
+	for rows.Next() {
+		var rid int64
+		var rURL, rApply string
+		if err := rows.Scan(&rid, &rURL, &rApply); err != nil {
+			rows.Close()
 			return nil, err
 		}
+		// Match (b): matching apply URL.
+		if atsApply != "" && rApply == atsApply {
+			ids = appendUnique(ids, rid)
+			continue
+		}
+		// Match (c): different host, no apply conflict, company not Unknown.
+		if company == "Unknown" {
+			continue
+		}
+		if urlHost(rURL) == newHost {
+			continue
+		}
+		if canonApply != "" && rApply != "" && canonApply != rApply {
+			continue
+		}
+		ids = appendUnique(ids, rid)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
 	}
 
 	return ids, nil
@@ -582,21 +548,24 @@ func appendUnique(ids []int64, id int64) []int64 {
 }
 
 // anyTombstoned reports whether any of the given keys appears in the
-// tombstone table.
+// tombstone table (one IN query).
 func anyTombstoned(ctx context.Context, tx *sql.Tx, keys []string) (bool, error) {
-	for _, key := range keys {
-		if key == "" {
-			continue
-		}
-		var n int
-		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM tombstone WHERE key = ?`, key).Scan(&n); err != nil {
-			return false, err
-		}
-		if n > 0 {
-			return true, nil
-		}
+	if len(keys) == 0 {
+		return false, nil
 	}
-	return false, nil
+	ph := strings.Repeat("?,", len(keys))
+	args := make([]any, len(keys))
+	for i, k := range keys {
+		args[i] = k
+	}
+	var n int
+	err := tx.QueryRowContext(ctx,
+		`SELECT count(*) FROM tombstone WHERE key IN (`+ph[:len(ph)-1]+`)`,
+		args...).Scan(&n)
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
 }
 
 // performMerge merges all vacancies in matchIDs (sorted low to high) into the
@@ -607,15 +576,27 @@ func anyTombstoned(ctx context.Context, tx *sql.Tx, keys []string) (bool, error)
 // matchIDs must already be sorted ascending.
 func performMerge(ctx context.Context, tx *sql.Tx, matchIDs []int64) error {
 	// Load all matched vacancies.
-	rows := make([]existingRow, len(matchIDs))
+	rows := make([]vacancyRow, len(matchIDs))
 	for i, id := range matchIDs {
-		if err := loadVacancy(ctx, tx, id, &rows[i]); err != nil {
+		r, err := loadVacancy(ctx, tx, id)
+		if err != nil {
 			return fmt.Errorf("load vacancy %d: %w", id, err)
 		}
+		rows[i] = r
 	}
 
 	upd := rows[0] // kept = lowest id
 	textChanged := false
+
+	textRank := func(s string) int {
+		switch listing.TextState(s) {
+		case listing.TextFull:
+			return 2
+		case listing.TextSummary:
+			return 1
+		}
+		return 0
+	}
 
 	for _, r := range rows[1:] {
 		// Earliest first_seen.
@@ -630,7 +611,7 @@ func performMerge(ctx context.Context, tx *sql.Tx, matchIDs []int64) error {
 			upd.applyURL = r.applyURL
 		}
 		// Best text: full > summary > none; lowest id wins ties (rows are asc).
-		if betterText(listing.TextState(r.textState), listing.TextState(upd.textState)) {
+		if textRank(r.textState) > textRank(upd.textState) {
 			upd.textState = r.textState
 			upd.contentHash = r.contentHash
 			upd.body = r.body
@@ -639,14 +620,7 @@ func performMerge(ctx context.Context, tx *sql.Tx, matchIDs []int64) error {
 		}
 	}
 
-	if _, err := tx.ExecContext(ctx, `
-		UPDATE vacancy SET
-			first_seen=?, published_at=?, published_basis=?,
-			apply_url=?, text_state=?, content_hash=?, version=?, body=?
-		WHERE id=?`,
-		upd.firstSeen, upd.publishedAt, upd.publishedBasis,
-		upd.applyURL, upd.textState, upd.contentHash, upd.version, upd.body,
-		upd.id); err != nil {
+	if _, err := save(ctx, tx, upd); err != nil {
 		return fmt.Errorf("update kept %d: %w", upd.id, err)
 	}
 
@@ -684,22 +658,6 @@ func performMerge(ctx context.Context, tx *sql.Tx, matchIDs []int64) error {
 		}
 	}
 	return nil
-}
-
-// textRank returns the numeric rank of a text state: full=2, summary=1, else 0.
-func textRank(s listing.TextState) int {
-	switch s {
-	case listing.TextFull:
-		return 2
-	case listing.TextSummary:
-		return 1
-	}
-	return 0
-}
-
-// betterText reports whether candidate is strictly better than current.
-func betterText(candidate, current listing.TextState) bool {
-	return textRank(candidate) > textRank(current)
 }
 
 // pickEarlier returns the earlier of two non-empty UTC RFC 3339 timestamps.

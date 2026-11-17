@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -183,9 +184,7 @@ func newReplayFetcher(dir *fetchtest.Dir, log *slog.Logger) *replayFetcher {
 
 func (r *replayFetcher) Get(ctx context.Context, u string, opt fetch.Opt) (fetch.Response, error) {
 	resp, err := r.dir.Get(ctx, u, opt)
-	if err != nil && len(r.dir.Unknown()) > 0 {
-		// fetchtest.Dir only appends to Unknown when u is not in the index,
-		// so a new entry means this specific request was not recorded.
+	if errors.Is(err, fetch.ErrNotFound) {
 		r.log.Info("replay: not recorded " + u)
 	}
 	return resp, err

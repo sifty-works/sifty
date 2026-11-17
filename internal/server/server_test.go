@@ -76,49 +76,37 @@ func TestStatusEndpoint(t *testing.T) {
 	}
 }
 
-func TestWrongHostRefusedWithJSON(t *testing.T) {
+func TestCredentialRefusedWithJSON(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	h := server.New(server.Options{Port: 9999, Logger: logger}, nil)
 	ts := httptest.NewServer(h)
 	defer ts.Close()
-
-	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/status", nil)
-	req.Host = "evil.example.com"
-	resp, err := ts.Client().Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusForbidden {
-		t.Errorf("wrong host: got %d, want 403", resp.StatusCode)
-	}
-	var body map[string]string
-	json.NewDecoder(resp.Body).Decode(&body) //nolint:errcheck
-	if body["error"] == "" {
-		t.Error("wrong host response must be JSON with an 'error' key")
-	}
-}
-
-func TestForeignOriginRefusedWithJSON(t *testing.T) {
-	ts := newTestServer(t, nil)
-
-	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/status", nil)
-	req.Host = "127.0.0.1:9999"
-	req.Header.Set("Origin", "http://evil.example.com")
-	resp, err := ts.Client().Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusForbidden {
-		t.Errorf("foreign origin: got %d, want 403", resp.StatusCode)
-	}
-	var body map[string]string
-	json.NewDecoder(resp.Body).Decode(&body) //nolint:errcheck
-	if body["error"] == "" {
-		t.Error("foreign origin response must be JSON with an 'error' key")
+	for _, tc := range []struct {
+		name, host, origin string
+	}{
+		{"wrong host", "evil.example.com", ""},
+		{"foreign origin", "127.0.0.1:9999", "http://evil.example.com"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/status", nil)
+			req.Host = tc.host
+			if tc.origin != "" {
+				req.Header.Set("Origin", tc.origin)
+			}
+			resp, err := ts.Client().Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusForbidden {
+				t.Errorf("%s: got %d, want 403", tc.name, resp.StatusCode)
+			}
+			var body map[string]string
+			json.NewDecoder(resp.Body).Decode(&body) //nolint:errcheck
+			if body["error"] == "" {
+				t.Errorf("%s: response must have 'error' key", tc.name)
+			}
+		})
 	}
 }
 
@@ -138,43 +126,31 @@ func TestAllowedOriginAccepted(t *testing.T) {
 	}
 }
 
-func TestPostWithoutJSONRefused(t *testing.T) {
+func TestPostContentTypeEnforced(t *testing.T) {
 	ts := newTestServer(t, func(mux *http.ServeMux) {
 		mux.HandleFunc("POST /api/test", func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusNoContent)
 		})
 	})
-
-	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/test",
-		strings.NewReader(`{"key":"val"}`))
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/test", strings.NewReader(`{"key":"val"}`))
 	req.Host = "127.0.0.1:9999"
 	req.Header.Set("Content-Type", "text/plain")
 	resp, err := ts.Client().Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	resp.Body.Close()
 	if resp.StatusCode != http.StatusUnsupportedMediaType {
 		t.Errorf("non-JSON POST: got %d, want 415", resp.StatusCode)
 	}
-}
-
-func TestPostWithJSONAccepted(t *testing.T) {
-	ts := newTestServer(t, func(mux *http.ServeMux) {
-		mux.HandleFunc("POST /api/test", func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusNoContent)
-		})
-	})
-
-	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/test",
-		strings.NewReader(`{}`))
+	req, _ = http.NewRequest(http.MethodPost, ts.URL+"/api/test", strings.NewReader(`{}`))
 	req.Host = "127.0.0.1:9999"
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := ts.Client().Do(req)
+	resp, err = ts.Client().Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	resp.Body.Close()
 	if resp.StatusCode != http.StatusNoContent {
 		t.Errorf("JSON POST: got %d, want 204", resp.StatusCode)
 	}
@@ -255,46 +231,25 @@ func TestFrontendFallbackWhenNotBuilt(t *testing.T) {
 
 func TestFrontendServesEmbeddedFiles(t *testing.T) {
 	static := fstest.MapFS{
-		"index.html": &fstest.MapFile{Data: []byte(`<html>hello</html>`)},
+		"index.html": &fstest.MapFile{Data: []byte(`<html>app</html>`)},
 		"app.js":     &fstest.MapFile{Data: []byte(`console.log("hi")`)},
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	h := server.New(server.Options{Port: 9999, Logger: logger, Static: static}, nil)
 	ts := httptest.NewServer(h)
 	defer ts.Close()
-
-	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/", nil)
-	req.Host = "127.0.0.1:9999"
-	resp, err := ts.Client().Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	if !strings.Contains(string(body), "hello") {
-		t.Errorf("embedded frontend: got %q", string(body))
-	}
-}
-
-func TestFrontendClientSideRoutingFallback(t *testing.T) {
-	static := fstest.MapFS{
-		"index.html": &fstest.MapFile{Data: []byte(`<html>app</html>`)},
-	}
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	h := server.New(server.Options{Port: 9999, Logger: logger, Static: static}, nil)
-	ts := httptest.NewServer(h)
-	defer ts.Close()
-
-	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/some/deep/route", nil)
-	req.Host = "127.0.0.1:9999"
-	resp, err := ts.Client().Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	if !strings.Contains(string(body), "app") {
-		t.Errorf("client-side routing fallback: got %q", string(body))
+	for _, path := range []string{"/", "/some/deep/route"} {
+		req, _ := http.NewRequest(http.MethodGet, ts.URL+path, nil)
+		req.Host = "127.0.0.1:9999"
+		resp, err := ts.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if !strings.Contains(string(body), "app") {
+			t.Errorf("%s: embedded frontend not served: %q", path, string(body))
+		}
 	}
 }
 

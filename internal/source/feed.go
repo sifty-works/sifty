@@ -41,36 +41,26 @@ func (s *feedSource) List(ctx context.Context, f fetch.Fetcher, cfg SiteConfig) 
 			if err := dec.DecodeElement(&feed, &se); err != nil {
 				return nil, ErrNothingRecognised
 			}
-			var out []listing.Posting
+			items := make([]feedItem, 0, len(feed.Items))
 			for _, item := range feed.Items {
 				text := item.Encoded
 				if text == "" {
 					text = item.Desc
 				}
 				title, company := splitCompanyTitle(trim(item.Title), trim(item.Company))
-				p := listing.Posting{
-					URL:      item.Link,
-					Title:    title,
-					Company:  company,
-					Tags:     item.Categories,
-					Text:     text,
-					TextKind: listing.HTML,
-				}
-				if pub, ok := parseDate(item.PubDate); ok {
-					p.Published = pub
-					p.PublishedBasis = "pubDate"
-				}
-				if p, ok := finalise(p, base); ok {
-					out = append(out, p)
-				}
+				items = append(items, feedItem{
+					url: item.Link, title: title, company: company,
+					tags: item.Categories, text: text,
+					published: item.PubDate, pubBasis: "pubDate",
+				})
 			}
-			return out, nil
+			return buildPostings(items, base), nil
 		case "feed":
 			var feed atomFeed
 			if err := dec.DecodeElement(&feed, &se); err != nil {
 				return nil, ErrNothingRecognised
 			}
-			var out []listing.Posting
+			items := make([]feedItem, 0, len(feed.Entries))
 			for _, e := range feed.Entries {
 				link := ""
 				for _, l := range e.Links {
@@ -95,27 +85,52 @@ func (s *feedSource) List(ctx context.Context, f fetch.Fetcher, cfg SiteConfig) 
 					}
 				}
 				title, company := splitCompanyTitle(trim(e.Title), trim(e.Company))
-				p := listing.Posting{
-					URL:      link,
-					Title:    title,
-					Company:  company,
-					Tags:     cats,
-					Text:     text,
-					TextKind: listing.HTML,
-				}
-				if pub, ok := parseDate(e.Published); ok {
-					p.Published = pub
-					p.PublishedBasis = "published"
-				}
-				if p, ok := finalise(p, base); ok {
-					out = append(out, p)
-				}
+				items = append(items, feedItem{
+					url: link, title: title, company: company,
+					tags: cats, text: text,
+					published: e.Published, pubBasis: "published",
+				})
 			}
-			return out, nil
+			return buildPostings(items, base), nil
 		default:
 			return nil, ErrNothingRecognised
 		}
 	}
+}
+
+// feedItem is an intermediate representation shared by RSS and Atom items.
+type feedItem struct {
+	url       string
+	title     string
+	company   string
+	tags      []string
+	text      string
+	published string
+	pubBasis  string
+}
+
+// buildPostings converts a slice of feedItems into postings, resolving URLs
+// against base and running each through finalise.
+func buildPostings(items []feedItem, base string) []listing.Posting {
+	var out []listing.Posting
+	for _, it := range items {
+		p := listing.Posting{
+			URL:      it.url,
+			Title:    it.title,
+			Company:  it.company,
+			Tags:     it.tags,
+			Text:     it.text,
+			TextKind: listing.HTML,
+		}
+		if pub, ok := parseDate(it.published); ok {
+			p.Published = pub
+			p.PublishedBasis = it.pubBasis
+		}
+		if p, ok := finalise(p, base); ok {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // RSS types. The company field tag matches <company> in any namespace,

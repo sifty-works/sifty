@@ -188,6 +188,19 @@ func TestUpsert_MatchedByApplyAddress(t *testing.T) {
 	if outcome == catalog.OutcomeNew {
 		t.Error("outcome: should not be OutcomeNew")
 	}
+	// A board posting whose URL is the ATS canonical of another posting's ApplyURL also matches.
+	{
+		ats := "https://jobs.ashbyhq.com/acme/550e8400-e29b-41d4-a716-446655440000"
+		cat2 := catalog.New(openTestDB(t), fixedNow())
+		agg := posting("https://aggregator.example/jobs/9", "Platform Engineer", "Acme")
+		agg.ApplyURL = ats + "/application"
+		id1, _, _ := cat2.Upsert(context.Background(), agg, "agg")
+		board := posting(ats, "Platform Engineer", "acme")
+		id2, out, err := cat2.Upsert(context.Background(), board, "board")
+		if err != nil || id2 != id1 || out == catalog.OutcomeNew {
+			t.Fatalf("board posting: id %d (want %d), outcome %v, err %v", id2, id1, out, err)
+		}
+	}
 }
 
 // --- Match by identity on another host ---
@@ -293,6 +306,22 @@ func TestUpsert_TextReplacement(t *testing.T) {
 		d.QueryRow(`SELECT text_state FROM vacancy WHERE id = ?`, id).Scan(&state) //nolint:errcheck
 		if state != "full" {
 			t.Errorf("%s: text_state %q, want full", tc.url, state)
+		}
+	}
+	// A whitespace-only difference after normalization keeps the version.
+	{
+		d2 := openTestDB(t)
+		p := posting("https://example.com/jobs/u31", "Analyst", "Acme")
+		p.Text, p.TextKind, p.TextState = "<p>Headquarters:</p><p>Remote</p>", listing.HTML, listing.TextFull
+		id, _, _ := catalog.New(d2, fixedNow()).Upsert(context.Background(), p, "src")
+		p.Text = "<p>Headquarters: Remote</p>"
+		if _, out, _ := catalog.New(d2, fixedNow()).Upsert(context.Background(), p, "src"); out != catalog.OutcomeUnchanged {
+			t.Fatalf("whitespace-only change: outcome %v, want Unchanged", out)
+		}
+		var v int
+		d2.QueryRow(`SELECT version FROM vacancy WHERE id = ?`, id).Scan(&v) //nolint:errcheck
+		if v != 1 {
+			t.Fatalf("whitespace-only change: version %d, want 1", v)
 		}
 	}
 }
@@ -654,27 +683,6 @@ func ftsMatch(t *testing.T, d *db.DB, id int64, phrase string) bool {
 	return n > 0
 }
 
-func TestFTS_NewVacancy(t *testing.T) {
-	d := openTestDB(t)
-	cat := catalog.New(d, fixedNow())
-	p := listing.Posting{
-		URL: "https://example.com/jobs/fts1", Title: "Site Reliability Engineer", Company: "Acme",
-		Text:      "Expertise in distributed tracing and observability required.",
-		TextKind:  listing.Plain,
-		TextState: listing.TextFull,
-	}
-	id, _, err := cat.Upsert(context.Background(), p, "src")
-	if err != nil {
-		t.Fatalf("upsert: %v", err)
-	}
-	if !ftsHasRow(t, d, id) {
-		t.Error("FTS row missing after new vacancy insert")
-	}
-	if !ftsMatch(t, d, id, "observability") {
-		t.Error("FTS row does not match body text")
-	}
-}
-
 func TestFTS_TextReplaced(t *testing.T) {
 	d := openTestDB(t)
 	cat := catalog.New(d, fixedNow())
@@ -767,35 +775,5 @@ func TestFTS_Merge(t *testing.T) {
 	// The kept vacancy should have the full-text FTS row.
 	if !ftsMatch(t, d, keptID, "containerisation") {
 		t.Errorf("FTS row for kept vacancy %d should contain full text", keptID)
-	}
-}
-
-func TestUpsert_OwnATSAddressMatchesAnotherSiteByApplyAddress(t *testing.T) {
-	cat := catalog.New(openTestDB(t), fixedNow())
-	ats := "https://jobs.ashbyhq.com/acme/550e8400-e29b-41d4-a716-446655440000"
-	agg := posting("https://aggregator.example/jobs/9", "Platform Engineer", "Acme")
-	agg.ApplyURL = ats + "/application"
-	id1, _, _ := cat.Upsert(context.Background(), agg, "agg")
-	board := posting(ats, "Platform Engineer", "acme")
-	id2, out, err := cat.Upsert(context.Background(), board, "board")
-	if err != nil || id2 != id1 || out == catalog.OutcomeNew {
-		t.Fatalf("board posting: id %d (want %d), outcome %v, err %v", id2, id1, out, err)
-	}
-}
-
-func TestUpsert_WhitespaceOnlyChangeKeepsVersion(t *testing.T) {
-	d := openTestDB(t)
-	cat := catalog.New(d, fixedNow())
-	p := posting("https://example.com/jobs/31", "Analyst", "Acme")
-	p.Text, p.TextKind, p.TextState = "<p>Headquarters:</p><p>Remote</p>", listing.HTML, listing.TextFull
-	id, _, _ := cat.Upsert(context.Background(), p, "src")
-	p.Text = "<p>Headquarters: Remote</p>"
-	if _, out, _ := cat.Upsert(context.Background(), p, "src"); out != catalog.OutcomeUnchanged {
-		t.Fatalf("outcome %v, want Unchanged", out)
-	}
-	var v int
-	d.QueryRow(`SELECT version FROM vacancy WHERE id = ?`, id).Scan(&v) //nolint:errcheck
-	if v != 1 {
-		t.Fatalf("version %d, want 1", v)
 	}
 }

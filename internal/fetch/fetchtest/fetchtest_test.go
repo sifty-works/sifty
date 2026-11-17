@@ -13,44 +13,22 @@ import (
 
 // --- Map ---
 
-func TestMap_known_url_returns_response(t *testing.T) {
+func TestMap(t *testing.T) {
 	m := fetchtest.NewMap()
-	m.Set("http://example.com/", fetchtest.MapEntry{
-		Response: fetch.Response{
-			URL:         "http://example.com/",
-			Status:      200,
-			ContentType: "text/html",
-			Body:        []byte("<p>hello</p>"),
-		},
-	})
-
-	resp, err := m.Get(context.Background(), "http://example.com/", fetch.Opt{})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if resp.Status != 200 {
-		t.Errorf("status = %d, want 200", resp.Status)
-	}
-	if string(resp.Body) != "<p>hello</p>" {
-		t.Errorf("body = %q, want <p>hello</p>", resp.Body)
-	}
-}
-
-func TestMap_unknown_url_returns_not_found(t *testing.T) {
-	m := fetchtest.NewMap()
-	_, err := m.Get(context.Background(), "http://example.com/missing", fetch.Opt{})
-	if !errors.Is(err, fetch.ErrNotFound) {
-		t.Fatalf("missing URL: got %v, want ErrNotFound", err)
-	}
-}
-
-func TestMap_error_entry_returns_error(t *testing.T) {
-	m := fetchtest.NewMap()
+	m.Set("http://example.com/", fetchtest.MapEntry{Response: fetch.Response{
+		URL: "http://example.com/", Status: 200, ContentType: "text/html", Body: []byte("<p>hello</p>"),
+	}})
 	m.Set("http://example.com/blocked", fetchtest.MapEntry{Err: fetch.ErrBlocked})
 
-	_, err := m.Get(context.Background(), "http://example.com/blocked", fetch.Opt{})
-	if !errors.Is(err, fetch.ErrBlocked) {
-		t.Fatalf("error entry: got %v, want ErrBlocked", err)
+	resp, err := m.Get(context.Background(), "http://example.com/", fetch.Opt{})
+	if err != nil || resp.Status != 200 || string(resp.Body) != "<p>hello</p>" {
+		t.Errorf("known URL: err=%v status=%d body=%q", err, resp.Status, resp.Body)
+	}
+	if _, err := m.Get(context.Background(), "http://example.com/missing", fetch.Opt{}); !errors.Is(err, fetch.ErrNotFound) {
+		t.Errorf("missing URL: got %v, want ErrNotFound", err)
+	}
+	if _, err := m.Get(context.Background(), "http://example.com/blocked", fetch.Opt{}); !errors.Is(err, fetch.ErrBlocked) {
+		t.Errorf("error entry: got %v, want ErrBlocked", err)
 	}
 }
 
@@ -79,44 +57,26 @@ func TestDir_known_url_returns_recorded_response(t *testing.T) {
 	}
 }
 
-func TestDir_unknown_url_returns_not_found_and_records(t *testing.T) {
+func TestDir_unknown_urls_recorded(t *testing.T) {
 	dir := t.TempDir()
-	index := `{"entries":[]}`
-	if err := os.WriteFile(filepath.Join(dir, "index.json"), []byte(index), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "index.json"), []byte(`{"entries":[]}`), 0644); err != nil {
 		t.Fatal(err)
 	}
-
 	d := fetchtest.NewDir(dir)
-	_, err := d.Get(context.Background(), "http://example.com/unknown", fetch.Opt{})
-	if !errors.Is(err, fetch.ErrNotFound) {
+
+	// A single unknown URL returns ErrNotFound and is recorded.
+	if _, err := d.Get(context.Background(), "http://example.com/unknown", fetch.Opt{}); !errors.Is(err, fetch.ErrNotFound) {
 		t.Fatalf("unknown URL: got %v, want ErrNotFound", err)
 	}
-
-	unknown := d.Unknown()
-	if len(unknown) != 1 || unknown[0] != "http://example.com/unknown" {
-		t.Errorf("Unknown() = %v, want [http://example.com/unknown]", unknown)
-	}
-}
-
-func TestDir_multiple_unknown_urls_all_recorded(t *testing.T) {
-	dir := t.TempDir()
-	index := `{"entries":[]}`
-	if err := os.WriteFile(filepath.Join(dir, "index.json"), []byte(index), 0644); err != nil {
-		t.Fatal(err)
+	if u := d.Unknown(); len(u) != 1 || u[0] != "http://example.com/unknown" {
+		t.Errorf("Unknown() = %v, want [http://example.com/unknown]", u)
 	}
 
-	d := fetchtest.NewDir(dir)
-	urls := []string{
-		"http://example.com/a",
-		"http://example.com/b",
-		"http://example.com/c",
-	}
-	for _, u := range urls {
+	// Multiple unknown URLs are all recorded.
+	for _, u := range []string{"http://example.com/a", "http://example.com/b", "http://example.com/c"} {
 		d.Get(context.Background(), u, fetch.Opt{}) //nolint:errcheck
 	}
-
-	unknown := d.Unknown()
-	if len(unknown) != 3 {
-		t.Errorf("Unknown() has %d entries, want 3: %v", len(unknown), unknown)
+	if u := d.Unknown(); len(u) != 4 {
+		t.Errorf("Unknown() has %d entries, want 4: %v", len(u), u)
 	}
 }

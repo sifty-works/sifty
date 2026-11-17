@@ -134,18 +134,13 @@ func TestRows_AllFieldsPresent(t *testing.T) {
 	if empty, _ := body["empty"].(string); empty != "" {
 		t.Errorf("empty: got %q, want empty string", empty)
 	}
-}
 
-func TestRows_LocationUnstated(t *testing.T) {
-	d := openTestDB(t)
-	add(t, newCat(d), post("https://example.com/jobs/2", "Engineer", "Acme"))
-	body := apiGet(t, newTestServer(t, d), "/api/vacancies")
-	rs := getRows(body)
-	if len(rs) != 1 {
-		t.Fatalf("rows: %d", len(rs))
-	}
-	if got := field(rs[0], "location"); got != "Location unstated" {
-		t.Errorf("location: got %q, want %q", got, "Location unstated")
+	// A vacancy without a location shows "Location unstated".
+	add(t, newCat(d), post("https://example.com/jobs/2", "Engineer No Location", "Acme"))
+	rs = getRows(apiGet(t, newTestServer(t, d), "/api/vacancies"))
+	// The no-location vacancy has no published date so it sorts last (rank 3).
+	if got := field(rs[1], "location"); got != "Location unstated" {
+		t.Errorf("no-location vacancy: got %q, want %q", got, "Location unstated")
 	}
 }
 
@@ -193,6 +188,7 @@ func TestPublicationLine_Forms(t *testing.T) {
 			time.Date(2026, 8, 19, 0, 0, 0, 0, time.UTC), "datePosted",
 			"Published 19 Aug 2026 · 3 months",
 		},
+		{"no date", time.Time{}, "", "Publication date not reported"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -210,16 +206,6 @@ func TestPublicationLine_Forms(t *testing.T) {
 				t.Errorf("published: got %q, want %q", got, tc.wantPub)
 			}
 		})
-	}
-}
-
-func TestPublicationLine_NoDate(t *testing.T) {
-	d := openTestDB(t)
-	add(t, newCat(d), post("https://example.com/jobs/nd1", "Engineer", "Acme"))
-	body := apiGet(t, newTestServer(t, d), "/api/vacancies")
-	rs := getRows(body)
-	if got := field(rs[0], "published"); got != "Publication date not reported" {
-		t.Errorf("published: got %q", got)
 	}
 }
 
@@ -283,131 +269,96 @@ func TestOrder_TieBreakByFirstSeenThenID(t *testing.T) {
 
 // --- Search ---
 
-func TestSearch_ByTitleCompanyTag(t *testing.T) {
+func TestSearch(t *testing.T) {
+	// Shared DB with four vacancies covering all search behaviours.
 	d := openTestDB(t)
 	cat := newCat(d)
 	add(t, cat, listing.Posting{
-		URL: "https://example.com/jobs/s1", Title: "Golang Backend", Company: "Acme",
-		Tags: []string{"Kubernetes"}, Text: "job", TextKind: listing.Plain, TextState: listing.TextFull,
+		URL: "https://example.com/jobs/s1", Title: "Golang Backend", Company: "Acme Corp",
+		Tags: []string{"Kubernetes"}, Text: "orchestration experience", TextKind: listing.Plain, TextState: listing.TextFull,
 	})
 	add(t, cat, listing.Posting{
 		URL: "https://example.com/jobs/s2", Title: "Frontend Designer", Company: "DeepMind AI",
-		Tags: []string{"Figma"}, Text: "job", TextKind: listing.Plain, TextState: listing.TextFull,
+		Tags: []string{"Figma"}, Text: "knowledge of color theory", TextKind: listing.Plain, TextState: listing.TextFull,
+	})
+	add(t, cat, listing.Posting{
+		URL: "https://example.com/jobs/s3", Title: "TypeScript Engineer", Company: "Acme",
+		Text: "Must have OBSERVABILITY and distributed tracing systems", TextKind: listing.Plain, TextState: listing.TextFull,
+	})
+	add(t, cat, listing.Posting{
+		URL: "https://example.com/jobs/s4", Title: "Platform Engineer", Company: "Acme",
+		TextState: listing.TextNotFetched,
 	})
 	ts := newTestServer(t, d)
-	for _, tc := range []struct {
-		q         string
-		wantN     int
-		wantTitle string
-	}{
-		{"golang", 1, "Golang Backend"},
-		{"deepmind", 1, "Frontend Designer"},
-		{"kubernetes", 1, "Golang Backend"},
-	} {
-		body := apiGet(t, ts, "/api/vacancies?q="+tc.q)
-		rs := getRows(body)
-		if len(rs) != tc.wantN {
-			t.Errorf("q=%q: rows %d, want %d", tc.q, len(rs), tc.wantN)
-			continue
-		}
-		if field(rs[0], "title") != tc.wantTitle {
-			t.Errorf("q=%q: title %q, want %q", tc.q, field(rs[0], "title"), tc.wantTitle)
-		}
-	}
-	// Total includes all vacancies regardless of query.
-	body := apiGet(t, ts, "/api/vacancies?q=golang")
-	if total, _ := body["total"].(float64); total != 2 {
-		t.Errorf("total: %v, want 2", total)
-	}
-}
 
-func TestSearch_ByBodyText(t *testing.T) {
-	d := openTestDB(t)
-	cat := newCat(d)
-	add(t, cat, listing.Posting{
-		URL: "https://example.com/jobs/sb1", Title: "Engineer", Company: "Acme",
-		Text: "Experience with distributed tracing systems is a plus.", TextKind: listing.Plain, TextState: listing.TextFull,
-	})
-	add(t, cat, listing.Posting{
-		URL: "https://example.com/jobs/sb2", Title: "Designer", Company: "Acme",
-		Text: "Must know color theory.", TextKind: listing.Plain, TextState: listing.TextFull,
-	})
-	ts := newTestServer(t, d)
-	body := apiGet(t, ts, "/api/vacancies?q=distributed+tracing")
-	rs := getRows(body)
-	if len(rs) != 1 || field(rs[0], "title") != "Engineer" {
+	// By title, company and tag.
+	for _, tc := range []struct {
+		q, wantTitle string
+	}{
+		{"golang", "Golang Backend"},
+		{"deepmind", "Frontend Designer"},
+		{"kubernetes", "Golang Backend"},
+	} {
+		rs := getRows(apiGet(t, ts, "/api/vacancies?q="+tc.q))
+		if len(rs) != 1 || field(rs[0], "title") != tc.wantTitle {
+			t.Errorf("q=%q: rows %d, title %q", tc.q, len(rs), field(rs[0], "title"))
+		}
+	}
+
+	// Total counts all vacancies regardless of query.
+	if total, _ := apiGet(t, ts, "/api/vacancies?q=golang")["total"].(float64); total != 4 {
+		t.Errorf("total with query: %v, want 4", total)
+	}
+
+	// By body text.
+	rs := getRows(apiGet(t, ts, "/api/vacancies?q=distributed+tracing"))
+	if len(rs) != 1 || field(rs[0], "title") != "TypeScript Engineer" {
 		t.Errorf("body search: rows %d, title %q", len(rs), field(rs[0], "title"))
 	}
-	// A query shorter than 3 characters skips FTS; "di" is in body only.
-	if rs := getRows(apiGet(t, ts, "/api/vacancies?q=di")); len(rs) != 0 {
-		t.Errorf("2-char query: rows %d, want 0 (body not searched)", len(rs))
-	}
-}
 
-func TestSearch_CaseInsensitive(t *testing.T) {
-	d := openTestDB(t)
-	cat := newCat(d)
-	add(t, cat, listing.Posting{
-		URL: "https://example.com/jobs/ci1", Title: "TypeScript Engineer", Company: "Acme",
-		Text: "Must have OBSERVABILITY experience.", TextKind: listing.Plain, TextState: listing.TextFull,
-	})
-	ts := newTestServer(t, d)
+	// A query shorter than 3 characters skips FTS.
+	if rs := getRows(apiGet(t, ts, "/api/vacancies?q=di")); len(rs) != 0 {
+		t.Errorf("2-char query: rows %d, want 0", len(rs))
+	}
+
+	// Case-insensitive matching.
 	for _, q := range []string{"typescript", "TYPESCRIPT", "observability", "OBSERVABILITY"} {
 		if rs := getRows(apiGet(t, ts, "/api/vacancies?q="+q)); len(rs) != 1 {
 			t.Errorf("q=%q: rows %d, want 1", q, len(rs))
 		}
 	}
-}
 
-func TestSearch_VacancyWithoutBodyFoundByTitleOnly(t *testing.T) {
-	d := openTestDB(t)
-	cat := newCat(d)
-	add(t, cat, listing.Posting{
-		URL: "https://example.com/jobs/nb1", Title: "Platform Engineer", Company: "Acme",
-		TextState: listing.TextNotFetched,
-	})
-	ts := newTestServer(t, d)
-	// Found by title.
-	if rs := getRows(apiGet(t, ts, "/api/vacancies?q=platform")); len(rs) != 1 {
-		t.Errorf("title search on no-body vacancy: rows %d, want 1", len(rs))
+	// A no-body vacancy is found by title but not by a body-only term.
+	if rs := getRows(apiGet(t, ts, "/api/vacancies?q=platform")); len(rs) != 1 || field(rs[0], "title") != "Platform Engineer" {
+		t.Errorf("title search on no-body: rows %d, title %q", len(rs), field(rs[0], "title"))
 	}
-	// Not found by body-only term.
-	if rs := getRows(apiGet(t, ts, "/api/vacancies?q=observability")); len(rs) != 0 {
-		t.Errorf("body search on no-body vacancy: rows %d, want 0", len(rs))
+	// "observability" matches s3's body; s4 (no body) must not appear.
+	if rs := getRows(apiGet(t, ts, "/api/vacancies?q=observability")); len(rs) != 1 || field(rs[0], "title") != "TypeScript Engineer" {
+		t.Errorf("body term: rows %d, title %q; want 1 hit on TypeScript Engineer only", len(rs), field(rs[0], "title"))
 	}
-}
 
-func TestSearch_EmptyAndWhitespaceQueryReturnsAll(t *testing.T) {
-	d := openTestDB(t)
-	cat := newCat(d)
-	for i := 1; i <= 3; i++ {
-		add(t, cat, post("https://example.com/jobs/eq"+string(rune('0'+i)), "Engineer", "Co"))
-	}
-	ts := newTestServer(t, d)
+	// Empty or whitespace-only query returns all vacancies.
 	for _, q := range []string{"", "+++"} {
-		if rs := getRows(apiGet(t, ts, "/api/vacancies?q="+q)); len(rs) != 3 {
-			t.Errorf("q=%q: rows %d, want 3", q, len(rs))
+		if rs := getRows(apiGet(t, ts, "/api/vacancies?q="+q)); len(rs) != 4 {
+			t.Errorf("q=%q: rows %d, want 4", q, len(rs))
 		}
 	}
 }
 
 // --- Empty states ---
 
-func TestEmpty_InboxZeroWithNoQuery(t *testing.T) {
+func TestEmpty(t *testing.T) {
 	d := openTestDB(t)
-	body := apiGet(t, newTestServer(t, d), "/api/vacancies")
+	ts := newTestServer(t, d)
+	body := apiGet(t, ts, "/api/vacancies")
 	if empty, _ := body["empty"].(string); empty != "Inbox zero. Collect more jobs in Settings → Sources." {
 		t.Errorf("empty text: got %q", empty)
 	}
 	if total, _ := body["total"].(float64); total != 0 {
 		t.Errorf("total: %v", total)
 	}
-}
-
-func TestEmpty_NoMatchingRolesWithQuery(t *testing.T) {
-	d := openTestDB(t)
 	add(t, newCat(d), post("https://example.com/jobs/em1", "Engineer", "Acme"))
-	body := apiGet(t, newTestServer(t, d), "/api/vacancies?q=zzznomatch")
+	body = apiGet(t, ts, "/api/vacancies?q=zzznomatch")
 	if empty, _ := body["empty"].(string); empty != "No matching roles. Adjust your filters." {
 		t.Errorf("empty text: got %q", empty)
 	}

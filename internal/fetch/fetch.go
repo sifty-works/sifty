@@ -41,17 +41,8 @@ var (
 	ErrOffline   = errors.New("offline")
 )
 
-// wrappedErr pairs a sentinel with a detail message.
-type wrappedErr struct {
-	sentinel error
-	detail   string
-}
-
-func (e *wrappedErr) Error() string { return e.detail }
-func (e *wrappedErr) Unwrap() error { return e.sentinel }
-
 func wrapErr(sentinel error, format string, args ...any) error {
-	return &wrappedErr{sentinel: sentinel, detail: fmt.Sprintf(format, args...)}
+	return fmt.Errorf("%w: %s", sentinel, fmt.Sprintf(format, args...))
 }
 
 // UserText returns a short phrase for the user describing err.
@@ -88,18 +79,6 @@ func PublicOnly(ip net.IP) bool {
 		!ip.IsLinkLocalMulticast() &&
 		!ip.IsMulticast() &&
 		!ip.IsUnspecified()
-}
-
-// AllowLoopback allows loopback and public addresses but refuses other
-// private addresses. Used in tests that run httptest servers on 127.0.0.1.
-func AllowLoopback(ip net.IP) bool {
-	if ip4 := ip.To4(); ip4 != nil {
-		ip = ip4
-	}
-	if ip.IsLoopback() {
-		return true
-	}
-	return PublicOnly(ip)
 }
 
 // BlockStore remembers which domains are blocked and until when.

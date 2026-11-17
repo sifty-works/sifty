@@ -69,17 +69,13 @@ func (c *Collector) Register() {
 }
 
 // Due reports whether a collection run should be started automatically now.
-// Returns false when automatic collection is off, a collect job is queued or
-// running, or the interval since the last run has not elapsed.
+// Returns false when automatic collection is off or the interval since the
+// last run has not elapsed. Active-job deduplication is handled by
+// runner.Enqueue, which rejects a second queued or running collect job.
 func (c *Collector) Due(now time.Time) bool {
 	cfg := c.store.Get()
 	if !cfg.Collection.Auto {
 		return false
-	}
-	for _, j := range c.runner.Active() {
-		if j.Kind == "collect" {
-			return false
-		}
 	}
 	if last, ok := c.runner.Last("collect"); ok {
 		if now.Before(last.Created.Add(time.Duration(cfg.Collection.Interval))) {
@@ -206,8 +202,7 @@ func (c *Collector) run(ctx context.Context, j *runner.Job) error {
 						c.log.Warn("collect: upsert failed", "url", p.URL, "error", upsertErr)
 						continue
 					}
-					switch outcome {
-					case catalog.OutcomeNew, catalog.OutcomeUpdated, catalog.OutcomeMerged, catalog.OutcomeUnchanged:
+					if outcome != catalog.OutcomeTombstoned {
 						c.mu.Lock()
 						c.written++
 						c.mu.Unlock()
@@ -282,7 +277,7 @@ func (c *Collector) RegisterRoutes(mux *http.ServeMux) {
 // --- Sources API -------------------------------------------------------------
 
 func (c *Collector) handleSourcesList(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, c.sourcesBody())
+	server.WriteJSON(w, c.sourcesBody())
 }
 
 func (c *Collector) handleSourcesAdd(w http.ResponseWriter, r *http.Request) {
@@ -305,7 +300,7 @@ func (c *Collector) handleSourcesAdd(w http.ResponseWriter, r *http.Request) {
 	if server.MapError(w, err, c.log) {
 		return
 	}
-	writeJSON(w, c.sourcesBody())
+	server.WriteJSON(w, c.sourcesBody())
 }
 
 func (c *Collector) handleSourcesToggle(w http.ResponseWriter, r *http.Request) {
@@ -330,7 +325,7 @@ func (c *Collector) handleSourcesToggle(w http.ResponseWriter, r *http.Request) 
 	if server.MapError(w, err, c.log) {
 		return
 	}
-	writeJSON(w, c.sourcesBody())
+	server.WriteJSON(w, c.sourcesBody())
 }
 
 func (c *Collector) handleSourcesRemove(w http.ResponseWriter, r *http.Request) {
@@ -354,7 +349,7 @@ func (c *Collector) handleSourcesRemove(w http.ResponseWriter, r *http.Request) 
 	if server.MapError(w, err, c.log) {
 		return
 	}
-	writeJSON(w, c.sourcesBody())
+	server.WriteJSON(w, c.sourcesBody())
 }
 
 func (c *Collector) handleSchedule(w http.ResponseWriter, r *http.Request) {
@@ -379,7 +374,7 @@ func (c *Collector) handleSchedule(w http.ResponseWriter, r *http.Request) {
 	if server.MapError(w, updateErr, c.log) {
 		return
 	}
-	writeJSON(w, c.sourcesBody())
+	server.WriteJSON(w, c.sourcesBody())
 }
 
 // --- POST /api/collect -------------------------------------------------------
@@ -390,23 +385,11 @@ func (c *Collector) handleCollect(w http.ResponseWriter, r *http.Request) {
 	}
 	json.NewDecoder(r.Body).Decode(&req) //nolint:errcheck // default force=false on parse error
 
-	if req.Force {
-		// Enqueue unless already queued or running.
-		already := false
-		for _, j := range c.runner.Active() {
-			if j.Kind == "collect" {
-				already = true
-				break
-			}
-		}
-		if !already {
-			c.runner.Enqueue(runner.Spec{Kind: "collect"}) //nolint:errcheck
-		}
-	} else if !c.blocked && c.Due(c.now()) {
+	if req.Force || (!c.blocked && c.Due(c.now())) {
 		c.runner.Enqueue(runner.Spec{Kind: "collect"}) //nolint:errcheck
 	}
 
-	writeJSON(w, c.StatusFunc()())
+	http.Redirect(w, r, "/api/status", http.StatusSeeOther)
 }
 
 // --- Helpers -----------------------------------------------------------------
@@ -435,11 +418,4 @@ func (c *Collector) sourcesBody() map[string]any {
 		"auto":     cfg.Collection.Auto,
 		"interval": cfg.Collection.Interval.String(),
 	}
-}
-
-// writeJSON writes v as a JSON response with status 200.
-func writeJSON(w http.ResponseWriter, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(v) //nolint:errcheck
 }

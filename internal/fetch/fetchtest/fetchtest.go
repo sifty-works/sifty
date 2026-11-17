@@ -62,11 +62,7 @@ func (m *Map) Requests() []string {
 	return out
 }
 
-// dirIndex is the JSON structure of index.json in a Dir fixture folder.
-type dirIndex struct {
-	Entries []dirEntry `json:"entries"`
-}
-
+// dirEntry is one entry read from index.json.
 type dirEntry struct {
 	URL         string `json:"url"`
 	Status      int    `json:"status"`
@@ -76,40 +72,30 @@ type dirEntry struct {
 
 // Dir is a Fetcher that answers from a folder of recorded responses.
 // The folder must contain an index.json listing each URL with its status,
-// content type, and the name of a body file. A request for a URL that is
-// not in the index returns fetch.ErrNotFound and records the URL so callers
-// can assert which addresses were requested.
+// content type, and the name of a body file. The index and all body files are
+// loaded at construction. A request for a URL that is not in the index returns
+// fetch.ErrNotFound and records the URL so callers can assert which addresses
+// were requested.
 type Dir struct {
-	path string
-
+	entries map[string]fetch.Response
 	mu      sync.Mutex
 	unknown []string
 }
 
-// NewDir returns a Dir fetcher rooted at path.
+// NewDir returns a Dir fetcher rooted at path. It panics if the index cannot
+// be read.
 func NewDir(path string) *Dir {
-	return &Dir{path: path}
+	entries, err := loadIndex(path)
+	if err != nil {
+		panic("fetchtest.NewDir: " + err.Error())
+	}
+	return &Dir{entries: entries}
 }
 
 // Get implements fetch.Fetcher.
 func (d *Dir) Get(_ context.Context, url string, _ fetch.Opt) (fetch.Response, error) {
-	idx, err := d.loadIndex()
-	if err != nil {
-		return fetch.Response{}, err
-	}
-	for _, e := range idx.Entries {
-		if e.URL == url {
-			body, err := os.ReadFile(filepath.Join(d.path, e.BodyFile))
-			if err != nil {
-				return fetch.Response{}, err
-			}
-			return fetch.Response{
-				URL:         url,
-				Status:      e.Status,
-				ContentType: e.ContentType,
-				Body:        body,
-			}, nil
-		}
+	if resp, ok := d.entries[url]; ok {
+		return resp, nil
 	}
 	d.mu.Lock()
 	d.unknown = append(d.unknown, url)
@@ -126,15 +112,29 @@ func (d *Dir) Unknown() []string {
 	return out
 }
 
-func (d *Dir) loadIndex() (*dirIndex, error) {
-	f, err := os.Open(filepath.Join(d.path, "index.json"))
+// loadIndex reads index.json from path and returns a map of URL to pre-loaded response.
+func loadIndex(path string) (map[string]fetch.Response, error) {
+	f, err := os.Open(filepath.Join(path, "index.json"))
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
-	var idx dirIndex
+	var idx struct{ Entries []dirEntry }
 	if err := json.NewDecoder(f).Decode(&idx); err != nil {
 		return nil, err
 	}
-	return &idx, nil
+	m := make(map[string]fetch.Response, len(idx.Entries))
+	for _, e := range idx.Entries {
+		body, err := os.ReadFile(filepath.Join(path, e.BodyFile))
+		if err != nil {
+			return nil, err
+		}
+		m[e.URL] = fetch.Response{
+			URL:         e.URL,
+			Status:      e.Status,
+			ContentType: e.ContentType,
+			Body:        body,
+		}
+	}
+	return m, nil
 }

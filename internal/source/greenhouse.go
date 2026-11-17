@@ -28,10 +28,7 @@ func (s *greenhouseSource) List(ctx context.Context, f fetch.Fetcher, cfg SiteCo
 		return nil, ErrNothingRecognised
 	}
 	board := boardSlug(boardURL)
-	apiURL := "https://boards-api.greenhouse.io/v1/boards/" + board + "/jobs?content=true"
-	if strings.Contains(strings.ToLower(boardURL.Host), ".eu.") {
-		apiURL = "https://boards-api.eu.greenhouse.io/v1/boards/" + board + "/jobs?content=true"
-	}
+	apiURL := "https://" + Host(boardURL) + "/v1/boards/" + board + "/jobs?content=true"
 	resp, err := f.Get(ctx, apiURL, fetch.Opt{})
 	if err != nil {
 		return nil, err
