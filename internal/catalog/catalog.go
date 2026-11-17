@@ -61,6 +61,20 @@ func New(database *db.DB, now func() time.Time) *Catalog {
 	return &Catalog{db: database, now: now}
 }
 
+// Encode compresses html and returns the body blob and the content hash.
+// The hash is the SHA-256 hex of the plain-text form of html.
+// It is the single implementation used by both Upsert and the import path,
+// so stored bodies and hashes are always consistent.
+func Encode(html string) (body []byte, hash string, err error) {
+	plain := listing.PlainText(html)
+	hash = contentHash(plain)
+	body, err = compressBody(html)
+	if err != nil {
+		return nil, "", fmt.Errorf("catalog: encode: %w", err)
+	}
+	return body, hash, nil
+}
+
 // Body decompresses a stored vacancy body (compress/flate).
 func Body(blob []byte) (string, error) {
 	if len(blob) == 0 {
@@ -104,12 +118,9 @@ func (c *Catalog) Upsert(ctx context.Context, p listing.Posting, src string) (in
 	nowStr := now.Format(time.RFC3339)
 
 	bodyHTML := listing.Normalize(p.Text, p.TextKind)
-	bodyPlain := listing.PlainText(bodyHTML)
-	newHash := contentHash(bodyPlain)
-
-	newBody, err := compressBody(bodyHTML)
+	newBody, newHash, err := Encode(bodyHTML)
 	if err != nil {
-		return 0, 0, fmt.Errorf("catalog: upsert: compress: %w", err)
+		return 0, 0, fmt.Errorf("catalog: upsert: %w", err)
 	}
 
 	tagsJSON := marshalTags(p.Tags)

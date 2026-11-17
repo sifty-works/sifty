@@ -3,7 +3,7 @@ VERSION  := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev
 LDFLAGS  := -X main.version=$(VERSION)
 GO_BUILD := go build -ldflags "$(LDFLAGS)"
 
-.PHONY: build dev check budget clean
+.PHONY: build dev dev-reset check budget clean
 
 build:
 	@if [ ! -d web/node_modules ]; then npm --prefix web ci; fi
@@ -12,11 +12,17 @@ build:
 	$(GO_BUILD) -o $(BINARY) ./cmd/sifty
 
 dev: build
+	@if [ ! -d .dev/data ] && [ -n "$$SIFTY_V1_DIR" ]; then \
+	  $(BINARY) import-v1 --from "$$SIFTY_V1_DIR" --data-dir .dev/data; \
+	fi
 	$(BINARY) serve --offline --data-dir .dev/data --port 7374 & \
 	sifty_pid=$$!; \
 	trap "kill $$sifty_pid 2>/dev/null" INT TERM EXIT; \
 	npm --prefix web run dev; \
 	kill $$sifty_pid 2>/dev/null; true
+
+dev-reset:
+	rm -rf .dev/data
 
 check: build
 	@echo "--- gofmt ---"

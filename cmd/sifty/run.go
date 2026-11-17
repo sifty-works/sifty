@@ -29,6 +29,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return cmdServe(ctx, rest, stdout, stderr)
 	case "config":
 		return cmdConfig(rest, stdout, stderr)
+	case "import-v1":
+		return cmdImportV1(ctx, rest, stdout, stderr)
 	default:
 		fmt.Fprintln(stderr, usage())
 		return fmt.Errorf("unknown command: %s", cmd)
@@ -97,6 +99,7 @@ func usage() string {
 
 Commands:
   serve          Start the application server
+  import-v1      Import data from the previous application
   config         Manage configuration
   version        Print the version
 
