@@ -30,7 +30,7 @@ These rules come from what made the previous application grow to several times t
 | Inbox and vacancy page | `inbox` (list, decisions, deletion, exclusions, vacancy view) | `behaviour/inbox.md` |
 | Profiles | `candidate` (My data, profiles, documents, proposals, Questions & Answers) | `behaviour/profiles.md` |
 | Application | `locate`, `websearch`, `formread`, `answer` | `behaviour/application.md` |
-| Foundation | `db`, `config`, `runner`, `models`, `server`, `cmd` | `behaviour/settings-and-data.md` |
+| Foundation | `apperr`, `db`, `config`, `runner`, `models`, `server`, `cmd` | `behaviour/settings-and-data.md` |
 
 ### Collection
 

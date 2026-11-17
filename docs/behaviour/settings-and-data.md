@@ -68,7 +68,8 @@ A change applies at once without a restart, except a change of the port. A chang
 ## Errors
 
 - An error is shown to the user in words, with what to do when there is something to do. An internal failure shows a short message with a reference to the log and is written to the log with its details; it never shows a stack or an internal value.
-- An unknown address of the server's interface answers "Refresh the page…".
+- An unknown address of the server's interface answers "Refresh the page. Sifty was updated and this address is no longer used."
+- When the server cannot be reached, the frontend shows "Sifty is not running. Start it and refresh the page."
 - A request that takes 500 ms or more, other than a model call, is written to the log.
 
 ## Not carried over
