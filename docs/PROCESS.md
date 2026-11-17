@@ -5,7 +5,7 @@ This document says how Sifty is developed: who does what, how a piece of work go
 ## Roles
 
 - The **owner** is the person Sifty is built for. The owner decides what is built, approves every change of described behaviour and of budgets, looks at a preview when a card asks for one, and takes the decisions of each weekly review.
-- The **coordinator** is the one Claude Code session that writes to this repository. It writes cards, runs executors, accepts and merges their work, releases, and keeps the work repository. Only one coordinator session runs at a time.
+- The **coordinator** is the one Claude Code session that writes to this repository. The owner names it. It writes cards, runs executors, accepts and merges their work, releases, and keeps the work repository. Any other session in this repository only reads.
 - An **executor** is a Claude Code agent that the coordinator starts for one card. It works only in its own working copy, on its own branch.
 - The **critic** is a Claude Code agent that reads and changes nothing. It checks the plans of cards that add structure, and it reviews the whole system every week.
 
@@ -26,10 +26,12 @@ The process rests on six arrangements. Each guarantee is held by one of them, no
 
 - This repository is public. It holds the code, the tests, `README.md`, `CHANGELOG.md`, `AGENTS.md`, `CLAUDE.md` and `docs/`. `CLAUDE.md` holds one line, `@AGENTS.md`, which makes Claude Code load `AGENTS.md`.
 - Nothing from the work repository enters this repository. Code, tests, comments, commit messages and changelog entries describe a change in its own terms and never name a card. Test data is invented.
-- The work repository is checked out into `.work/` of the main checkout, and this repository ignores that folder. It holds `backlog.md`, the queue, with one line per card and its state (queued, in progress, done or cancelled). It holds `cards/<name>.md`, one file per card, named by a short descriptive name and not by a number. It also holds `journal.md`, with one dated line per event: a card started, merged or cancelled, a small edit, a release, a rollback, an incident or a review.
+- The work repository is checked out into `.work/` of the main checkout, and this repository ignores that folder. It holds `backlog.md`, the queue, with one line per card that is not yet merged or cancelled. It holds `cards/<name>.md`, one file per card, named by a short descriptive name and not by a number. It also holds `journal.md`, with one dated line per event: a card started, merged or cancelled (with the reason), a small edit, a release, a rollback, an incident or a review. The coordinator commits the work repository after each journal line and pushes it at the end of a session.
+- The state of a card is read from where it is: a backlog line without a working copy is queued, a working copy in `git worktree list` is in progress, and a journal line says it was merged or cancelled.
 - Working copies live in `.worktrees/<name>/` of the main checkout, which this repository also ignores. The branch of a working copy has the card's name and is never pushed.
 - The main checkout receives only merges and releases. No one edits its tracked files.
-- `AGENTS.md` holds all the rules that agents follow here. No agent configuration from outside this repository is part of the process.
+- The live data folder lies outside this repository, and only `make release` names it. `make dev` and tests use their own data folders; `/data/` is ignored so a default run cannot add data to a commit.
+- `AGENTS.md` holds all the rules that agents follow here. The process does not rely on any agent configuration from outside this repository.
 
 ## Cards
 
@@ -50,15 +52,15 @@ A card is one file with the following sections, in this order. It carries no tim
 1. **Backlog.** An idea becomes a line in the backlog. Ideas come from the owner, from the weekly review, and from defects that anyone finds. Cards from the review go first, and the rest follow the owner's order.
 2. **Card.** The coordinator writes the card. When the card changes behaviour that a behaviour document describes, or raises a budget, the owner approves it before work starts. Otherwise no approval is needed. A card that changes what the user sees also changes the behaviour document, in the same merge.
 3. **Plan check.** When a card adds a package, a table, a dependency, a configuration key or a kind of background work, the critic reads it before work starts. The critic answers one question: can this be done by replacing or removing something, and does it fit the budgets? The answer goes into the card, and the coordinator changes the card when the answer shows a smaller way.
-4. **Start.** The coordinator starts a card only when its packages do not overlap those of any card in progress, so overlapping cards wait. It creates the working copy and the branch from the main branch, marks the card as in progress, and starts an executor. The executor gets the card's text without the Reason and Report sections.
-5. **Work.** The executor commits on its branch after each step, so the work survives the end of a session. It runs `make check` before it reports. Its report says what changed for the user, what was removed, which checks ran and with what result, what was not verified, and which questions are open. When the card is unclear, or needs something it does not name, the executor stops and asks.
+4. **Start.** The coordinator starts a card only when its packages do not overlap those of any card in progress, so overlapping cards wait. The migration files, `api/client.ts` and the route table of `server` are shared and do not count as an overlap; the coordinator gives a new migration its number when it brings the branch up to date. The coordinator creates the working copy and the branch from the main branch, records the start in the journal, and starts an executor with its role, the path of its working copy, and the card's text without the Reason, Budget change and Report sections.
+5. **Work.** The executor commits on its branch after each step, so the work survives the end of a session. It runs `make check` before it reports. Its report says what changed for the user, what was removed, which checks ran and with what result, what was not verified, and which questions are open. When the card is unclear, or needs a file outside its Packages, the executor stops and asks.
 6. **Acceptance.** The coordinator accepts the work or returns it, as described in the next section.
-7. **Merge.** The coordinator squashes the branch into one commit on the main branch and pushes the main branch. It then removes the working copy and the branch and marks the card as done.
-8. **Cancel.** For a cancelled card, the coordinator removes the working copy and the branch and writes the reason into the card.
+7. **Merge.** The coordinator squashes the branch into one commit on the main branch and pushes the main branch. It then removes the working copy and the branch, removes the backlog line and records the merge in the journal.
+8. **Cancel.** For a cancelled card, the coordinator removes the working copy, the branch and the backlog line, and records the cancellation with its reason in the journal.
 
-A report does not propose a follow-up card, and a finding outside the card goes to the backlog. When one area of the application is about to get its third fix within one review period, the coordinator does not start that fix. The critic first reviews the area as a whole, and its result replaces the fix.
+A report does not propose a follow-up card, and a finding outside the card goes to the backlog. When one area of the application is about to get its third fix within one review period, the weekly review is held at once, before that fix.
 
-When a coordinator session ends, the backlog, the journal and the branches hold everything needed to continue. A new session reads them, runs `git worktree list`, and restarts an executor on each existing working copy to continue from its commits.
+When a coordinator session ends, the backlog, the journal and the branches hold everything needed to continue. A new session reads them, runs `git worktree list`, and restarts an executor on each card in progress whose report has not arrived, to continue from its commits.
 
 ## Acceptance
 
@@ -73,32 +75,32 @@ The coordinator accepts a card once, on the final state of its branch, so the tr
 7. When the change is notable, the coordinator adds an entry to `CHANGELOG.md` on the branch.
 8. It writes the report: what changed for the user, what was removed, how the budgets changed, and what was not verified.
 
-When a step fails, the card goes back to its executor with the findings, unless the fix is a small edit.
+When a step fails, the card goes back to its executor with the findings, unless the fix is a small edit, which the coordinator commits on the card's branch.
 
 ## Small edits
 
-The coordinator makes small edits itself, without a card or an executor. A small edit is an edit of a document, or a code edit of up to about 20 lines that adds no new logic: no new function, condition, table or setting. The coordinator makes it in its own working copy, `.worktrees/coordinator/`, on its own branch. It runs `make check`, merges the edit like a card, and records it as one line in the journal.
+The coordinator makes small edits itself, without a card or an executor. A small edit is an edit of a document, or a code edit of up to about 20 lines that adds no new logic: no new function, condition, table or setting. The coordinator makes it in its own working copy, `.worktrees/coordinator/`, on its own branch. It runs `make check`, merges the edit like a card, resets its branch to the main branch, and records the edit as one line in the journal.
 
 ## Releases
 
-A release is the only event that changes the running application, and it is separate from merging. The coordinator releases when the owner asks. Otherwise it releases at most once a day, as one batch, when the application changed on the main branch since the last release. A release needs no approval of its own.
+A release is the only event that changes the running application, and it is separate from merging. The coordinator releases when the owner asks. Otherwise, at the start of the first session of a day, it releases once, as one batch, when the application changed on the main branch since the last release. A release needs no approval of its own.
 
 - **Version.** Releases are numbered `MAJOR.MINOR.PATCH` and tagged `vMAJOR.MINOR.PATCH`. MINOR rises when the release has changelog entries, and PATCH rises otherwise. MAJOR rises only by the owner's decision. `sifty version` prints the version of the running build.
-- **Changelog.** `CHANGELOG.md` starts with an "Unreleased" section. An entry is added at acceptance for notable functionality, a notable refactoring, or another notable change, such as a change of the data layout or of a budget. Entries are written in the user's terms. A release moves them under its version.
-- **`make release`** works in this order. It refuses to run unless the main checkout is clean and on the main branch. It computes the version, builds the binary into a new release folder outside the repository, and checks that the disk has room for the build and a copy of the database. It waits until the running application reports no collection or preparation in progress, and then makes a copy with `sifty backup`. It stops the application, switches it to the new build, starts it, and waits until the application answers its health check. Only then does it move the changelog entries, commit, tag and push. When any step after the stop fails, it switches back to the previous build, restores the copy if the database layout changed, and starts the previous build. It keeps the last five builds and the last five copies.
-- **`make rollback`** returns to the previous release in one command. When the release changed the database layout, the command also restores the copy made before that release, so changes to the data since the release are lost. It prints which copy it restored.
+- **Changelog.** `CHANGELOG.md` starts with an "Unreleased" section. An entry is added at acceptance for notable functionality, a notable refactoring, or another notable change, such as a change of the data layout or of a budget. Entries are written in the user's terms. A release moves them under its version; a release without entries adds its version with the line "No notable changes".
+- **`make release`** works in this order. It refuses to run unless the main checkout is clean and on the main branch. It computes the version, builds the binary into a new release folder outside the repository, and checks that the disk has room for the build and a copy of the database. It waits until the running application reports no collection or preparation in progress. It stops the application, switches it to the new build, starts it, and waits until the application answers its health check; the new build copies the database before it changes its layout (see `docs/ARCHITECTURE.md`). When a step up to the health check fails, it switches back to the previous build, restores that copy if the layout changed, and starts the previous build. Only then does it move the changelog entries, commit, tag and push; a failure of these steps is printed and the steps are repeated, and the application is left running. It keeps the last five builds.
+- **`make rollback`** returns to the previous release in one command. When the release changed the database layout, the command also restores the copy made before that release, so changes to the data since the release are lost. It prints which copy it restored. The tag and changelog section of the undone release stay, and the next release takes the next version.
+- After a rollback caused by the application, the coordinator opens a card for the defect and does not release until that card is merged.
 - The journal records every release and every rollback.
 
 ## Tests
 
 Tests check behaviour through public boundaries, so the code behind those boundaries can be rebuilt without rewriting the tests.
 
-- A test drives the HTTP application programming interface, a command, the store on a fixture database, or an interface or function named in `docs/ARCHITECTURE.md`.
+- A test drives the HTTP application programming interface, a command, the store on a fixture database, or one of the interfaces `Fetcher`, `Model` and `Score`.
 - A test's name says the behaviour it checks. Test names and code comments contain no card names, card numbers, rule numbers or section numbers.
 - No test reads source files or checks that some code exists.
-- Tests use invented data and make no network request and no model call. Fakes stand behind the `Fetcher` and `Model` interfaces, and `sifty serve --offline` refuses both kinds of call.
+- Tests use invented data and make no network request and no model call. Fakes stand behind the `Fetcher` and `Model` interfaces, and `sifty serve --offline` refuses both kinds of call. Behaviour that needs a job site is checked against recorded responses behind the fake `Fetcher`.
 - `make check` runs every test, and tests are never selected by name.
-- Tests count toward the budgets: they have no more lines than the code they test.
 
 ## Budgets
 
@@ -110,7 +112,7 @@ Every week, or after ten merged cards if that comes first, the critic reviews th
 
 ## Incidents
 
-An incident is a failure in the way the work is done, such as a broken merge, a failed release, lost work, or a rule that was not followed. A defect of the application is not an incident; it is a card.
+An incident is a failure in the way the work is done, such as a broken merge, a failed release script, lost work, or a rule that was not followed. A defect of the application is not an incident; it is a card.
 
 - The coordinator recovers at once, for example with `make rollback`. It records the incident as one line in the journal: what happened and what was done.
 - An incident does not create a card at once. The incidents since the last review are looked at together at the weekly review.
@@ -118,6 +120,6 @@ An incident is a failure in the way the work is done, such as a broken merge, a 
 
 ## Changing the process
 
-The process consists of this document, `AGENTS.md`, and the scripts behind `make release`, `make rollback` and `make budget`. A change to the process is a card like any other: the owner approves it, and it is merged the same way. After the change, the process has the same number of lines or fewer, unless the owner decides it may grow. The process uses one tool, Claude Code, and it has no git hooks and no agent hooks.
+The process consists of this document, `AGENTS.md`, and the scripts behind `make release`, `make rollback` and `make budget`. A change to the process is a card like any other: the owner approves it, and it is merged the same way. After the change, the process has the same number of lines or fewer, unless the owner decides it may grow. The process uses one tool, Claude Code, and adds no git hooks and no agent hooks.
 
 The commands named in this document are part of the code. Until a command exists, the coordinator does its steps by hand.

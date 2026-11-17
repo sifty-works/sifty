@@ -175,7 +175,7 @@ type Response struct { Text string; InTokens, OutTokens int }
 ## Build and commands
 
 - `make build`: frontend build, then `go build` with the frontend embedded; one binary. The browser script for form reading is embedded and written to the user's cache on first use; form reading needs Node.js and Playwright on the machine. DOCX text is read in Go.
-- `make dev`: the frontend dev server proxying to `sifty serve --offline` on a copy of the data. `--offline` forbids every network request and model call.
+- `make dev`: the frontend dev server proxying to `sifty serve --offline` on a copy of the data. `--offline` forbids every network request and model call. Until switch-over, the copy is a fresh `import-v1` of a copy of the old database.
 - `make check`, `make budget`, `make release`, `make rollback`: see `PROCESS.md`.
 - Commands: `serve`, `backup` (database copy and the user's files in one archive), `import-v1`, `config defaults`, `version`.
 
