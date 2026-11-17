@@ -89,6 +89,31 @@ func Body(blob []byte) (string, error) {
 	return string(b), nil
 }
 
+// WriteFTS writes the FTS index row for a vacancy inside an open transaction.
+// Any existing row for id is removed first. If body is empty no row is inserted.
+// It is used by every path that sets or replaces a vacancy body.
+func WriteFTS(ctx context.Context, tx *sql.Tx, id int64, body []byte) error {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM vacancy_fts WHERE rowid = ?`, id); err != nil {
+		return fmt.Errorf("catalog: fts delete %d: %w", id, err)
+	}
+	if len(body) == 0 {
+		return nil
+	}
+	html, err := Body(body)
+	if err != nil {
+		return fmt.Errorf("catalog: fts body %d: %w", id, err)
+	}
+	text := listing.PlainText(html)
+	if text == "" {
+		return nil
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO vacancy_fts(rowid, text) VALUES(?, ?)`, id, text); err != nil {
+		return fmt.Errorf("catalog: fts insert %d: %w", id, err)
+	}
+	return nil
+}
+
 // Upsert stores a posting from a source, following the matching and update
 // rules. It calls listing.Normalize on the posting's text itself.
 // src is the source's opaque address key.
@@ -193,6 +218,9 @@ func (c *Catalog) Upsert(ctx context.Context, p listing.Posting, src string) (in
 		if err != nil {
 			return 0, 0, fmt.Errorf("catalog: upsert: insert: %w", err)
 		}
+		if err := WriteFTS(ctx, tx, id, newBody); err != nil {
+			return 0, 0, fmt.Errorf("catalog: upsert: fts: %w", err)
+		}
 		if err := insertSource(ctx, tx, id, src, canonURL, nowStr); err != nil {
 			return 0, 0, fmt.Errorf("catalog: upsert: insert source: %w", err)
 		}
@@ -272,6 +300,11 @@ func (c *Catalog) Upsert(ctx context.Context, p listing.Posting, src string) (in
 		return 0, 0, fmt.Errorf("catalog: upsert: update: %w", err)
 	}
 
+	if textChanged {
+		if err := WriteFTS(ctx, tx, vacancyID, upd.body); err != nil {
+			return 0, 0, fmt.Errorf("catalog: upsert: fts: %w", err)
+		}
+	}
 	if err := upsertSource(ctx, tx, vacancyID, src, canonURL, nowStr); err != nil {
 		return 0, 0, fmt.Errorf("catalog: upsert: source: %w", err)
 	}
@@ -578,6 +611,7 @@ func performMerge(ctx context.Context, tx *sql.Tx, matchIDs []int64) error {
 	}
 
 	upd := rows[0] // kept = lowest id
+	textChanged := false
 
 	for _, r := range rows[1:] {
 		// Earliest first_seen.
@@ -597,6 +631,7 @@ func performMerge(ctx context.Context, tx *sql.Tx, matchIDs []int64) error {
 			upd.contentHash = r.contentHash
 			upd.body = r.body
 			upd.version++
+			textChanged = true
 		}
 	}
 
@@ -631,6 +666,17 @@ func performMerge(ctx context.Context, tx *sql.Tx, matchIDs []int64) error {
 		if _, err := tx.ExecContext(ctx,
 			`DELETE FROM vacancy WHERE id = ?`, oldID); err != nil {
 			return fmt.Errorf("delete merged %d: %w", oldID, err)
+		}
+		// Remove the FTS row for the merged (deleted) vacancy.
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM vacancy_fts WHERE rowid = ?`, oldID); err != nil {
+			return fmt.Errorf("fts delete merged %d: %w", oldID, err)
+		}
+	}
+	// Write FTS for kept vacancy when its text changed.
+	if textChanged {
+		if err := WriteFTS(ctx, tx, upd.id, upd.body); err != nil {
+			return fmt.Errorf("fts kept %d: %w", upd.id, err)
 		}
 	}
 	return nil

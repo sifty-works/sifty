@@ -70,7 +70,7 @@ type RequirementChecker interface { /* reserved; connected only after it beats c
 ### Inbox and vacancy page
 
 - One SQL query builds a list. For Inbox: the profile's visibility (target roles and keywords through the full-text index, "All of these", target industries) over vacancies with no decision in the profile. For Shortlist, Applied and Dismissed: the vacancies with that decision. Exclusions apply to all four. The query joins applications and the `fit` row and sorts on the server; filters (Fit, Collected, Industries, Sources, Unread) are applied in the same query, and their counts are one `GROUP BY` each over the same set.
-- **Search** keeps substring semantics over title, company, tags and text. Title, company and tags are matched in SQL. When a query is typed, the bodies of the candidate rows are decompressed and reduced to plain text in Go and matched there. The time of this path is measured in the second roadmap slice against the list budget; if it does not fit, a trigram full-text index replaces it and the size budget is recomputed.
+- **Search** keeps substring semantics over title, company, tags and text. Title, company and tags are matched in SQL. The text is matched through the trigram full-text index `vacancy_fts`, with the query as one phrase; a query shorter than three characters matches title, company and tags only. Decompressing and scanning the bodies in Go was measured at 235 ms for 2,958 vacancies and replaced; the index answers in under 6 ms.
 - The vacancy view is assembled in one package from the vacancy, its reading and `Score`; it says which actions are available and why.
 
 ### Profiles
@@ -157,9 +157,9 @@ type Response struct { Text string; InTokens, OutTokens int }
 | `model_call` | journal of model calls |
 | `settings` | what the application remembers about its use: active profile, pause of background model work |
 
-**Size of a vacancy** (estimate): row 0.5 KB, body 1.8 KB compressed, full-text index 7.1 KB, reading 0.8 to 1.2 KB, fit and decisions 0.5 KB: about 11 KB.
+**Size of a vacancy** (measured on the imported catalogue, then estimated): row with body 3.1 KB, sources 0.4 KB, full-text index 11 KB (trigram with positions, needed for phrase matching; without positions the candidates must be checked in Go, which costs 100 to 200 ms for common words), reading 0.8 to 1.2 KB, fit and decisions 0.5 KB: about 17.5 KB.
 
-**Text retention.** A daily `retention` job applies the rule in `behaviour/settings-and-data.md`: it drops `body`, the index entry and the reading of the vacancy; about 0.5 KB of row, sources and decisions stays, with its industries. A row without `body` always takes the text when a source shows it again, whatever its `content_hash`. With about 55,000 new vacancies a year, growth falls from about 0.65 GB to about 30 MB a year for retained rows, plus the active window of about 110 MB.
+**Text retention.** A daily `retention` job applies the rule in `behaviour/settings-and-data.md`: it drops `body`, the index entry and the reading of the vacancy; about 0.5 KB of row, sources and decisions stays, with its industries. A row without `body` always takes the text when a source shows it again, whatever its `content_hash`. With about 55,000 new vacancies a year, growth falls from about 1 GB to about 30 MB a year for retained rows, plus the active window of about 160 MB.
 
 **Migrations** are numbered SQL files embedded in the binary. At open: read `user_version`; refuse a newer one with a clear message; when migrations are pending, copy the database with `VACUUM INTO` into `<data>/backups/` (the last five are kept); run each migration with its `user_version` in one transaction.
 
@@ -216,7 +216,7 @@ These are targets the coordinator checks at acceptance of every change (see `PRO
 | Backend code | at most 16,000 lines |
 | Frontend code | at most 6,000 lines |
 | Tests | no more lines than the code they test |
-| Database per vacancy | at most 14 KB |
+| Database per vacancy | at most 18 KB |
 | Model calls for a new vacancy text | 1 |
 | Model calls for a change of profile or My data | 0 for Fits you and the counter; Shortlist checks become outdated and run again only when their vacancy is opened |
 | Shortlist check | at most 1 per shortlisted vacancy on entering Shortlist, and 1 per opening after its inputs changed |

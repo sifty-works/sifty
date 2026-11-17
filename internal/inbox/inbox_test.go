@@ -1,59 +1,417 @@
 package inbox_test
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"testing"
+	"time"
 
+	"github.com/sifty-works/sifty/internal/catalog"
+	"github.com/sifty-works/sifty/internal/db"
 	"github.com/sifty-works/sifty/internal/inbox"
+	"github.com/sifty-works/sifty/internal/listing"
 	"github.com/sifty-works/sifty/internal/server"
 )
 
-func TestEmptyInboxReturnsRowsAndEmptyText(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	h := server.New(server.Options{
-		Version: "test",
-		Port:    9999,
-		Logger:  logger,
-	}, func(mux *http.ServeMux) {
-		mux.Handle("GET /api/vacancies", inbox.Handler())
-	})
-	ts := httptest.NewServer(h)
-	defer ts.Close()
+// testNow is 17 Nov 2026 12:00 UTC, the fixed "now" for all tests.
+var testNow = time.Date(2026, 11, 17, 12, 0, 0, 0, time.UTC)
 
-	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/vacancies", nil)
+func testNowFn() time.Time { return testNow }
+
+func openTestDB(t *testing.T) *db.DB {
+	t.Helper()
+	d, err := db.Open(filepath.Join(t.TempDir(), "test.db"), db.Migrations)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { d.Close() })
+	return d
+}
+
+// newCat returns a catalog whose clock is after all test publication dates.
+func newCat(d *db.DB) *catalog.Catalog {
+	return catalog.New(d, func() time.Time { return time.Date(2026, 12, 1, 10, 0, 0, 0, time.UTC) })
+}
+
+func newTestServer(t *testing.T, d *db.DB) *httptest.Server {
+	t.Helper()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	h := server.New(server.Options{Version: "test", Port: 9999, Logger: logger},
+		func(mux *http.ServeMux) {
+			mux.Handle("GET /api/vacancies", inbox.Handler(d, testNowFn, logger))
+		})
+	ts := httptest.NewServer(h)
+	t.Cleanup(ts.Close)
+	return ts
+}
+
+func apiGet(t *testing.T, ts *httptest.Server, path string) map[string]any {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+path, nil)
 	req.Host = "127.0.0.1:9999"
 	resp, err := ts.Client().Do(req)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("GET %s: %v", path, err)
 	}
 	defer resp.Body.Close()
-
 	if resp.StatusCode != http.StatusOK {
-		t.Errorf("status: got %d, want 200", resp.StatusCode)
+		t.Fatalf("GET %s: status %d", path, resp.StatusCode)
 	}
-
 	var body map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-		t.Fatalf("decoding response: %v", err)
-	}
+	json.NewDecoder(resp.Body).Decode(&body) //nolint:errcheck
+	return body
+}
 
-	rows, ok := body["rows"].([]any)
-	if !ok {
-		t.Fatalf("rows field: got %T (%v)", body["rows"], body["rows"])
-	}
-	if len(rows) != 0 {
-		t.Errorf("rows: got %d, want 0", len(rows))
-	}
+func getRows(body map[string]any) []any {
+	r, _ := body["rows"].([]any)
+	return r
+}
 
-	emptyText, _ := body["empty"].(string)
-	if emptyText == "" {
-		t.Error("empty field should not be blank")
+func field(r any, key string) string {
+	m, _ := r.(map[string]any)
+	v, _ := m[key].(string)
+	return v
+}
+
+func rowID(r any) float64 {
+	m, _ := r.(map[string]any)
+	v, _ := m["id"].(float64)
+	return v
+}
+
+func add(t *testing.T, cat *catalog.Catalog, p listing.Posting) int64 {
+	t.Helper()
+	id, _, err := cat.Upsert(context.Background(), p, "src")
+	if err != nil {
+		t.Fatalf("upsert: %v", err)
 	}
-	if emptyText != "Inbox zero. Collect more jobs in Settings → Sources." {
-		t.Errorf("empty text: got %q", emptyText)
+	return id
+}
+
+func post(url, title, company string) listing.Posting {
+	return listing.Posting{
+		URL: url, Title: title, Company: company,
+		Text: "job description", TextKind: listing.Plain, TextState: listing.TextFull,
+	}
+}
+
+// --- Rows and fields ---
+
+func TestRows_AllFieldsPresent(t *testing.T) {
+	d := openTestDB(t)
+	add(t, newCat(d), listing.Posting{
+		URL: "https://example.com/jobs/1", Title: "Backend Engineer",
+		Company: "Acme Corp", Location: "Remote · EU",
+		Published: time.Date(2026, 11, 2, 0, 0, 0, 0, time.UTC), PublishedBasis: "datePosted",
+		Text: "Full description.", TextKind: listing.Plain, TextState: listing.TextFull,
+	})
+	body := apiGet(t, newTestServer(t, d), "/api/vacancies")
+	rs := getRows(body)
+	if len(rs) != 1 {
+		t.Fatalf("rows: got %d, want 1", len(rs))
+	}
+	r := rs[0]
+	for key, want := range map[string]string{
+		"company":  "Acme Corp",
+		"title":    "Backend Engineer",
+		"location": "Remote · EU",
+	} {
+		if field(r, key) != want {
+			t.Errorf("%s: got %q, want %q", key, field(r, key), want)
+		}
+	}
+	if field(r, "published") == "" {
+		t.Error("published should not be empty")
+	}
+	if total, _ := body["total"].(float64); total != 1 {
+		t.Errorf("total: got %v, want 1", total)
+	}
+	if empty, _ := body["empty"].(string); empty != "" {
+		t.Errorf("empty: got %q, want empty string", empty)
+	}
+}
+
+func TestRows_LocationUnstated(t *testing.T) {
+	d := openTestDB(t)
+	add(t, newCat(d), post("https://example.com/jobs/2", "Engineer", "Acme"))
+	body := apiGet(t, newTestServer(t, d), "/api/vacancies")
+	rs := getRows(body)
+	if len(rs) != 1 {
+		t.Fatalf("rows: %d", len(rs))
+	}
+	if got := field(rs[0], "location"); got != "Location unstated" {
+		t.Errorf("location: got %q, want %q", got, "Location unstated")
+	}
+}
+
+// --- Publication line and age forms ---
+
+func TestPublicationLine_Forms(t *testing.T) {
+	cases := []struct {
+		name    string
+		pubAt   time.Time
+		basis   string
+		wantPub string
+	}{
+		{
+			"with basis 15 days ago",
+			time.Date(2026, 11, 2, 0, 0, 0, 0, time.UTC), "datePosted",
+			"Published 2 Nov 2026 · 2 weeks",
+		},
+		{
+			"without basis",
+			time.Date(2026, 10, 15, 0, 0, 0, 0, time.UTC), "",
+			"Source date 15 Oct 2026 (unverified)",
+		},
+		{
+			"today",
+			time.Date(2026, 11, 17, 0, 0, 0, 0, time.UTC), "datePosted",
+			"Published 17 Nov 2026 · today",
+		},
+		{
+			"1 day",
+			time.Date(2026, 11, 16, 0, 0, 0, 0, time.UTC), "datePosted",
+			"Published 16 Nov 2026 · 1 day",
+		},
+		{
+			"5 days",
+			time.Date(2026, 11, 12, 0, 0, 0, 0, time.UTC), "datePosted",
+			"Published 12 Nov 2026 · 5 days",
+		},
+		{
+			"3 weeks",
+			time.Date(2026, 10, 27, 0, 0, 0, 0, time.UTC), "datePosted",
+			"Published 27 Oct 2026 · 3 weeks",
+		},
+		{
+			"3 months (90 days)",
+			time.Date(2026, 8, 19, 0, 0, 0, 0, time.UTC), "datePosted",
+			"Published 19 Aug 2026 · 3 months",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			d := openTestDB(t)
+			p := post("https://example.com/jobs/pl-"+tc.name, "Engineer", "Acme")
+			p.Published = tc.pubAt
+			p.PublishedBasis = tc.basis
+			add(t, newCat(d), p)
+			body := apiGet(t, newTestServer(t, d), "/api/vacancies")
+			rs := getRows(body)
+			if len(rs) != 1 {
+				t.Fatalf("rows: %d", len(rs))
+			}
+			if got := field(rs[0], "published"); got != tc.wantPub {
+				t.Errorf("published: got %q, want %q", got, tc.wantPub)
+			}
+		})
+	}
+}
+
+func TestPublicationLine_NoDate(t *testing.T) {
+	d := openTestDB(t)
+	add(t, newCat(d), post("https://example.com/jobs/nd1", "Engineer", "Acme"))
+	body := apiGet(t, newTestServer(t, d), "/api/vacancies")
+	rs := getRows(body)
+	if got := field(rs[0], "published"); got != "Publication date not reported" {
+		t.Errorf("published: got %q", got)
+	}
+}
+
+// --- Newest order: three ranks and tie-breaks ---
+
+func TestOrder_ThreeRanks(t *testing.T) {
+	d := openTestDB(t)
+	cat := newCat(d)
+	// Rank 2: unverified date, newer absolute date.
+	add(t, cat, listing.Posting{
+		URL: "https://example.com/jobs/ord1", Title: "Rank2", Company: "Co",
+		Published: time.Date(2026, 11, 10, 0, 0, 0, 0, time.UTC),
+		Text:      "job", TextKind: listing.Plain, TextState: listing.TextFull,
+	})
+	// Rank 1: basis date, 5 Nov (older than rank-2 absolute date but rank wins).
+	add(t, cat, listing.Posting{
+		URL: "https://example.com/jobs/ord2", Title: "Rank1 Newer", Company: "Co",
+		Published: time.Date(2026, 11, 5, 0, 0, 0, 0, time.UTC), PublishedBasis: "datePosted",
+		Text: "job", TextKind: listing.Plain, TextState: listing.TextFull,
+	})
+	// Rank 3: no date.
+	add(t, cat, listing.Posting{
+		URL: "https://example.com/jobs/ord3", Title: "Rank3", Company: "Co",
+		Text: "job", TextKind: listing.Plain, TextState: listing.TextFull,
+	})
+	// Rank 1: basis date, 1 Nov (older within rank-1).
+	add(t, cat, listing.Posting{
+		URL: "https://example.com/jobs/ord4", Title: "Rank1 Older", Company: "Co",
+		Published: time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC), PublishedBasis: "datePosted",
+		Text: "job", TextKind: listing.Plain, TextState: listing.TextFull,
+	})
+	body := apiGet(t, newTestServer(t, d), "/api/vacancies")
+	rs := getRows(body)
+	if len(rs) != 4 {
+		t.Fatalf("rows: %d", len(rs))
+	}
+	wantTitles := []string{"Rank1 Newer", "Rank1 Older", "Rank2", "Rank3"}
+	for i, want := range wantTitles {
+		if got := field(rs[i], "title"); got != want {
+			t.Errorf("row[%d]: got %q, want %q", i, got, want)
+		}
+	}
+}
+
+func TestOrder_TieBreakByFirstSeenThenID(t *testing.T) {
+	d := openTestDB(t)
+	t1 := time.Date(2026, 11, 1, 10, 0, 0, 0, time.UTC)
+	t2 := time.Date(2026, 11, 2, 10, 0, 0, 0, time.UTC)
+	add(t, catalog.New(d, func() time.Time { return t1 }),
+		post("https://example.com/jobs/tie1", "Tie Early", "Co"))
+	id2 := add(t, catalog.New(d, func() time.Time { return t2 }),
+		post("https://example.com/jobs/tie2", "Tie Later", "Co"))
+	rs := getRows(apiGet(t, newTestServer(t, d), "/api/vacancies"))
+	if len(rs) < 2 {
+		t.Fatalf("rows: %d", len(rs))
+	}
+	if rowID(rs[0]) != float64(id2) {
+		t.Errorf("first row: id %v, want %v (later first_seen)", rowID(rs[0]), id2)
+	}
+}
+
+// --- Search ---
+
+func TestSearch_ByTitleCompanyTag(t *testing.T) {
+	d := openTestDB(t)
+	cat := newCat(d)
+	add(t, cat, listing.Posting{
+		URL: "https://example.com/jobs/s1", Title: "Golang Backend", Company: "Acme",
+		Tags: []string{"Kubernetes"}, Text: "job", TextKind: listing.Plain, TextState: listing.TextFull,
+	})
+	add(t, cat, listing.Posting{
+		URL: "https://example.com/jobs/s2", Title: "Frontend Designer", Company: "DeepMind AI",
+		Tags: []string{"Figma"}, Text: "job", TextKind: listing.Plain, TextState: listing.TextFull,
+	})
+	ts := newTestServer(t, d)
+	for _, tc := range []struct {
+		q         string
+		wantN     int
+		wantTitle string
+	}{
+		{"golang", 1, "Golang Backend"},
+		{"deepmind", 1, "Frontend Designer"},
+		{"kubernetes", 1, "Golang Backend"},
+	} {
+		body := apiGet(t, ts, "/api/vacancies?q="+tc.q)
+		rs := getRows(body)
+		if len(rs) != tc.wantN {
+			t.Errorf("q=%q: rows %d, want %d", tc.q, len(rs), tc.wantN)
+			continue
+		}
+		if field(rs[0], "title") != tc.wantTitle {
+			t.Errorf("q=%q: title %q, want %q", tc.q, field(rs[0], "title"), tc.wantTitle)
+		}
+	}
+	// Total includes all vacancies regardless of query.
+	body := apiGet(t, ts, "/api/vacancies?q=golang")
+	if total, _ := body["total"].(float64); total != 2 {
+		t.Errorf("total: %v, want 2", total)
+	}
+}
+
+func TestSearch_ByBodyText(t *testing.T) {
+	d := openTestDB(t)
+	cat := newCat(d)
+	add(t, cat, listing.Posting{
+		URL: "https://example.com/jobs/sb1", Title: "Engineer", Company: "Acme",
+		Text: "Experience with distributed tracing systems is a plus.", TextKind: listing.Plain, TextState: listing.TextFull,
+	})
+	add(t, cat, listing.Posting{
+		URL: "https://example.com/jobs/sb2", Title: "Designer", Company: "Acme",
+		Text: "Must know color theory.", TextKind: listing.Plain, TextState: listing.TextFull,
+	})
+	ts := newTestServer(t, d)
+	body := apiGet(t, ts, "/api/vacancies?q=distributed+tracing")
+	rs := getRows(body)
+	if len(rs) != 1 || field(rs[0], "title") != "Engineer" {
+		t.Errorf("body search: rows %d, title %q", len(rs), field(rs[0], "title"))
+	}
+	// A query shorter than 3 characters skips FTS; "di" is in body only.
+	if rs := getRows(apiGet(t, ts, "/api/vacancies?q=di")); len(rs) != 0 {
+		t.Errorf("2-char query: rows %d, want 0 (body not searched)", len(rs))
+	}
+}
+
+func TestSearch_CaseInsensitive(t *testing.T) {
+	d := openTestDB(t)
+	cat := newCat(d)
+	add(t, cat, listing.Posting{
+		URL: "https://example.com/jobs/ci1", Title: "TypeScript Engineer", Company: "Acme",
+		Text: "Must have OBSERVABILITY experience.", TextKind: listing.Plain, TextState: listing.TextFull,
+	})
+	ts := newTestServer(t, d)
+	for _, q := range []string{"typescript", "TYPESCRIPT", "observability", "OBSERVABILITY"} {
+		if rs := getRows(apiGet(t, ts, "/api/vacancies?q="+q)); len(rs) != 1 {
+			t.Errorf("q=%q: rows %d, want 1", q, len(rs))
+		}
+	}
+}
+
+func TestSearch_VacancyWithoutBodyFoundByTitleOnly(t *testing.T) {
+	d := openTestDB(t)
+	cat := newCat(d)
+	add(t, cat, listing.Posting{
+		URL: "https://example.com/jobs/nb1", Title: "Platform Engineer", Company: "Acme",
+		TextState: listing.TextNotFetched,
+	})
+	ts := newTestServer(t, d)
+	// Found by title.
+	if rs := getRows(apiGet(t, ts, "/api/vacancies?q=platform")); len(rs) != 1 {
+		t.Errorf("title search on no-body vacancy: rows %d, want 1", len(rs))
+	}
+	// Not found by body-only term.
+	if rs := getRows(apiGet(t, ts, "/api/vacancies?q=observability")); len(rs) != 0 {
+		t.Errorf("body search on no-body vacancy: rows %d, want 0", len(rs))
+	}
+}
+
+func TestSearch_EmptyAndWhitespaceQueryReturnsAll(t *testing.T) {
+	d := openTestDB(t)
+	cat := newCat(d)
+	for i := 1; i <= 3; i++ {
+		add(t, cat, post("https://example.com/jobs/eq"+string(rune('0'+i)), "Engineer", "Co"))
+	}
+	ts := newTestServer(t, d)
+	for _, q := range []string{"", "+++"} {
+		if rs := getRows(apiGet(t, ts, "/api/vacancies?q="+q)); len(rs) != 3 {
+			t.Errorf("q=%q: rows %d, want 3", q, len(rs))
+		}
+	}
+}
+
+// --- Empty states ---
+
+func TestEmpty_InboxZeroWithNoQuery(t *testing.T) {
+	d := openTestDB(t)
+	body := apiGet(t, newTestServer(t, d), "/api/vacancies")
+	if empty, _ := body["empty"].(string); empty != "Inbox zero. Collect more jobs in Settings → Sources." {
+		t.Errorf("empty text: got %q", empty)
+	}
+	if total, _ := body["total"].(float64); total != 0 {
+		t.Errorf("total: %v", total)
+	}
+}
+
+func TestEmpty_NoMatchingRolesWithQuery(t *testing.T) {
+	d := openTestDB(t)
+	add(t, newCat(d), post("https://example.com/jobs/em1", "Engineer", "Acme"))
+	body := apiGet(t, newTestServer(t, d), "/api/vacancies?q=zzznomatch")
+	if empty, _ := body["empty"].(string); empty != "No matching roles. Adjust your filters." {
+		t.Errorf("empty text: got %q", empty)
+	}
+	if total, _ := body["total"].(float64); total != 1 {
+		t.Errorf("total: %v, want 1", total)
 	}
 }

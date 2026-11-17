@@ -456,6 +456,11 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 		if err != nil {
 			return nil, fmt.Errorf("inserting vacancy %d: %w", j.id, err)
 		}
+		if len(md.body) > 0 {
+			if err := catalog.WriteFTS(ctx, tx, j.id, md.body); err != nil {
+				return nil, fmt.Errorf("fts for vacancy %d: %w", j.id, err)
+			}
+		}
 		report.VacanciesWritten++
 	}
 

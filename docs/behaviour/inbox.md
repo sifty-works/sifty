@@ -62,7 +62,7 @@ There is one list of exclusions, managed in Settings.
 
 ## Search, filters and sort
 
-- **Search** ("Search company, role, tech", key `/`) finds a case-insensitive substring in the title, company, tags and text. A vacancy whose text was removed is found by its title, company and tags only.
+- **Search** ("Search company, role, tech", key `/`) finds a case-insensitive substring in the title, company, tags and text. A vacancy whose text was removed is found by its title, company and tags only. A query shorter than 3 characters matches title, company and tags only.
 - **Filters**, in a panel with a count of active filters:
   - Fits you: Strong 75+, Partial 55–74, Weak, Not scored; a dimmed result counts as Not scored;
   - Collected: any time, 7 days or 30 days, by first-seen date; "Hide expired";

@@ -107,7 +107,7 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		Logger:  logger,
 		Static:  web.StaticFS(),
 	}, func(mux *http.ServeMux) {
-		mux.Handle("GET /api/vacancies", inbox.Handler())
+		mux.Handle("GET /api/vacancies", inbox.Handler(database, time.Now, logger))
 	})
 
 	srv := &http.Server{
