@@ -73,7 +73,7 @@ func dropParam(key string) bool {
 // ConcreteATS returns the canonical address when raw is the address of one
 // concrete vacancy on Greenhouse, Lever, Ashby or Workable.
 //
-// Accepted forms (optional trailing "/apply" is stripped before canonicalising):
+// Accepted forms (an optional trailing "/apply" or "/application" is stripped before canonicalising):
 //   - boards.greenhouse.io/<board>/jobs/<id>
 //   - job-boards.greenhouse.io/<board>/jobs/<id>
 //   - jobs.lever.co/<site>/<uuid>
@@ -92,8 +92,8 @@ func ConcreteATS(raw string) (string, bool) {
 	}
 	host := strings.ToLower(u.Host)
 
-	// Strip optional trailing "/apply".
-	path := strings.TrimSuffix(u.Path, "/apply")
+	// Strip an optional trailing "/apply" or "/application" (Ashby).
+	path := strings.TrimSuffix(strings.TrimSuffix(u.Path, "/application"), "/apply")
 	// Also strip a trailing "/" before the apply check.
 	path = strings.TrimRight(path, "/")
 

@@ -125,11 +125,12 @@ func (c *Catalog) Upsert(ctx context.Context, p listing.Posting, src string) (in
 
 	// The apply address is kept only when it is one concrete vacancy in an
 	// applicant tracking system, never the root of a board or another page.
+	// A posting whose own address is such a vacancy applies there.
 	var canonApply, atsApply string
-	if p.ApplyURL != "" {
-		if ca, ok := listing.ConcreteATS(p.ApplyURL); ok {
-			canonApply = ca
-			atsApply = ca
+	for _, raw := range []string{p.ApplyURL, p.URL} {
+		if ca, ok := listing.ConcreteATS(raw); ok && raw != "" {
+			canonApply, atsApply = ca, ca
+			break
 		}
 	}
 
@@ -509,7 +510,10 @@ func compressBody(html string) ([]byte, error) {
 }
 
 // contentHash returns the hex SHA-256 of plain text.
+// Runs of whitespace count as one space, so a change of layout alone is not
+// a change of text.
 func contentHash(plainText string) string {
+	plainText = strings.Join(strings.Fields(plainText), " ")
 	if plainText == "" {
 		return ""
 	}

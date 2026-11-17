@@ -769,3 +769,33 @@ func TestFTS_Merge(t *testing.T) {
 		t.Errorf("FTS row for kept vacancy %d should contain full text", keptID)
 	}
 }
+
+func TestUpsert_OwnATSAddressMatchesAnotherSiteByApplyAddress(t *testing.T) {
+	cat := catalog.New(openTestDB(t), fixedNow())
+	ats := "https://jobs.ashbyhq.com/acme/550e8400-e29b-41d4-a716-446655440000"
+	agg := posting("https://aggregator.example/jobs/9", "Platform Engineer", "Acme")
+	agg.ApplyURL = ats + "/application"
+	id1, _, _ := cat.Upsert(context.Background(), agg, "agg")
+	board := posting(ats, "Platform Engineer", "acme")
+	id2, out, err := cat.Upsert(context.Background(), board, "board")
+	if err != nil || id2 != id1 || out == catalog.OutcomeNew {
+		t.Fatalf("board posting: id %d (want %d), outcome %v, err %v", id2, id1, out, err)
+	}
+}
+
+func TestUpsert_WhitespaceOnlyChangeKeepsVersion(t *testing.T) {
+	d := openTestDB(t)
+	cat := catalog.New(d, fixedNow())
+	p := posting("https://example.com/jobs/31", "Analyst", "Acme")
+	p.Text, p.TextKind, p.TextState = "<p>Headquarters:</p><p>Remote</p>", listing.HTML, listing.TextFull
+	id, _, _ := cat.Upsert(context.Background(), p, "src")
+	p.Text = "<p>Headquarters: Remote</p>"
+	if _, out, _ := cat.Upsert(context.Background(), p, "src"); out != catalog.OutcomeUnchanged {
+		t.Fatalf("outcome %v, want Unchanged", out)
+	}
+	var v int
+	d.QueryRow(`SELECT version FROM vacancy WHERE id = ?`, id).Scan(&v) //nolint:errcheck
+	if v != 1 {
+		t.Fatalf("version %d, want 1", v)
+	}
+}

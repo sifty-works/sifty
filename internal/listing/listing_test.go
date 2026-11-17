@@ -269,6 +269,10 @@ func TestConcreteATS_Ashby(t *testing.T) {
 			"https://jobs.ashbyhq.com/acme/550e8400-e29b-41d4-a716-446655440000/apply",
 			"https://jobs.ashbyhq.com/acme/550e8400-e29b-41d4-a716-446655440000",
 		},
+		{
+			"https://jobs.ashbyhq.com/acme/550e8400-e29b-41d4-a716-446655440000/application",
+			"https://jobs.ashbyhq.com/acme/550e8400-e29b-41d4-a716-446655440000",
+		},
 	}
 	for _, c := range cases {
 		got, ok := listing.ConcreteATS(c.raw)
