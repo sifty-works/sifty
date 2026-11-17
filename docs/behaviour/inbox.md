@@ -5,6 +5,7 @@ What the user gets: for the chosen profile, the vacancies that fit its search, i
 ## Layout
 
 - The header carries the stage tabs "Inbox N", "Shortlist N" and "Archive N", the profile switcher, the Settings button and, during collection, "Collecting… 5 of 14 sources". Archive counts Applied and Dismissed together.
+- The Inbox header also shows "N sources need attention" and the message of a failed collection run (see `collection.md`).
 - Archive has two tabs, Applied and Dismissed.
 - Opening a profile or Settings replaces the working area. Changing the stage clears the selected vacancy, the held Unread row, the error and the notice; Archive opens on Applied.
 - Changing the profile reloads the list for that profile.
@@ -14,11 +15,13 @@ What the user gets: for the chosen profile, the vacancies that fit its search, i
 
 ## Which vacancies a profile sees
 
-The same rule applies to all four lists and to their counters.
-
-- **Target roles and keywords.** When the profile has both, a vacancy is shown when a target role is in its title and a keyword is in its full text. When the profile has only one of the two, only that one applies. A profile with neither sees empty lists.
-- **Target industries.** When the profile has target industries, a vacancy is shown when it has at least one of them or has no industry at all; a vacancy whose industries are all outside the targets is hidden. A profile without target industries is not limited by industry. Industries are assigned at collection (see `collection.md`).
-- **Exclusions.** A vacancy that matches an exclusion is hidden (see Exclusions below).
+- **Inbox** shows the vacancies with no decision in this profile that fit its search:
+  - **Target roles and keywords.** When the profile has both, a vacancy fits when a target role is in its title and a keyword is in its title, tags or text. When it has only one of the two, only that one applies. A profile with neither sees an empty Inbox.
+  - **All of these.** Every term listed under "All of these" must be in the vacancy's title, tags or text.
+  - **Target industries**, the profile's own or inherited from the first profile. When there are any, a vacancy fits when it has at least one of them or has no industry at all; a vacancy whose industries are all outside the targets does not fit.
+- **Shortlist, Applied and Dismissed** show every vacancy the profile decided that way, whether or not it still fits the search, so a decision never disappears when the search changes or a vacancy's text is removed.
+- **Exclusions** hide a matching vacancy in every list (see below).
+- Counters count the same sets.
 
 ## Exclusions
 
@@ -29,6 +32,7 @@ There is one list of exclusions, managed in Settings.
 - A matching vacancy is hidden everywhere: in every list, in counters and in search. An exclusion that applies to all profiles also stops the vacancy's assessment and the fetching of its page (see `collection.md`).
 - While a word is typed, the form shows "Would hide N roles".
 - "Block company" on a vacancy adds a company exclusion for all profiles.
+- The "Except" field on a profile page shows and edits the word exclusions of that profile in the same list.
 - Removing an exclusion shows the hidden vacancies again at once.
 
 ## The list
@@ -39,12 +43,12 @@ There is one list of exclusions, managed in Settings.
 - ◷ "Listing expired" when the vacancy is past its expiry date; ✓ "Shortlisted" for a vacancy shortlisted from Inbox in this session; Fits you and the requirements counter (see `assessment.md`);
 - the title;
 - the location in short form: "Remote · …", "Worldwide", "EU · N countries", or "Location unstated", with the full text on hover when shortened;
-- in Applied, "· Applied <date>"; in any list, "Applied <date> from <profile>" when the user applied to this vacancy from any profile;
+- in Applied, "· Applied <date>"; in the other lists, "Applied <date> from <profile>" when the user applied to this vacancy from any profile (a deleted profile is named by its last name);
 - the publication line: "Published <date> · <age>", "Source date … (unverified)" or "Publication date not reported".
 
 **Read and unread.** An unread row is bold. Opening it marks it read for all profiles. With the Unread filter on, the row stays visible until the user selects another one ("Opening marks a role read. It stays here until you choose another role.").
 
-**Decisions in this session.** A vacancy shortlisted or dismissed from Inbox stays in the list until reload and can be undone. Under the list: "N dismissed this session — they disappear next time." The selection moves to the next undecided vacancy, wrapping around.
+**Decisions in this session.** A vacancy shortlisted or dismissed from Inbox stays in the list until reload, shown as decided, and can be undone. Under the list: "N dismissed this session — they disappear next time." The selection moves to the next undecided vacancy, wrapping around.
 
 **Empty states:**
 
@@ -54,11 +58,11 @@ There is one list of exclusions, managed in Settings.
 - Applied: "No applications yet.";
 - Dismissed: "No dismissed roles."
 
-**Freshness.** The open list picks up new vacancies within 10 seconds. After a decision only that vacancy is reloaded. An answer that started before the user's own change is discarded.
+**Freshness.** The open list picks up new vacancies within 10 seconds. After a decision only that vacancy is reloaded. A reload never undoes on screen a decision the user has just made.
 
 ## Search, filters and sort
 
-- **Search** ("Search company, role, tech", key `/`) finds a case-insensitive substring in the title, company, tags and text. It runs on the server; the list never carries vacancy texts.
+- **Search** ("Search company, role, tech", key `/`) finds a case-insensitive substring in the title, company, tags and text. A vacancy whose text was removed is found by its title, company and tags only.
 - **Filters**, in a panel with a count of active filters:
   - Fits you: Strong 75+, Partial 55–74, Weak, Not scored; a dimmed result counts as Not scored;
   - Collected: any time, 7 days or 30 days, by first-seen date; "Hide expired";
@@ -98,12 +102,12 @@ Then the dialog "Did you submit your application?" asks for the outcome: Not yet
 - Applied is reached only from Shortlist and only with the confirmation;
 - a decision on a vacancy whose stage changed in the meantime is refused with "job N changed while this outcome was being saved; reload and try again".
 
-**Entering Shortlist** starts, in the background, the Shortlist check (see `assessment.md`), the preparation of the application and the search for the employer's site (see `application.md`).
+**Entering Shortlist** starts, in the background, the Shortlist check (see `assessment.md`), the search for the employer's site and the preparation of the application (see `application.md`).
 
 **Delete** removes a vacancy for good (see `collection.md` for how collection keeps it away).
 
-- It is not offered in Inbox: "Dismiss roles in Triage; permanent Delete is available outside Triage".
-- It is refused while a collection run is in progress or while a model call for this vacancy is running.
+- It is not offered in Inbox: "Dismiss roles in Inbox; permanent Delete is available outside Inbox".
+- It is refused while a collection run is in progress ("Collection is running; try again when it ends.") or while a model call for this vacancy is running ("A model is working on this role; try again when it ends.").
 - The dialog reads "This permanently deletes this role… Automatic collection will not restore it." with "Keep role" and "Permanently delete".
 - It removes the vacancy's decisions, drafts and pending work.
 
@@ -129,8 +133,8 @@ Then the dialog "Did you submit your application?" asks for the outcome: Not yet
 
 1. The Fits you band (see `assessment.md`).
 2. What they ask on the left (see `assessment.md`) and What they offer on the right. What they offer shows tiles built from the vacancy's compensation and benefits sections and an "Also offered" list; when nothing is found: "No Compensation or Benefits section recognised…" or "Section found but no specific items matched."
-3. Listing text, with its state in words: "Full text", "Listing summary only", "Blocked by site" or "Not fetched". The sanitised text is shown with its headings; without text: "A full description has not been retrieved…". Sections are derived from the headings when the page is shown.
-4. The Shortlist check, in Shortlist and Archive only (see `assessment.md`).
+3. Listing text, with its state in words: "Full text", "Listing summary only", "Blocked by site", "Not fetched" or "Text removed after 60 days unseen; it returns if the source shows the role again". The sanitised text is shown with its headings; without text: "A full description has not been retrieved…".
+4. The Shortlist check, in Shortlist and Archive when a check exists (see `assessment.md`).
 
 Opening a vacancy never makes a network request.
 
@@ -138,12 +142,12 @@ Opening a vacancy never makes a network request.
 
 - Search in the browser over all vacancy texts sent with the list.
 - Global search expressions and their unreachable editor, with the collection fallback that used them.
-- Four separate ways to hide a vacancy: global stop words, blocked companies hidden only in Inbox and only in the browser, profile except-words, and the unfinished triage rules. The one list of exclusions replaces them.
+- Four separate ways to hide a vacancy: global stop words, blocked companies hidden only in Inbox, profile except-words kept apart from the rest, and triage rules that were never finished. The one list of exclusions replaces them.
 - Dismissed without search and filters, and the Archive counter that ignored Dismissed.
 - The second Fits you and the second Assess button on the page, raw JSON dumps, file paths, and the "AI analysis" note.
-- The "Candidate facts and corrections" form on the page; Confirmed by you holds these facts.
+- The "Candidate facts and corrections" form on the page; Confirmed by you holds these facts (see `profiles.md`).
 - The internal text state ("available cleaned html") shown on the page.
-- The "By section" and "Original" switch of the listing text, and stored sections.
+- The "By section" and "Original" switch of the listing text.
 - The automatic refetch of a vacancy when it is opened.
 - The text "Applications are permanently deleted 30 days after…", which was never true.
 - Erasing the application date when Applied is undone.
@@ -153,4 +157,6 @@ Opening a vacancy never makes a network request.
 
 ## Data from the old application
 
-Stages are imported per profile: no decision stays Inbox; shortlisted and saved become Shortlist; rejected becomes Dismissed with its reason; applied becomes Applied; the date of the last change becomes the date of the decision. The old per-vacancy copy of the first profile's stage is not imported; it is compared with the first profile's stages first and every difference is logged. Every old application date becomes an application fact; its profile is taken from the last recorded move to Applied, or the first profile when none is recorded; the history of stage changes is read for this and not imported. The read mark is imported as it is. Global stop words become word exclusions for all profiles, blocked companies become company exclusions for all profiles, and profile except-words become word exclusions of that profile. Before switch-over, for every profile and every list, the vacancy ids and the counters of the old and new lists are compared; the expected differences (Dismissed now counted in Archive, applications now visible in every profile) are listed beforehand, and fifty vacancies are checked by hand for stage, reason and application date.
+Stages are imported per profile: no decision stays Inbox; shortlisted and saved become Shortlist; rejected becomes Dismissed with its reason; applied becomes Applied; the date of the last change becomes the date of the decision. The old per-vacancy copy of the first profile's stage is not imported; it is compared with the first profile's stages first and every difference is logged. Every old application date becomes an application fact; its profile is taken from the last recorded move to Applied, or the first profile when none is recorded; the history of stage changes is read for this and not imported. The read mark is imported as it is. Global stop words become word exclusions for all profiles, blocked companies become company exclusions for all profiles, and profile except-words become word exclusions of that profile.
+
+Before switch-over, for every profile and every list, the vacancy ids and the counters of the old and new lists are compared (see `settings-and-data.md` for the method). The expected differences are listed beforehand: Dismissed now counted in Archive; applications visible in every profile; blocked companies now hidden in Shortlist and Archive too; merged duplicates keeping the strongest stage in every profile, not only the first; decided vacancies staying in their list when the search no longer fits them; Greenhouse vacancies showing the company name instead of the board's name. Fifty vacancies are checked by hand for stage, reason and application date.
