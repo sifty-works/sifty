@@ -112,7 +112,7 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	cat := catalog.New(database, time.Now)
 	r := runner.New(database, map[string]int{"browser": 1, "net": 4, "cpu": 1}, time.Now, logger)
 	blocked := offline && flags.replayDir == ""
-	col := collect.New(store, cat, r, fetcher, blocked, nil, logger)
+	col := collect.New(store, cat, r, fetcher, database, blocked, nil, logger)
 	col.Register()
 
 	// 10. Listen.

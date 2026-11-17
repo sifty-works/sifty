@@ -73,8 +73,12 @@ There is one list of exclusions, described in full in `inbox.md`. For collection
 ## What the user sees of progress and errors
 
 - During a run, the Sources page and the Inbox header show "Collecting… 5 of 14 sources".
-- After a run, each source on the Sources page shows the time of its last success, the number of vacancies seen and the number of new ones, or the error of the last run in words ("Blocked by site", "Timed out", "Not found", "Nothing recognised on the page").
-- A source that failed or yielded nothing in its last three runs is marked on the Sources page, and the Inbox header shows "N sources need attention" linking to the Sources page.
+- After a run, the Sources table shows each source's status in a Status column:
+  - After a successful run: "Last success 2 Jan 15:04 · 10 seen · 3 new".
+  - After a failed run: the error in words ("Blocked by site", "Timed out", "Not found", "Nothing recognised on the page"), followed by " · last success 2 Jan 15:04" when there was a prior success.
+  - "No vacancies in 30 days" when the source's first run is at least 30 days old and no run in the last 30 days found a vacancy. This replaces the success form.
+- A source whose last three runs (at least three) all ended in error or empty is marked with ⚠ in the Status column.
+- The Inbox header shows "N sources need attention" (or "1 source needs attention") as a link to the Sources page when any enabled source needs attention.
 - A run where every source failed is shown as failed with a message in the Inbox header.
 
 ## Actions on a vacancy

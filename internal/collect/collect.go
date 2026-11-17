@@ -10,12 +10,14 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"strconv"
 	"sync"
 	"time"
 
 	"github.com/sifty-works/sifty/internal/apperr"
 	"github.com/sifty-works/sifty/internal/catalog"
 	"github.com/sifty-works/sifty/internal/config"
+	"github.com/sifty-works/sifty/internal/db"
 	"github.com/sifty-works/sifty/internal/fetch"
 	"github.com/sifty-works/sifty/internal/listing"
 	"github.com/sifty-works/sifty/internal/runner"
@@ -29,6 +31,7 @@ type Collector struct {
 	catalog *catalog.Catalog
 	runner  *runner.Runner
 	fetcher fetch.Fetcher
+	db      *db.DB
 	blocked bool // offline without replay: suppress automatic runs
 	now     func() time.Time
 	log     *slog.Logger
@@ -45,6 +48,7 @@ func New(
 	cat *catalog.Catalog,
 	r *runner.Runner,
 	f fetch.Fetcher,
+	database *db.DB,
 	blocked bool,
 	now func() time.Time,
 	log *slog.Logger,
@@ -57,6 +61,7 @@ func New(
 		catalog: cat,
 		runner:  r,
 		fetcher: f,
+		db:      database,
 		blocked: blocked,
 		now:     now,
 		log:     log,
@@ -168,7 +173,53 @@ func (c *Collector) run(ctx context.Context, j *runner.Job) error {
 				mu.Unlock()
 
 				key, _ := config.SourceKey(s.URL)
+				srcStarted := c.now()
 				postings, listErr := source.For(u).List(ctx, c.fetcher, source.SiteConfig{Name: s.Name, URL: s.URL})
+
+				var cntNew, cntUpdated, cntUnchanged, cntRemoved int
+				if listErr == nil {
+					for _, p := range postings {
+						canon, err := listing.Canonical(p.URL)
+						if err != nil {
+							continue
+						}
+						mu.Lock()
+						skip := seenURLs[canon]
+						if !skip {
+							seenURLs[canon] = true
+						}
+						mu.Unlock()
+						if skip {
+							continue
+						}
+						_, outcome, upsertErr := c.catalog.Upsert(ctx, p, key)
+						if upsertErr != nil {
+							c.log.Warn("collect: upsert failed", "url", p.URL, "error", upsertErr)
+							continue
+						}
+						switch outcome {
+						case catalog.OutcomeNew:
+							cntNew++
+						case catalog.OutcomeUpdated, catalog.OutcomeMerged:
+							cntUpdated++
+						case catalog.OutcomeUnchanged:
+							cntUnchanged++
+						case catalog.OutcomeTombstoned:
+							cntRemoved++
+						}
+						if outcome != catalog.OutcomeTombstoned {
+							c.mu.Lock()
+							c.written++
+							c.mu.Unlock()
+						}
+					}
+				} else {
+					c.log.Debug("collect: source failed", "key", key, "error", listErr)
+				}
+
+				runStatus, errText := sourceRunStatus(listErr, len(postings))
+				c.writeSourceRun(j.ID, key, srcStarted, c.now(), runStatus, errText,
+					len(postings), cntNew, cntUpdated, cntUnchanged, 0, cntRemoved)
 
 				mu.Lock()
 				doneCount++
@@ -177,37 +228,6 @@ func (c *Collector) run(ctx context.Context, j *runner.Job) error {
 				}
 				j.Progress(doneCount, len(enabled), "")
 				mu.Unlock()
-
-				if listErr != nil {
-					c.log.Warn("collect: source failed", "key", key, "error", listErr)
-					continue
-				}
-
-				for _, p := range postings {
-					canon, err := listing.Canonical(p.URL)
-					if err != nil {
-						continue
-					}
-					mu.Lock()
-					skip := seenURLs[canon]
-					if !skip {
-						seenURLs[canon] = true
-					}
-					mu.Unlock()
-					if skip {
-						continue
-					}
-					_, outcome, upsertErr := c.catalog.Upsert(ctx, p, key)
-					if upsertErr != nil {
-						c.log.Warn("collect: upsert failed", "url", p.URL, "error", upsertErr)
-						continue
-					}
-					if outcome != catalog.OutcomeTombstoned {
-						c.mu.Lock()
-						c.written++
-						c.mu.Unlock()
-					}
-				}
 			}
 		}()
 	}
@@ -256,10 +276,35 @@ func (c *Collector) StatusFunc() func() map[string]any {
 		c.mu.Lock()
 		written := c.written
 		c.mu.Unlock()
+
+		cfg := c.store.Get()
+		var attentionCount int
+		for _, s := range cfg.Sources {
+			if !s.Enabled {
+				continue
+			}
+			key, _ := config.SourceKey(s.URL)
+			if c.sourceNeedsAttention(key) {
+				attentionCount++
+			}
+		}
+		var attentionVal any
+		if attentionCount > 0 {
+			noun := "sources need"
+			if attentionCount == 1 {
+				noun = "source needs"
+			}
+			attentionVal = map[string]any{
+				"count": attentionCount,
+				"text":  strconv.Itoa(attentionCount) + " " + noun + " attention",
+			}
+		}
+
 		return map[string]any{
 			"collecting": collecting,
 			"lastRun":    lastRun,
 			"catalogue":  written,
+			"attention":  attentionVal,
 		}
 	}
 }
@@ -392,6 +437,146 @@ func (c *Collector) handleCollect(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/api/status", http.StatusSeeOther)
 }
 
+// --- Source run helpers ------------------------------------------------------
+
+// sourceRunStatus returns the run status and user-facing error text for a source.
+func sourceRunStatus(listErr error, found int) (string, string) {
+	if listErr != nil {
+		if errors.Is(listErr, source.ErrNothingRecognised) {
+			return "error", "Nothing recognised on the page"
+		}
+		return "error", fetch.UserText(listErr)
+	}
+	if found == 0 {
+		return "empty", ""
+	}
+	return "ok", ""
+}
+
+// writeSourceRun inserts a source_run row for the given job and source key.
+func (c *Collector) writeSourceRun(jobID int64, key string, started, finished time.Time,
+	status, errText string, found, newCount, updated, unchanged, excluded, removed int) {
+	_, err := c.db.Exec(
+		`INSERT OR REPLACE INTO source_run
+		 (job_id, source, started, finished, status, found, new, updated, unchanged, excluded, removed, error)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		jobID, key,
+		started.UTC().Format(time.RFC3339), finished.UTC().Format(time.RFC3339),
+		status, found, newCount, updated, unchanged, excluded, removed, errText,
+	)
+	if err != nil {
+		c.log.Warn("collect: write source_run", "key", key, "error", err)
+	}
+}
+
+// sourceRunRec is one row from the source_run table.
+type sourceRunRec struct {
+	started time.Time
+	status  string
+	found   int
+	newCnt  int
+	errText string
+}
+
+// querySourceRuns returns runs for the given source key, newest first.
+func (c *Collector) querySourceRuns(key string) []sourceRunRec {
+	rows, err := c.db.Query(
+		`SELECT started, status, found, new, error
+		 FROM source_run WHERE source = ? ORDER BY job_id DESC`,
+		key,
+	)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var out []sourceRunRec
+	for rows.Next() {
+		var r sourceRunRec
+		var startedStr string
+		if err := rows.Scan(&startedStr, &r.status, &r.found, &r.newCnt, &r.errText); err != nil {
+			continue
+		}
+		r.started, _ = time.Parse(time.RFC3339, startedStr)
+		out = append(out, r)
+	}
+	return out
+}
+
+// buildSourceStatus returns the status object for a source, or nil if it never ran.
+func (c *Collector) buildSourceStatus(key string) map[string]any {
+	history := c.querySourceRuns(key)
+	if len(history) == 0 {
+		return nil
+	}
+	last := history[0]
+
+	var lastSuccess *sourceRunRec
+	for i := range history {
+		if history[i].status == "ok" {
+			lastSuccess = &history[i]
+			break
+		}
+	}
+
+	now := c.now()
+	thirtyDaysAgo := now.Add(-30 * 24 * time.Hour)
+	firstOld := !history[len(history)-1].started.After(thirtyDaysAgo)
+	noRecentVacancies := true
+	for _, r := range history {
+		if !r.started.Before(thirtyDaysAgo) && r.status == "ok" {
+			noRecentVacancies = false
+			break
+		}
+	}
+
+	var text string
+	switch {
+	case last.status == "error":
+		text = last.errText
+		if lastSuccess != nil {
+			text += " · last success " + lastSuccess.started.Local().Format("2 Jan 15:04")
+		}
+	case firstOld && noRecentVacancies:
+		text = "No vacancies in 30 days"
+	case lastSuccess != nil:
+		text = "Last success " + lastSuccess.started.Local().Format("2 Jan 15:04") +
+			" · " + strconv.Itoa(lastSuccess.found) + " seen · " +
+			strconv.Itoa(lastSuccess.newCnt) + " new"
+	}
+
+	return map[string]any{"text": text, "attention": c.sourceNeedsAttention(key)}
+}
+
+// sourceNeedsAttention reports whether the source's last three runs (at least
+// three) all ended in error or empty.
+func (c *Collector) sourceNeedsAttention(key string) bool {
+	rows, err := c.db.Query(
+		`SELECT status FROM source_run WHERE source = ? ORDER BY job_id DESC LIMIT 3`,
+		key,
+	)
+	if err != nil {
+		return false
+	}
+	defer rows.Close()
+	var statuses []string
+	for rows.Next() {
+		var s string
+		if err := rows.Scan(&s); err != nil {
+			continue
+		}
+		statuses = append(statuses, s)
+	}
+	if len(statuses) < 3 {
+		return false
+	}
+	for _, s := range statuses {
+		if s == "ok" {
+			return false
+		}
+	}
+	return true
+}
+
 // --- Helpers -----------------------------------------------------------------
 
 // sourcesBody builds the response body for all /api/sources endpoints.
@@ -411,6 +596,7 @@ func (c *Collector) sourcesBody() map[string]any {
 			"name":    name,
 			"url":     s.URL,
 			"enabled": s.Enabled,
+			"status":  c.buildSourceStatus(key),
 		}
 	}
 	return map[string]any{
