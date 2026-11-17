@@ -201,7 +201,7 @@ func TestFailingMigrationLeavesVersionUnchanged(t *testing.T) {
 // TestMigrationsFS_VacancyTableExists opens a fresh database using the
 // embedded db.Migrations FS and checks that the vacancy table exists and
 // that user_version is 1.
-func TestMigrationsFS_VacancyTableExists(t *testing.T) {
+func TestEmbeddedMigrationsRunOnAnEmptyFolder(t *testing.T) {
 	dir := t.TempDir()
 	d, err := db.Open(filepath.Join(dir, "test.db"), db.Migrations)
 	if err != nil {
@@ -209,8 +209,12 @@ func TestMigrationsFS_VacancyTableExists(t *testing.T) {
 	}
 	defer d.Close()
 
-	if d.Version != 1 {
-		t.Errorf("user_version: got %d, want 1", d.Version)
+	files, err := fs.Glob(db.Migrations, "*.sql")
+	if err != nil || len(files) == 0 {
+		t.Fatalf("no embedded migrations: %v", err)
+	}
+	if want := len(files); d.Version != want {
+		t.Errorf("user_version: got %d, want %d", d.Version, want)
 	}
 
 	var n int
