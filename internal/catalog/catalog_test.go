@@ -887,3 +887,41 @@ func TestUpsert_GuessedCompanyRules(t *testing.T) {
 		}
 	})
 }
+
+func TestUpsert_EmptyBodyNotFetchedDoesNotError(t *testing.T) {
+	// A vacancy stored with an empty body blob and not_fetched state (e.g. from
+	// an import) must not cause a NOT NULL error when a posting without text
+	// arrives for the same address.
+	d := openTestDB(t)
+	cat := catalog.New(d, fixedNow())
+	const vacURL = "https://board.example.com/jobs/imported-42"
+	_, err := d.Exec(`
+		INSERT INTO vacancy (identity, title, company, url, text_state, body,
+		                     first_seen, last_seen, version, content_hash)
+		VALUES ('Imported Co|Backend Dev', 'Backend Dev', 'Imported Co',
+		        ?, 'not_fetched', X'',
+		        '2024-01-01', '2024-01-01', 1, '')`, vacURL)
+	if err != nil {
+		t.Fatalf("fixture insert: %v", err)
+	}
+	_, err = d.Exec(`INSERT INTO vacancy_source (vacancy_id, source, url, seen_at)
+		VALUES (last_insert_rowid(), 'src', ?, '2024-01-01')`, vacURL)
+	if err != nil {
+		t.Fatalf("fixture source insert: %v", err)
+	}
+	p := listing.Posting{URL: vacURL, Title: "Backend Dev", Company: "Imported Co",
+		TextState: listing.TextNotFetched}
+	_, _, err = cat.Upsert(context.Background(), p, "src")
+	if err != nil {
+		t.Fatalf("Upsert on empty-body vacancy: %v", err)
+	}
+	var count int
+	var bodyIsNull bool
+	d.QueryRow(`SELECT count(*), body IS NULL FROM vacancy WHERE url = ?`, vacURL).Scan(&count, &bodyIsNull) //nolint:errcheck
+	if count != 1 {
+		t.Errorf("vacancy count = %d, want 1", count)
+	}
+	if bodyIsNull {
+		t.Errorf("body IS NULL after upsert, want empty blob")
+	}
+}

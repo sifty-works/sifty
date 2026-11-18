@@ -40,7 +40,7 @@ type Source interface {
     Match(u *url.URL) bool
     List(ctx context.Context, f Fetcher, s SiteConfig) ([]Posting, error)
 }
-type Detailer interface { Detail(ctx context.Context, f Fetcher, p Posting) (Posting, error) } // only where the listing has no text
+func Detail(ctx context.Context, f Fetcher, p Posting, s SiteConfig) (Posting, error) // fills text; only called where the listing has none
 func Normalize(raw string, kind Kind, vocab Vocab) string       // the only path from any input to stored HTML
 func (c *Catalog) Upsert(p Posting, html, src string) (int64, Outcome) // New|Updated|Unchanged|Merged|Tombstoned|Excluded, one transaction
 ```

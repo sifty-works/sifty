@@ -326,6 +326,9 @@ type vacancyRow struct {
 // save inserts or updates a vacancy row. When v.id is 0 an INSERT is performed
 // and the new id is returned. Otherwise an UPDATE is performed and v.id is returned.
 func save(ctx context.Context, tx *sql.Tx, v vacancyRow) (int64, error) {
+	if v.body == nil {
+		v.body = []byte{}
+	}
 	if v.id == 0 {
 		res, err := tx.ExecContext(ctx, `
 			INSERT INTO vacancy

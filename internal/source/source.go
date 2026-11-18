@@ -16,10 +16,38 @@ import (
 // User text: "Nothing recognised on the page".
 var ErrNothingRecognised = errors.New("nothing recognised on the page")
 
+// Attr selects page elements by attribute substring: every element whose named
+// attribute value contains Substr, in document order.
+type Attr struct{ Attr, Substr string }
+
 // SiteConfig holds the user-configured settings for one source.
+// Content, LinkPattern, FeedURL and SkipJSONLD are set from the built-in site
+// table when the source URL's host matches a known entry; the user's yaml never
+// sets these four fields.
 type SiteConfig struct {
-	Name string
-	URL  string
+	Name        string
+	URL         string
+	Content     []Attr // content block selector(s) for Detail body extraction
+	LinkPattern string // regexp for vacancy link paths (generic List)
+	FeedURL     string // alternate URL to fetch for the listing (e.g. RSS endpoint)
+	SkipJSONLD  bool   // skip JSON-LD extraction on this source
+}
+
+// mergeConfig returns the site-table entry for the host of s.URL with Name and
+// URL copied from s, or s unchanged when no entry exists. A leading "www." is
+// stripped before lookup.
+func mergeConfig(s SiteConfig) SiteConfig {
+	u, _ := url.Parse(s.URL)
+	host := strings.TrimPrefix(strings.ToLower(u.Host), "www.")
+	switch host {
+	case "web3.career", "web3.careers":
+		return SiteConfig{Name: s.Name, URL: s.URL, SkipJSONLD: true, LinkPattern: `^/[a-z0-9][a-z0-9-]*/\d{5,}$`, Content: []Attr{{Attr: "class", Substr: "text-dark-grey-text"}}}
+	case "remote3.co":
+		return SiteConfig{Name: s.Name, URL: s.URL, FeedURL: "https://remote3.co/api/rss", Content: []Attr{{Attr: "class", Substr: "RemoteJobs_jobDescription"}}}
+	case "weworkremotely.com":
+		return SiteConfig{Name: s.Name, URL: s.URL, FeedURL: "https://weworkremotely.com/remote-jobs.rss"}
+	}
+	return s
 }
 
 // Source reads postings from one kind of job site.
@@ -32,7 +60,7 @@ var (
 	srcGreenhouse Source = &greenhouseSource{}
 	srcLever      Source = &leverSource{}
 	srcAshby      Source = &ashbySource{}
-	srcFeed       Source = &feedSource{}
+	srcGeneric    Source = &genericSource{}
 )
 
 // Host returns the API host used when requesting u's board.
@@ -55,14 +83,14 @@ func Host(u *url.URL) string {
 	}
 }
 
-// For returns the first Source that matches u, or the feed source for any other address.
+// For returns the first Source that matches u, or the generic source for any other address.
 func For(u *url.URL) Source {
 	for _, s := range []Source{srcGreenhouse, srcLever, srcAshby} {
 		if s.Match(u) {
 			return s
 		}
 	}
-	return srcFeed
+	return srcGeneric
 }
 
 // trim returns s with leading and trailing whitespace removed.

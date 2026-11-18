@@ -24,7 +24,13 @@ func (s *feedSource) List(ctx context.Context, f fetch.Fetcher, cfg SiteConfig) 
 	if base == "" {
 		base = cfg.URL
 	}
-	dec := xml.NewDecoder(bytes.NewReader(resp.Body))
+	return parseFeedXML(resp.Body, base)
+}
+
+// parseFeedXML parses RSS or Atom XML and returns postings.
+// Returns ErrNothingRecognised when the content is not RSS or Atom.
+func parseFeedXML(body []byte, base string) ([]listing.Posting, error) {
+	dec := xml.NewDecoder(bytes.NewReader(body))
 	dec.Strict = false
 	for {
 		tok, err := dec.Token()
