@@ -127,6 +127,14 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	}
 	port := ln.Addr().(*net.TCPAddr).Port
 
+	collectActive := func() bool {
+		for _, j := range r.Active() {
+			if j.Kind == "collect" {
+				return true
+			}
+		}
+		return false
+	}
 	handler := server.New(server.Options{
 		Version: version,
 		Port:    port,
@@ -136,7 +144,7 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		Static:  web.StaticFS(),
 		Status:  col.StatusFunc(),
 	}, func(mux *http.ServeMux) {
-		inbox.RegisterRoutes(mux, database, time.Now, logger)
+		inbox.RegisterRoutes(mux, database, time.Now, logger, collectActive)
 		col.RegisterRoutes(mux)
 	})
 

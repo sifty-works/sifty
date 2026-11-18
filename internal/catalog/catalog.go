@@ -335,6 +335,7 @@ type vacancyRow struct {
 	expiresAt         string
 	firstSeen         string
 	lastSeen          string
+	seenAt            string
 	textState         string
 	contentHash       string
 	version           int
@@ -370,12 +371,12 @@ func save(ctx context.Context, tx *sql.Tx, v vacancyRow) (int64, error) {
 		UPDATE vacancy SET
 			identity=?, title=?, company=?, location=?, tags=?, source_fields=?,
 			apply_url=?, published_at=?, published_basis=?, expires_at=?,
-			last_seen=?, text_state=?, content_hash=?, version=?, body=?,
+			last_seen=?, seen_at=?, text_state=?, content_hash=?, version=?, body=?,
 			detail_requested_at=?
 		WHERE id=?`,
 		v.identity, v.title, v.company, v.location, v.tagsJSON, v.fieldsJSON,
 		v.applyURL, v.publishedAt, v.publishedBasis, v.expiresAt,
-		v.lastSeen, v.textState, v.contentHash, v.version, v.body,
+		v.lastSeen, v.seenAt, v.textState, v.contentHash, v.version, v.body,
 		v.detailRequestedAt, v.id)
 	return v.id, err
 }
@@ -385,13 +386,13 @@ func loadVacancy(ctx context.Context, tx *sql.Tx, id int64) (vacancyRow, error) 
 	err := tx.QueryRowContext(ctx, `
 		SELECT id, identity, title, company, url, apply_url, location, tags, source_fields,
 		       published_at, published_basis, expires_at,
-		       first_seen, last_seen, text_state, content_hash, version, body,
+		       first_seen, last_seen, seen_at, text_state, content_hash, version, body,
 		       detail_requested_at
 		FROM vacancy WHERE id = ?`, id).Scan(
 		&ex.id, &ex.identity, &ex.title, &ex.company, &ex.url, &ex.applyURL, &ex.location,
 		&ex.tagsJSON, &ex.fieldsJSON,
 		&ex.publishedAt, &ex.publishedBasis, &ex.expiresAt,
-		&ex.firstSeen, &ex.lastSeen, &ex.textState, &ex.contentHash, &ex.version, &ex.body,
+		&ex.firstSeen, &ex.lastSeen, &ex.seenAt, &ex.textState, &ex.contentHash, &ex.version, &ex.body,
 		&ex.detailRequestedAt)
 	return ex, err
 }
@@ -580,6 +581,8 @@ func appendUnique(ids []int64, id int64) []int64 {
 }
 
 // tombstoneKeys returns the tombstone lookup keys for a posting.
+// It includes the canonical URL, legacy hash keys and, when the apply address
+// is a concrete applicant-tracking-system vacancy, its canonical key too.
 func tombstoneKeys(canonURL, rawURL, applyURL string) []string {
 	keys := []string{"url:" + canonURL}
 	if lk := listing.LegacyKey(rawURL); lk != "" {
@@ -589,8 +592,62 @@ func tombstoneKeys(canonURL, rawURL, applyURL string) []string {
 		if lk := listing.LegacyKey(applyURL); lk != "" {
 			keys = append(keys, "legacy:"+lk)
 		}
+		if ca, ok := listing.ConcreteATS(applyURL); ok {
+			keys = append(keys, "url:"+ca)
+		}
 	}
 	return keys
+}
+
+// dropVacancy removes a vacancy row, its FTS entry and stale alias rows.
+// Sources, decisions and applications are removed by CASCADE.
+// It is used by both Delete and performMerge.
+func dropVacancy(ctx context.Context, tx *sql.Tx, id int64) error {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM vacancy_alias WHERE new_id=?`, id); err != nil {
+		return fmt.Errorf("catalog: drop: aliases %d: %w", id, err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM vacancy_fts WHERE rowid=?`, id); err != nil {
+		return fmt.Errorf("catalog: drop: fts %d: %w", id, err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM vacancy WHERE id=?`, id); err != nil {
+		return fmt.Errorf("catalog: drop: vacancy %d: %w", id, err)
+	}
+	return nil
+}
+
+// Delete permanently removes a vacancy and writes tombstone keys so it cannot
+// be re-collected. The caller must verify the vacancy is not in Inbox for the
+// requesting profile and that no collect job is active.
+func (c *Catalog) Delete(ctx context.Context, id int64) error {
+	tx, err := c.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("catalog: delete: begin tx: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	var vacURL, applyURL string
+	if err := tx.QueryRowContext(ctx,
+		`SELECT url, apply_url FROM vacancy WHERE id=?`, id).Scan(&vacURL, &applyURL); err != nil {
+		if err == sql.ErrNoRows {
+			return nil // already gone
+		}
+		return fmt.Errorf("catalog: delete: load: %w", err)
+	}
+
+	for _, k := range tombstoneKeys(vacURL, vacURL, applyURL) {
+		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO tombstone (key) VALUES (?)`, k); err != nil {
+			return fmt.Errorf("catalog: delete: tombstone: %w", err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT OR IGNORE INTO tombstone (key) SELECT 'url:'||url FROM vacancy_source WHERE vacancy_id=?`, id); err != nil {
+		return fmt.Errorf("catalog: delete: tombstone sources: %w", err)
+	}
+
+	if err := dropVacancy(ctx, tx, id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // Known describes the state of a posting as seen by the catalogue.
@@ -666,7 +723,6 @@ func anyTombstoned(ctx context.Context, tx *sql.Tx, keys []string) (bool, error)
 // tie; version increments when text is replaced).
 // matchIDs must already be sorted ascending.
 func performMerge(ctx context.Context, tx *sql.Tx, matchIDs []int64) error {
-	// Load all matched vacancies.
 	rows := make([]vacancyRow, len(matchIDs))
 	for i, id := range matchIDs {
 		r, err := loadVacancy(ctx, tx, id)
@@ -690,18 +746,15 @@ func performMerge(ctx context.Context, tx *sql.Tx, matchIDs []int64) error {
 	}
 
 	for _, r := range rows[1:] {
-		// Earliest first_seen.
 		upd.firstSeen = pickEarlier(upd.firstSeen, r.firstSeen)
-		// Earliest non-empty publication date.
+		upd.seenAt = pickEarlier(upd.seenAt, r.seenAt)
 		if r.publishedAt != "" && (upd.publishedAt == "" || r.publishedAt < upd.publishedAt) {
 			upd.publishedAt = r.publishedAt
 			upd.publishedBasis = r.publishedBasis
 		}
-		// Apply URL when kept has none.
 		if upd.applyURL == "" && r.applyURL != "" {
 			upd.applyURL = r.applyURL
 		}
-		// Best text: full > summary > none; lowest id wins ties (rows are asc).
 		if textRank(r.textState) > textRank(upd.textState) {
 			upd.textState = r.textState
 			upd.contentHash = r.contentHash
@@ -709,6 +762,28 @@ func performMerge(ctx context.Context, tx *sql.Tx, matchIDs []int64) error {
 			upd.version++
 			textChanged = true
 		}
+	}
+
+	// Merge decisions and applications before dropping old vacancies.
+	ph := strings.Repeat("?,", len(matchIDs))
+	mergeArgs := make([]any, len(matchIDs)+1)
+	mergeArgs[0] = upd.id
+	for i, id := range matchIDs {
+		mergeArgs[i+1] = id
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT OR REPLACE INTO decision (profile, vacancy, stage, reason, decided_at)
+		SELECT profile, ?, stage, reason, decided_at FROM (
+			SELECT *, row_number() OVER (PARTITION BY profile ORDER BY
+				CASE stage WHEN 'applied' THEN 3 WHEN 'shortlist' THEN 2 ELSE 1 END DESC,
+				decided_at DESC) AS rn
+			FROM decision WHERE vacancy IN (`+ph[:len(ph)-1]+`)) WHERE rn=1`,
+		mergeArgs...); err != nil {
+		return fmt.Errorf("merge decisions: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE application SET vacancy=? WHERE vacancy IN (`+ph[:len(ph)-1]+`)`,
+		mergeArgs...); err != nil {
+		return fmt.Errorf("move applications: %w", err)
 	}
 
 	if _, err := save(ctx, tx, upd); err != nil {
@@ -732,17 +807,11 @@ func performMerge(ctx context.Context, tx *sql.Tx, matchIDs []int64) error {
 			oldID, upd.id); err != nil {
 			return fmt.Errorf("insert alias for %d: %w", oldID, err)
 		}
-		if _, err := tx.ExecContext(ctx,
-			`DELETE FROM vacancy WHERE id = ?`, oldID); err != nil {
-			return fmt.Errorf("delete merged %d: %w", oldID, err)
-		}
-		// Remove the FTS row for the merged (deleted) vacancy.
-		if _, err := tx.ExecContext(ctx,
-			`DELETE FROM vacancy_fts WHERE rowid = ?`, oldID); err != nil {
-			return fmt.Errorf("fts delete merged %d: %w", oldID, err)
+		// dropVacancy handles FTS, stale alias rows and the vacancy row (cascade removes decisions/apps/sources).
+		if err := dropVacancy(ctx, tx, oldID); err != nil {
+			return fmt.Errorf("drop merged %d: %w", oldID, err)
 		}
 	}
-	// Write FTS for kept vacancy when its text changed.
 	if textChanged {
 		if err := WriteFTS(ctx, tx, upd.id, upd.body); err != nil {
 			return fmt.Errorf("fts kept %d: %w", upd.id, err)

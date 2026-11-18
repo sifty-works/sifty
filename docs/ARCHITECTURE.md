@@ -25,9 +25,9 @@ These rules come from what made the previous application grow to several times t
 
 | Capability | Packages | Behaviour |
 |---|---|---|
-| Collection | `fetch`, `source`, `listing`, `catalog`, `collect`, `industry` | `behaviour/collection.md` |
+| Collection | `fetch`, `source`, `listing`, `catalog` (including permanent deletion), `collect`, `industry` | `behaviour/collection.md` |
 | Assessment | `reading`, `places`, `skills`, `fit`, `shortlistcheck` | `behaviour/assessment.md` |
-| Inbox and vacancy page | `inbox` (list, decisions, deletion, exclusions, vacancy view) | `behaviour/inbox.md` |
+| Inbox and vacancy page | `inbox` (list, decisions, exclusions, vacancy view) | `behaviour/inbox.md` |
 | Profiles | `candidate` (My data, profiles, documents, proposals, Questions & Answers) | `behaviour/profiles.md` |
 | Application | `locate`, `websearch`, `formread`, `answer` | `behaviour/application.md` |
 | Foundation | `apperr`, `db`, `config`, `runner`, `models`, `server`, `cmd` | `behaviour/settings-and-data.md` |
@@ -185,7 +185,7 @@ type Response struct { Text string; InTokens, OutTokens int }
 
 | Group | Endpoints |
 |---|---|
-| Lists and vacancies | `GET /api/vacancies?profile&stage&q&sort&filters` (rows of about 350 bytes, counts per stage and per filter value); `GET /api/vacancies/{id}?profile`; `POST /api/vacancies/{id}/decision {from,to,reason?,confirmed?}`; `POST /api/vacancies/{id}/seen`; `DELETE /api/vacancies/{id}`; `POST /api/vacancies/{id}/refresh` |
+| Lists and vacancies | `GET /api/vacancies?profile&stage&q&sort&filters` (rows of about 350 bytes, counts per stage and per filter value); `GET /api/vacancies/{id}?profile`; `POST /api/vacancies/{id}/decision {profile,from,to,reason?,confirmed?}`; `POST /api/vacancies/{id}/seen`; `DELETE /api/vacancies/{id}?profile`; `POST /api/vacancies/{id}/refresh` |
 | Exclusions and industries | `GET/POST/DELETE /api/exclusions`, `GET /api/exclusions/preview`; `GET/PUT /api/industries` |
 | Collection | `GET/POST/PATCH/DELETE /api/sources`; `PUT /api/sources/schedule`; `POST /api/collect {force}` |
 | Profiles | `GET/PATCH /api/me`, `PUT/DELETE /api/me/photo`; `GET/POST/PATCH/DELETE /api/profiles`, `PUT /api/active-profile`; `POST /api/me/skills` (+ and − from a vacancy) |
@@ -221,4 +221,4 @@ These are targets the coordinator checks at acceptance of every change (see `PRO
 | Network per collection run | 1 request per source (2 for Hacker News), plus 1 per vacancy without text in the listing that is new, or known without text and not requested in the last 7 days |
 | List API | under 50 ms at the 95th percentile for 1,200 rows; vacancy view under 30 ms; decision under 20 ms |
 
-Estimated size by capability (backend, then frontend, in lines): collection 3,500 and 400 (fetching, the listing model and its normalisation, the catalogue, sources, collection runs, `industry`, and data lines such as heading lists and site configurations); assessment 3,100 and 700; inbox 1,200 and 1,500; profiles 2,700 and 2,350; application 2,800 and 800; foundation 2,700 and 700 (settings pages). That is about 16,000 and 6,450, so the backend has no reserve left: a capability that needs more takes it from another by the owner's decision. The frontend estimate is about 450 lines over its budget; the profile editors are where it must be recovered, with one generic section editor instead of one editor per section.
+Estimated size by capability (backend, then frontend, in lines): collection 3,650 and 400 (fetching, the listing model and its normalisation, the catalogue, sources, collection runs, `industry`, and data lines such as heading lists and site configurations); assessment 3,100 and 700; inbox 1,050 and 1,500; profiles 2,700 and 2,350; application 2,800 and 800; foundation 2,700 and 700 (settings pages). That is about 16,000 and 6,450, so the backend has no reserve left: a capability that needs more takes it from another by the owner's decision. The frontend estimate is about 450 lines over its budget; the profile editors are where it must be recovered, with one generic section editor instead of one editor per section.

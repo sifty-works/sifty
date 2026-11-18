@@ -4,6 +4,7 @@ Notable changes of Sifty, newest first. Versions follow `MAJOR.MINOR.PATCH`.
 
 ## Unreleased
 
+- The server keeps decisions per profile: Inbox, Shortlist, Applied and Dismissed lists with their counts, moves between them with Undo and Restore, a confirmed application recorded with its date, read marks, and permanent Delete outside Inbox that collection never brings back; merged vacancies keep the strongest decision.
 - Cryptocurrency Jobs, Framework Ventures, a16z Frontier and the monthly Hacker News "Who is hiring?" thread are read too; a feed item titled "Role at Company" gives its title and company.
 - Collection also skips the page of a vacancy on the Greenhouse board of a blocked company, as the lists already hid it.
 - A source whose site does not answer shows "Site not answering"; "Timed out" is kept for a request that ran out of time.

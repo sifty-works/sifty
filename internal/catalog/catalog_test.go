@@ -800,3 +800,52 @@ func TestUpsert_EmptyBodyNotFetchedDoesNotError(t *testing.T) {
 		t.Errorf("body IS NULL after upsert, want empty blob")
 	}
 }
+
+func TestUpsert_MergePreservesBestDecision(t *testing.T) {
+	// Two vacancies for the same identity: one shortlisted, one applied.
+	// Merging must keep the applied decision (higher rank).
+	d := openTestDB(t)
+	cat := catalog.New(d, fixedNow())
+	id1, _, _ := cat.Upsert(context.Background(), posting("https://a.example.com/jobs/1", "Engineer", "Acme"), "src")
+	id2, _, _ := cat.Upsert(context.Background(), posting("https://b.example.com/jobs/2", "Engineer", "Acme"), "src")
+	now := "2024-01-15T12:00:00Z"
+	d.Exec(`INSERT INTO profile (id, data) VALUES (1, '{"name":"P"}') ON CONFLICT DO NOTHING`)                                        //nolint:errcheck
+	d.Exec(`INSERT OR REPLACE INTO decision (profile,vacancy,stage,reason,decided_at) VALUES (1,?,?,?,?)`, id1, "shortlist", "", now) //nolint:errcheck
+	d.Exec(`INSERT OR REPLACE INTO decision (profile,vacancy,stage,reason,decided_at) VALUES (1,?,?,?,?)`, id2, "applied", "", now)   //nolint:errcheck
+
+	// Trigger merge: third URL for same identity.
+	keptID, _, _ := cat.Upsert(context.Background(),
+		listing.Posting{URL: "https://c.example.com/jobs/3", Title: "Engineer", Company: "Acme", TextState: listing.TextNotFetched}, "src")
+	var stage string
+	d.QueryRow(`SELECT stage FROM decision WHERE vacancy=? AND profile=1`, keptID).Scan(&stage) //nolint:errcheck
+	if stage != "applied" {
+		t.Errorf("merged decision stage = %q, want applied", stage)
+	}
+	var vcount int
+	d.QueryRow(`SELECT count(*) FROM vacancy`).Scan(&vcount) //nolint:errcheck
+	if vcount != 1 {
+		t.Errorf("vacancy count = %d, want 1 after merge", vcount)
+	}
+}
+
+func TestUpsert_DeleteTombstonesAddress(t *testing.T) {
+	// After Delete, re-upsert of the same URL is tombstoned.
+	d := openTestDB(t)
+	cat := catalog.New(d, fixedNow())
+	id, _, _ := cat.Upsert(context.Background(), posting("https://example.com/jobs/del", "Engineer", "Acme"), "src")
+	d.Exec(`INSERT INTO profile (id, data) VALUES (1, '{"name":"P"}') ON CONFLICT DO NOTHING`) //nolint:errcheck
+	now := "2024-01-15T12:00:00Z"
+	d.Exec(`INSERT OR REPLACE INTO decision (profile,vacancy,stage,reason,decided_at) VALUES (1,?,?,?,?)`, id, "shortlist", "", now) //nolint:errcheck
+	if err := cat.Delete(context.Background(), id); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	var vcount int
+	d.QueryRow(`SELECT count(*) FROM vacancy WHERE id=?`, id).Scan(&vcount) //nolint:errcheck
+	if vcount != 0 {
+		t.Errorf("vacancy still present after Delete")
+	}
+	_, out, err := cat.Upsert(context.Background(), posting("https://example.com/jobs/del", "Engineer", "Acme"), "src")
+	if err != nil || out != catalog.OutcomeTombstoned {
+		t.Errorf("re-upsert after Delete: outcome=%v err=%v, want Tombstoned", out, err)
+	}
+}
