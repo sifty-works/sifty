@@ -42,7 +42,7 @@ type Source interface {
 }
 func Detail(ctx context.Context, f Fetcher, p Posting, s SiteConfig) (Posting, error) // fills text; only called where the listing has none
 func Normalize(raw string, kind Kind, vocab Vocab) string       // the only path from any input to stored HTML
-func (c *Catalog) Upsert(p Posting, html, src string) (int64, Outcome) // New|Updated|Unchanged|Merged|Tombstoned|Excluded, one transaction
+func (c *Catalog) Upsert(ctx context.Context, p Posting, src string) (int64, Outcome, error) // New|Updated|Unchanged|Merged|Tombstoned, one transaction
 ```
 
 - `Fetcher` is the only way to job sites, vacancy pages, employers' career pages and link documents: public-address checks on every redirect, size limit, timeout, per-domain spacing and back-off, and a memory of blocked domains (`domain_block`) that survives a restart. The form-reading browser uses the same per-domain spacing and `domain_block`. Model adapters and the web search client have their own clients.
