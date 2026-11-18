@@ -129,6 +129,33 @@ func makeFixtureBody(index int) string {
 	return b.String()
 }
 
+// TestVacancyViewMeasure measures the 95th-percentile vacancy view time over
+// the HTTP handler with 1,200 vacancies. Run with SIFTY_MEASURE=1; otherwise skipped.
+func TestVacancyViewMeasure(t *testing.T) {
+	if os.Getenv("SIFTY_MEASURE") != "1" {
+		t.Skip("set SIFTY_MEASURE=1 to run")
+	}
+	database := buildFixtureDB(t)
+	var firstID int64
+	database.QueryRow(`SELECT id FROM vacancy ORDER BY id LIMIT 1`).Scan(&firstID) //nolint:errcheck
+	ts := newTestServer(t, database)
+	const runs = 100
+	times := make([]time.Duration, runs)
+	for i := range times {
+		start := time.Now()
+		req, _ := http.NewRequest(http.MethodGet,
+			fmt.Sprintf("%s/api/vacancies/%d?profile=1", ts.URL, firstID), nil)
+		req.Host = "127.0.0.1:9999"
+		resp, err := ts.Client().Do(req)
+		if err != nil {
+			t.Fatalf("view: %v", err)
+		}
+		resp.Body.Close() //nolint:errcheck
+		times[i] = time.Since(start)
+	}
+	fmt.Printf("vacancy view p95: %v\n", percentile95(times))
+}
+
 func percentile95(d []time.Duration) time.Duration {
 	if len(d) == 0 {
 		return 0

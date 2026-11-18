@@ -135,6 +135,14 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		}
 		return false
 	}
+
+	sourceNames := make(map[string]string, len(cfg.Sources))
+	for _, s := range cfg.Sources {
+		if key, err := config.SourceKey(s.URL); err == nil {
+			sourceNames[key] = s.Name
+		}
+	}
+
 	handler := server.New(server.Options{
 		Version: version,
 		Port:    port,
@@ -144,7 +152,7 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		Static:  web.StaticFS(),
 		Status:  col.StatusFunc(),
 	}, func(mux *http.ServeMux) {
-		inbox.RegisterRoutes(mux, database, time.Now, logger, collectActive)
+		inbox.RegisterRoutes(mux, database, time.Now, logger, collectActive, sourceNames)
 		col.RegisterRoutes(mux)
 	})
 

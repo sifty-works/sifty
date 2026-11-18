@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -43,7 +44,7 @@ func newTestServer(t *testing.T, d *db.DB) *httptest.Server {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	h := server.New(server.Options{Version: "test", Port: 9999, Logger: logger},
 		func(mux *http.ServeMux) {
-			inbox.RegisterRoutes(mux, d, testNowFn, logger, func() bool { return false })
+			inbox.RegisterRoutes(mux, d, testNowFn, logger, func() bool { return false }, nil)
 		})
 	ts := httptest.NewServer(h)
 	t.Cleanup(ts.Close)
@@ -721,11 +722,232 @@ func TestDelete_Refused(t *testing.T) {
 	d.Exec(`INSERT OR REPLACE INTO decision (profile,vacancy,stage,reason,decided_at) VALUES (1,?,?,?,?)`, id, "shortlist", "", now) //nolint:errcheck
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	h := server.New(server.Options{Version: "test", Port: 9999, Logger: logger},
-		func(mux *http.ServeMux) { inbox.RegisterRoutes(mux, d, testNowFn, logger, func() bool { return true }) })
+		func(mux *http.ServeMux) {
+			inbox.RegisterRoutes(mux, d, testNowFn, logger, func() bool { return true }, nil)
+		})
 	ts2 := httptest.NewServer(h)
 	defer ts2.Close()
 	_, status2 := apiJSON(t, ts2, http.MethodDelete, fmt.Sprintf("/api/vacancies/%d?profile=1", id), nil)
 	if status2 != http.StatusLocked {
 		t.Errorf("delete while collecting: status %d, want 423", status2)
+	}
+}
+
+// --- Vacancy view tests ---
+
+// apiGetRaw performs a GET and returns the parsed body and status code.
+func apiGetRaw(t *testing.T, ts *httptest.Server, path string) (map[string]any, int) {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+path, nil)
+	req.Host = "127.0.0.1:9999"
+	resp, err := ts.Client().Do(req)
+	if err != nil {
+		t.Fatalf("GET %s: %v", path, err)
+	}
+	defer resp.Body.Close()
+	var body map[string]any
+	json.NewDecoder(resp.Body).Decode(&body) //nolint:errcheck
+	return body, resp.StatusCode
+}
+
+// TestVacancyView_StageActionsAndStatus checks the actions and status text
+// for each stage, and that an empty company has no block action.
+func TestVacancyView_StageActionsAndStatus(t *testing.T) {
+	d := openTestDB(t)
+	cat := newCat(d)
+	nowStr := testNow.UTC().Format(time.RFC3339)
+	setStage := func(id int64, stage, reason string) {
+		d.Exec(`INSERT INTO decision (profile,vacancy,stage,reason,decided_at) VALUES (1,?,?,?,?)`, id, stage, reason, nowStr) //nolint:errcheck
+	}
+	inboxID := add(t, cat, post("https://example.com/jobs/vv1", "R", "Acme"))
+	noCoID := add(t, cat, post("https://example.com/jobs/vv2", "R", ""))
+	shortID := add(t, cat, post("https://example.com/jobs/vv3", "R", "Co"))
+	setStage(shortID, "shortlist", "")
+	applID := add(t, cat, post("https://example.com/jobs/vv4", "R", "Co"))
+	setStage(applID, "applied", "")
+	d.Exec(`INSERT INTO application (vacancy,applied_at,profile,profile_name) VALUES (?,?,1,'P')`, applID, "2026-11-01T12:00:00Z") //nolint:errcheck
+	dismID := add(t, cat, post("https://example.com/jobs/vv5", "R", "Co"))
+	setStage(dismID, "dismissed", "not a fit")
+	ts := newTestServer(t, d)
+
+	actionKeys := func(id int64) string {
+		b, _ := apiGetRaw(t, ts, fmt.Sprintf("/api/vacancies/%d?profile=1", id))
+		acts, _ := b["actions"].([]any)
+		ks := make([]string, len(acts))
+		for i, a := range acts {
+			m, _ := a.(map[string]any)
+			ks[i], _ = m["key"].(string)
+		}
+		return strings.Join(ks, ",")
+	}
+	status := func(id int64) string {
+		b, _ := apiGetRaw(t, ts, fmt.Sprintf("/api/vacancies/%d?profile=1", id))
+		v, _ := b["status"].(string)
+		return v
+	}
+
+	for _, tc := range []struct {
+		id      int64
+		actions string
+		status  string
+	}{
+		{inboxID, "block,dismiss,select", ""},
+		{noCoID, "dismiss,select", ""},
+		{shortID, "inbox,apply,confirm,delete", ""},
+		{applID, "undo,delete", "Applied 1 Nov 2026"},
+		{dismID, "restore,delete", "Dismissed — not a fit"},
+	} {
+		if got := actionKeys(tc.id); got != tc.actions {
+			t.Errorf("actions id=%d: got %q, want %q", tc.id, got, tc.actions)
+		}
+		if got := status(tc.id); got != tc.status {
+			t.Errorf("status id=%d: got %q, want %q", tc.id, got, tc.status)
+		}
+	}
+}
+
+// TestVacancyView_ExpiredVacancy checks that expired=true appears in both
+// the view response and the list row when expires_at is in the past.
+func TestVacancyView_ExpiredVacancy(t *testing.T) {
+	d := openTestDB(t)
+	p := listing.Posting{
+		URL: "https://example.com/jobs/exp1", Title: "R", Company: "Co",
+		Text: "d", TextKind: listing.Plain, TextState: listing.TextFull,
+		Expires: time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC), // before testNow
+	}
+	id := add(t, newCat(d), p)
+	ts := newTestServer(t, d)
+	body, _ := apiGetRaw(t, ts, fmt.Sprintf("/api/vacancies/%d?profile=1", id))
+	if exp, _ := body["expired"].(bool); !exp {
+		t.Errorf("view: expired should be true")
+	}
+	for _, r := range getRows(apiGet(t, ts, "/api/vacancies")) {
+		if rowID(r) == float64(id) {
+			if exp, _ := r.(map[string]any)["expired"].(bool); !exp {
+				t.Errorf("list row: expired should be true")
+			}
+		}
+	}
+}
+
+// TestVacancyView_ApplyRules checks the apply action URL logic:
+// valid apply_url is used; apply_url with credentials falls back to vacancy url;
+// both urls invalid produces a message.
+func TestVacancyView_ApplyRules(t *testing.T) {
+	nowStr := testNow.UTC().Format(time.RFC3339)
+	mkDB := func(url, applyURL string) (*db.DB, int64) {
+		d := openTestDB(t)
+		var id int64
+		d.QueryRow(`INSERT INTO vacancy (identity,title,company,url,apply_url,first_seen,last_seen,text_state,content_hash,version,body)
+			VALUES ('','R','C',?,?,?,?,'full','h',1,'') RETURNING id`,
+			url, applyURL, nowStr, nowStr).Scan(&id) //nolint:errcheck
+		d.Exec(`INSERT INTO vacancy_source (vacancy_id,source,url,seen_at) VALUES (?,'s',?,?)`, id, url, nowStr)           //nolint:errcheck
+		d.Exec(`INSERT INTO decision (profile,vacancy,stage,reason,decided_at) VALUES (1,?,'shortlist','',?)`, id, nowStr) //nolint:errcheck
+		return d, id
+	}
+	apply := func(d *db.DB, id int64) map[string]any {
+		b, _ := apiGetRaw(t, newTestServer(t, d), fmt.Sprintf("/api/vacancies/%d?profile=1", id))
+		for _, a := range b["actions"].([]any) {
+			m, _ := a.(map[string]any)
+			if k, _ := m["key"].(string); k == "apply" {
+				return m
+			}
+		}
+		return nil
+	}
+	d1, id1 := mkDB("https://ex.com/j1", "https://jobs.lever.co/co/abc")
+	if u, _ := apply(d1, id1)["url"].(string); u != "https://jobs.lever.co/co/abc" {
+		t.Errorf("valid apply_url: got %q", u)
+	}
+	d2, id2 := mkDB("https://ex.com/j2", "https://user:pass@bad.com/j")
+	if u, _ := apply(d2, id2)["url"].(string); u != "https://ex.com/j2" {
+		t.Errorf("apply_url with creds: fallback got %q", u)
+	}
+	d3, id3 := mkDB("ftp://nope/j3", "")
+	if m, _ := apply(d3, id3)["message"].(string); m == "" {
+		t.Errorf("both invalid: want message")
+	}
+}
+
+// TestVacancyView_FoundOn checks that sources are rendered as "Found on <name>",
+// using the configured name when available, the host otherwise.
+func TestVacancyView_FoundOn(t *testing.T) {
+	d := openTestDB(t)
+	id := add(t, newCat(d), post("https://named.example.com/jobs/f1", "R", "Co"))
+	nowStr := testNow.UTC().Format(time.RFC3339)
+	d.Exec(`INSERT OR IGNORE INTO vacancy_source (vacancy_id,source,url,seen_at) VALUES (?,'https://hn.example.org','https://hn.example.org',?)`, id, nowStr) //nolint:errcheck
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	h := server.New(server.Options{Version: "test", Port: 9999, Logger: logger},
+		func(mux *http.ServeMux) {
+			inbox.RegisterRoutes(mux, d, testNowFn, logger, func() bool { return false },
+				map[string]string{"src": "Named Board"})
+		})
+	ts := httptest.NewServer(h)
+	t.Cleanup(ts.Close)
+	body, status := apiGetRaw(t, ts, fmt.Sprintf("/api/vacancies/%d?profile=1", id))
+	if status != http.StatusOK {
+		t.Fatalf("view: status %d", status)
+	}
+	srcs, _ := body["sources"].([]any)
+	if len(srcs) != 2 {
+		t.Fatalf("sources: got %d, want 2", len(srcs))
+	}
+	if s, _ := srcs[0].(string); s != "Found on Named Board" {
+		t.Errorf("named: got %q", s)
+	}
+	if s, _ := srcs[1].(string); s != "Found on hn.example.org" {
+		t.Errorf("unnamed: got %q", s)
+	}
+}
+
+// TestVacancyView_ListingState checks that each text_state value maps to its
+// display string in the listing.state field.
+func TestVacancyView_ListingState(t *testing.T) {
+	for _, tc := range []struct {
+		state listing.TextState
+		want  string
+	}{
+		{listing.TextFull, "Full text"},
+		{listing.TextSummary, "Listing summary only"},
+		{listing.TextBlocked, "Blocked by site"},
+		{listing.TextNotFetched, "Not fetched"},
+		{listing.TextRemoved, "Text removed after 60 days unseen; it returns if the source shows the role again"},
+	} {
+		d := openTestDB(t)
+		p := listing.Posting{
+			URL: "https://example.com/jobs/ls-" + string(tc.state), Title: "R", Company: "Co",
+			Text: "d", TextKind: listing.Plain, TextState: tc.state,
+		}
+		id := add(t, newCat(d), p)
+		body, _ := apiGetRaw(t, newTestServer(t, d), fmt.Sprintf("/api/vacancies/%d?profile=1", id))
+		lv, _ := body["listing"].(map[string]any)
+		if s, _ := lv["state"].(string); s != tc.want {
+			t.Errorf("state %s: got %q, want %q", tc.state, s, tc.want)
+		}
+	}
+}
+
+// TestVacancyView_AliasedVacancyAndNotFound checks that a merged-away id returns
+// the kept vacancy, and that an unknown vacancy or profile answers 404.
+func TestVacancyView_AliasedVacancyAndNotFound(t *testing.T) {
+	d := openTestDB(t)
+	keptID := add(t, newCat(d), post("https://example.com/jobs/vva1", "R", "Co"))
+	d.Exec(`INSERT INTO vacancy_alias (old_id, new_id) VALUES (99997, ?)`, keptID) //nolint:errcheck
+	ts := newTestServer(t, d)
+
+	body, status := apiGetRaw(t, ts, "/api/vacancies/99997?profile=1")
+	if status != http.StatusOK {
+		t.Fatalf("alias: status %d", status)
+	}
+	if id, _ := body["id"].(float64); int64(id) != keptID {
+		t.Errorf("alias: id %v, want %d", id, keptID)
+	}
+	_, status = apiGetRaw(t, ts, "/api/vacancies/99999?profile=1")
+	if status != http.StatusNotFound {
+		t.Errorf("unknown vacancy: status %d, want 404", status)
+	}
+	_, status = apiGetRaw(t, ts, fmt.Sprintf("/api/vacancies/%d?profile=99999", keptID))
+	if status != http.StatusNotFound {
+		t.Errorf("unknown profile: status %d, want 404", status)
 	}
 }

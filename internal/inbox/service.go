@@ -4,10 +4,14 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/sifty-works/sifty/internal/apperr"
+	"github.com/sifty-works/sifty/internal/catalog"
 	"github.com/sifty-works/sifty/internal/db"
+	"github.com/sifty-works/sifty/internal/listing"
 )
 
 // Row is one vacancy row in the API list response.
@@ -21,6 +25,7 @@ type Row struct {
 	Stage     string `json:"stage"`
 	Reason    string `json:"reason,omitempty"`
 	Applied   string `json:"applied,omitempty"`
+	Expired   bool   `json:"expired,omitempty"`
 }
 
 // Counts holds per-stage vacancy counts for one profile.
@@ -38,6 +43,7 @@ func toRow(rr repoRow, now time.Time) Row {
 	if company == "" {
 		company = "Unknown"
 	}
+	nowStr := now.UTC().Format(time.RFC3339)
 	return Row{
 		ID:        rr.id,
 		Company:   company,
@@ -48,6 +54,7 @@ func toRow(rr repoRow, now time.Time) Row {
 		Stage:     rr.stage,
 		Reason:    rr.reason,
 		Applied:   appliedText(rr.appliedAt, rr.appliedName, rr.stage, now),
+		Expired:   rr.expiresAt != "" && rr.expiresAt <= nowStr,
 	}
 }
 
@@ -275,4 +282,179 @@ func emptyText(rowCount int, stage, q string) string {
 		return "No dismissed roles."
 	}
 	return "Inbox zero. Collect more jobs in Settings → Sources."
+}
+
+// --- Vacancy view types and functions ---
+
+// Action is one available action on the vacancy page.
+type Action struct {
+	Key     string `json:"key"`
+	Label   string `json:"label"`
+	URL     string `json:"url,omitempty"`
+	Message string `json:"message,omitempty"`
+}
+
+// ListingView describes the vacancy's text as shown on the vacancy page.
+type ListingView struct {
+	State string `json:"state"`
+	HTML  string `json:"html"`
+	Empty string `json:"empty,omitempty"`
+}
+
+// VacancyView is the vacancy page API response.
+type VacancyView struct {
+	Row
+	Sources  []string    `json:"sources"`
+	Original string      `json:"original"`
+	Status   string      `json:"status,omitempty"`
+	Actions  []Action    `json:"actions"`
+	Listing  ListingView `json:"listing"`
+}
+
+// listingState returns the display text for a vacancy's text_state value.
+func listingState(textState string) string {
+	switch listing.TextState(textState) {
+	case listing.TextFull:
+		return "Full text"
+	case listing.TextSummary:
+		return "Listing summary only"
+	case listing.TextBlocked:
+		return "Blocked by site"
+	case listing.TextRemoved:
+		return "Text removed after 60 days unseen; it returns if the source shows the role again"
+	}
+	return "Not fetched"
+}
+
+// sourceLabel returns "Found on <name>" for a source key.
+// When the key appears in names, that name is used. Otherwise the hostname of
+// the key URL is used, with a leading "www." stripped.
+func sourceLabel(src string, names map[string]string) string {
+	name := names[src]
+	if name == "" {
+		if u, err := url.Parse(src); err == nil && u.Host != "" {
+			name = strings.TrimPrefix(strings.ToLower(u.Host), "www.")
+		}
+	}
+	if name == "" {
+		name = src
+	}
+	return "Found on " + name
+}
+
+// statusText returns the status line shown on the vacancy page.
+func statusText(stage, reason, appliedAt string, t time.Time) string {
+	if stage == "dismissed" {
+		if reason != "" {
+			return "Dismissed — " + reason
+		}
+		return "Dismissed"
+	}
+	if stage != "applied" || appliedAt == "" {
+		return ""
+	}
+	at, err := time.Parse(time.RFC3339, appliedAt)
+	if err != nil {
+		return ""
+	}
+	return "Applied " + at.In(t.Location()).Format("2 Jan 2006")
+}
+
+// validApplyURL reports whether raw is an http(s) URL with no credentials.
+func validApplyURL(raw string) bool {
+	if raw == "" {
+		return false
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	return (u.Scheme == "http" || u.Scheme == "https") && u.User == nil
+}
+
+// stageActions returns the actions available in stage, in the order the page
+// shows them.
+func stageActions(stage, vacURL, applyURL, company string) []Action {
+	switch stage {
+	case "inbox":
+		var out []Action
+		if company != "" {
+			out = append(out, Action{Key: "block", Label: "Block company"})
+		}
+		return append(out,
+			Action{Key: "dismiss", Label: "✕ Dismiss N"},
+			Action{Key: "select", Label: "✓ Select Y"})
+	case "shortlist":
+		apply := buildApplyAction(vacURL, applyURL)
+		return []Action{
+			{Key: "inbox", Label: "Move to Inbox"},
+			apply,
+			{Key: "confirm", Label: "✓ Confirm application…"},
+			{Key: "delete", Label: "× Delete role…"},
+		}
+	case "applied":
+		return []Action{{Key: "undo", Label: "Undo"}, {Key: "delete", Label: "Delete role…"}}
+	case "dismissed":
+		return []Action{{Key: "restore", Label: "Restore to Inbox"}, {Key: "delete", Label: "Delete role…"}}
+	}
+	return nil
+}
+
+// buildApplyAction builds the apply Action for the shortlist stage.
+// It carries a URL when a valid http(s) address without credentials is found,
+// otherwise a message.
+func buildApplyAction(vacURL, applyURL string) Action {
+	if validApplyURL(applyURL) {
+		return Action{Key: "apply", Label: "Apply ↗ A", URL: applyURL}
+	}
+	if validApplyURL(vacURL) {
+		return Action{Key: "apply", Label: "Apply ↗ A", URL: vacURL}
+	}
+	return Action{Key: "apply", Label: "Apply ↗ A",
+		Message: "No valid employer or original listing URL is available. The role stays in Shortlist."}
+}
+
+// vacancyView loads and assembles the vacancy page response for a resolved
+// vacancy and profile. sourceNames maps source keys to their configured display names.
+func vacancyView(ctx context.Context, database *db.DB, now func() time.Time,
+	vacancyID, profileID int64, sourceNames map[string]string) (VacancyView, error) {
+
+	stage, vd, err := loadVacancyView(ctx, database, profileID, vacancyID)
+	if err != nil {
+		return VacancyView{}, err
+	}
+
+	raws, err := listRows(ctx, database, profileID, vacancyID, stage, "")
+	if err != nil {
+		return VacancyView{}, err
+	}
+	if len(raws) == 0 {
+		return VacancyView{}, apperr.NotFound{Message: "Role not found."}
+	}
+
+	t := now()
+	row := toRow(raws[0], t)
+
+	var sources []string
+	for _, src := range vd.sources {
+		sources = append(sources, sourceLabel(src, sourceNames))
+	}
+
+	html, err := catalog.Body(vd.body)
+	if err != nil {
+		return VacancyView{}, fmt.Errorf("inbox: view: body: %w", err)
+	}
+	lv := ListingView{State: listingState(vd.textState), HTML: html}
+	if html == "" {
+		lv.Empty = "A full description has not been retrieved. Open the original listing; missing text is not an empty job."
+	}
+
+	return VacancyView{
+		Row:      row,
+		Sources:  sources,
+		Original: vd.url,
+		Status:   statusText(stage, raws[0].reason, raws[0].appliedAt, t),
+		Actions:  stageActions(stage, vd.url, vd.applyURL, raws[0].company),
+		Listing:  lv,
+	}, nil
 }

@@ -17,9 +17,11 @@ import (
 
 // RegisterRoutes registers all inbox routes on mux.
 // collectActive reports whether a collect job is queued or running.
-func RegisterRoutes(mux *http.ServeMux, database *db.DB, now func() time.Time, logger *slog.Logger, collectActive func() bool) {
+// sourceNames maps source keys (from config.SourceKey) to their display names.
+func RegisterRoutes(mux *http.ServeMux, database *db.DB, now func() time.Time, logger *slog.Logger, collectActive func() bool, sourceNames map[string]string) {
 	cat := catalog.New(database, now)
 	mux.Handle("GET /api/vacancies", listHandler(database, now, logger))
+	mux.Handle("GET /api/vacancies/{id}", vacancyViewHandler(database, now, logger, sourceNames))
 	mux.Handle("POST /api/vacancies/{id}/decision", decisionHandler(database, now, logger))
 	mux.Handle("POST /api/vacancies/{id}/seen", seenHandler(database, logger))
 	mux.Handle("DELETE /api/vacancies/{id}", deleteHandler(database, cat, now, collectActive, logger))
@@ -27,6 +29,32 @@ func RegisterRoutes(mux *http.ServeMux, database *db.DB, now func() time.Time, l
 	mux.HandleFunc("POST /api/exclusions", handleExclusionsPost(database, logger))
 	mux.HandleFunc("DELETE /api/exclusions", handleExclusionsDelete(database, logger))
 	mux.HandleFunc("GET /api/exclusions/preview", handleExclusionsPreview(database, logger))
+}
+
+func vacancyViewHandler(database *db.DB, now func() time.Time, logger *slog.Logger, sourceNames map[string]string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		profileID, err := parseProfile(req)
+		if server.MapError(w, err, logger) {
+			return
+		}
+		pid, err := resolveProfile(req.Context(), database, profileID)
+		if server.MapError(w, err, logger) {
+			return
+		}
+		id, err := parseID(req)
+		if server.MapError(w, err, logger) {
+			return
+		}
+		vacancyID, err := resolveVacancy(req.Context(), database, id)
+		if server.MapError(w, err, logger) {
+			return
+		}
+		view, err := vacancyView(req.Context(), database, now, vacancyID, pid, sourceNames)
+		if server.MapError(w, err, logger) {
+			return
+		}
+		server.WriteJSON(w, view)
+	})
 }
 
 // parseProfile parses the ?profile= query parameter, returning 0 when absent.
