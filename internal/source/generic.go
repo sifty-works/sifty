@@ -431,35 +431,13 @@ func linkPostings(body []byte, base, pattern string) []listing.Posting {
 			}
 		}
 		if title == "" {
-			htmlWalk(n, func(c *xhtml.Node) bool {
-				if title != "" {
-					return false
-				}
-				if c.Type == xhtml.ElementNode && (c.Data == "h2" || c.Data == "h3" || c.Data == "h4") {
-					var sb strings.Builder
-					htmlWalk(c, func(t *xhtml.Node) bool {
-						if t.Type == xhtml.TextNode {
-							sb.WriteString(t.Data)
-						}
-						return true
-					})
-					title = strings.Join(strings.Fields(sb.String()), " ")
-					return false
-				}
-				return true
+			title = firstText(n, func(c *xhtml.Node) bool {
+				return c.Type == xhtml.ElementNode && (c.Data == "h2" || c.Data == "h3" || c.Data == "h4")
 			})
 		}
 		if title == "" {
-			htmlWalk(n, func(c *xhtml.Node) bool {
-				if title != "" {
-					return false
-				}
-				if c.Type == xhtml.TextNode {
-					if s := strings.TrimSpace(c.Data); s != "" {
-						title = s
-					}
-				}
-				return true
+			title = firstText(n, func(c *xhtml.Node) bool {
+				return c.Type == xhtml.TextNode && strings.TrimSpace(c.Data) != ""
 			})
 		}
 		lt := strings.ToLower(title)
@@ -531,4 +509,29 @@ func htmlWalk(n *xhtml.Node, fn func(*xhtml.Node) bool) {
 			htmlWalk(c, fn)
 		}
 	}
+}
+
+// firstText returns the text content of the first descendant of n that
+// satisfies pred. Text is gathered by collecting all text-node descendants
+// of that node and joining them with a single space.
+func firstText(n *xhtml.Node, pred func(*xhtml.Node) bool) string {
+	var out string
+	htmlWalk(n, func(c *xhtml.Node) bool {
+		if out != "" {
+			return false
+		}
+		if !pred(c) {
+			return true
+		}
+		var sb strings.Builder
+		htmlWalk(c, func(t *xhtml.Node) bool {
+			if t.Type == xhtml.TextNode {
+				sb.WriteString(t.Data)
+			}
+			return true
+		})
+		out = strings.Join(strings.Fields(sb.String()), " ")
+		return false
+	})
+	return out
 }

@@ -97,29 +97,52 @@ func WriteFTS(ctx context.Context, tx *sql.Tx, id int64, body []byte) error {
 	return nil
 }
 
+// resolved holds the computed canonical keys, company, identity and matches
+// for a posting, returned by resolve.
+type resolved struct {
+	canonURL, canonApply, company, identity string
+	removed                                 bool
+	matchIDs                                []int64
+}
+
+// resolve computes the canonical address, the ATS apply address, company and
+// identity for p, checks the tombstone table and finds matching vacancies.
+// The apply address is kept only when it points to one concrete vacancy in an
+// applicant tracking system; a posting whose own address is such a vacancy
+// applies there.
+func resolve(ctx context.Context, tx *sql.Tx, p listing.Posting) (resolved, error) {
+	canon, err := listing.Canonical(p.URL)
+	if err != nil {
+		return resolved{}, fmt.Errorf("canonical url: %w", err)
+	}
+	var apply string
+	for _, raw := range []string{p.ApplyURL, p.URL} {
+		if raw != "" {
+			if ca, ok := listing.ConcreteATS(raw); ok {
+				apply = ca
+				break
+			}
+		}
+	}
+	co, id := p.Company, listing.Identity(p.Company, p.Title)
+	gone, err := anyTombstoned(ctx, tx, tombstoneKeys(canon, p.URL, p.ApplyURL))
+	if err != nil {
+		return resolved{}, fmt.Errorf("tombstone: %w", err)
+	}
+	if gone {
+		return resolved{removed: true}, nil
+	}
+	ms, err := findMatches(ctx, tx, canon, apply, apply, id, co)
+	if err != nil {
+		return resolved{}, fmt.Errorf("match: %w", err)
+	}
+	return resolved{canonURL: canon, canonApply: apply, company: co, identity: id, matchIDs: ms}, nil
+}
+
 // Upsert stores a posting from a source, following the matching and update
 // rules. It calls listing.Normalize on the posting's text itself.
 // src is the source's opaque address key.
 func (c *Catalog) Upsert(ctx context.Context, p listing.Posting, src string) (int64, Outcome, error) {
-	canonURL, err := listing.Canonical(p.URL)
-	if err != nil {
-		return 0, 0, fmt.Errorf("catalog: upsert: canonical url: %w", err)
-	}
-
-	// The apply address is kept only when it is one concrete vacancy in an
-	// applicant tracking system, never the root of a board or another page.
-	// A posting whose own address is such a vacancy applies there.
-	var canonApply, atsApply string
-	for _, raw := range []string{p.ApplyURL, p.URL} {
-		if ca, ok := listing.ConcreteATS(raw); ok && raw != "" {
-			canonApply, atsApply = ca, ca
-			break
-		}
-	}
-
-	company := p.Company
-	identity := listing.Identity(company, p.Title)
-
 	now := c.now().UTC()
 	nowStr := now.Format(time.RFC3339)
 
@@ -151,29 +174,23 @@ func (c *Catalog) Upsert(ctx context.Context, p listing.Posting, src string) (in
 	}
 	defer tx.Rollback() //nolint:errcheck
 
-	// Tombstone check: url-based and legacy-key-based.
-	tombstoned, err := anyTombstoned(ctx, tx, tombstoneKeys(canonURL, p.URL, p.ApplyURL))
+	r, err := resolve(ctx, tx, p)
 	if err != nil {
-		return 0, 0, fmt.Errorf("catalog: upsert: tombstone check: %w", err)
+		return 0, 0, fmt.Errorf("catalog: upsert: %w", err)
 	}
-	if tombstoned {
+	if r.removed {
 		return 0, OutcomeTombstoned, nil
 	}
-
-	// Find matching vacancies.
-	matchIDs, err := findMatches(ctx, tx, canonURL, atsApply, canonApply, identity, company)
-	if err != nil {
-		return 0, 0, fmt.Errorf("catalog: upsert: match: %w", err)
-	}
+	matchIDs := r.matchIDs
 
 	// New vacancy.
 	if len(matchIDs) == 0 {
 		row := vacancyRow{
-			identity:       identity,
+			identity:       r.identity,
 			title:          p.Title,
-			company:        company,
-			url:            canonURL,
-			applyURL:       canonApply,
+			company:        r.company,
+			url:            r.canonURL,
+			applyURL:       r.canonApply,
 			location:       p.Location,
 			tagsJSON:       tagsJSON,
 			fieldsJSON:     fieldsJSON,
@@ -197,7 +214,7 @@ func (c *Catalog) Upsert(ctx context.Context, p listing.Posting, src string) (in
 		if err := WriteFTS(ctx, tx, id, newBody); err != nil {
 			return 0, 0, fmt.Errorf("catalog: upsert: fts: %w", err)
 		}
-		if err := saveSource(ctx, tx, id, src, canonURL, nowStr); err != nil {
+		if err := saveSource(ctx, tx, id, src, r.canonURL, nowStr); err != nil {
 			return 0, 0, fmt.Errorf("catalog: upsert: insert source: %w", err)
 		}
 		if err := tx.Commit(); err != nil {
@@ -230,9 +247,9 @@ func (c *Catalog) Upsert(ctx context.Context, p listing.Posting, src string) (in
 	upd.title = p.Title // always from posting
 	// A guessed company (derived from the board's address) does not replace a
 	// stored company that is already named; it may replace an empty company.
-	if company != "" && (!p.CompanyGuessed || ex.company == "") {
-		upd.company = company
-		upd.identity = listing.Identity(company, p.Title)
+	if r.company != "" && (!p.CompanyGuessed || ex.company == "") {
+		upd.company = r.company
+		upd.identity = listing.Identity(r.company, p.Title)
 	} else {
 		upd.identity = listing.Identity(ex.company, p.Title)
 	}
@@ -243,8 +260,8 @@ func (c *Catalog) Upsert(ctx context.Context, p listing.Posting, src string) (in
 		upd.tagsJSON = tagsJSON
 	}
 	upd.fieldsJSON = mergeFields(ex.fieldsJSON, fieldsJSON)
-	if ex.applyURL == "" && canonApply != "" {
-		upd.applyURL = canonApply
+	if ex.applyURL == "" && r.canonApply != "" {
+		upd.applyURL = r.canonApply
 	}
 	// Publication date: set only when none stored (and publishedAt is already
 	// filtered to exclude future dates by the time we reach here).
@@ -284,7 +301,7 @@ func (c *Catalog) Upsert(ctx context.Context, p listing.Posting, src string) (in
 			return 0, 0, fmt.Errorf("catalog: upsert: fts: %w", err)
 		}
 	}
-	if err := saveSource(ctx, tx, vacancyID, src, canonURL, nowStr); err != nil {
+	if err := saveSource(ctx, tx, vacancyID, src, r.canonURL, nowStr); err != nil {
 		return 0, 0, fmt.Errorf("catalog: upsert: source: %w", err)
 	}
 
@@ -590,46 +607,26 @@ type Known struct {
 // Known returns the state of a posting without modifying the catalogue.
 // It uses the same matching rules as Upsert.
 func (c *Catalog) Known(ctx context.Context, p listing.Posting) (Known, error) {
-	canonURL, err := listing.Canonical(p.URL)
-	if err != nil {
-		return Known{}, fmt.Errorf("catalog: known: canonical url: %w", err)
-	}
-	var canonApply, atsApply string
-	for _, raw := range []string{p.ApplyURL, p.URL} {
-		if raw != "" {
-			if ca, ok := listing.ConcreteATS(raw); ok {
-				canonApply, atsApply = ca, ca
-				break
-			}
-		}
-	}
-	company := p.Company
-	identity := listing.Identity(company, p.Title)
-
 	tx, err := c.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return Known{}, fmt.Errorf("catalog: known: begin tx: %w", err)
 	}
 	defer tx.Rollback() //nolint:errcheck
 
-	removed, err := anyTombstoned(ctx, tx, tombstoneKeys(canonURL, p.URL, p.ApplyURL))
+	r, err := resolve(ctx, tx, p)
 	if err != nil {
-		return Known{}, fmt.Errorf("catalog: known: tombstone: %w", err)
+		return Known{}, fmt.Errorf("catalog: known: %w", err)
 	}
-	if removed {
+	if r.removed {
 		return Known{Removed: true}, nil
 	}
-	matchIDs, err := findMatches(ctx, tx, canonURL, atsApply, canonApply, identity, company)
-	if err != nil {
-		return Known{}, fmt.Errorf("catalog: known: match: %w", err)
-	}
-	if len(matchIDs) == 0 {
+	if len(r.matchIDs) == 0 {
 		return Known{New: true}, nil
 	}
-	sort.Slice(matchIDs, func(i, j int) bool { return matchIDs[i] < matchIDs[j] })
+	sort.Slice(r.matchIDs, func(i, j int) bool { return r.matchIDs[i] < r.matchIDs[j] })
 	var textState, requestedAt string
 	if err := tx.QueryRowContext(ctx,
-		`SELECT text_state, detail_requested_at FROM vacancy WHERE id = ?`, matchIDs[0]).
+		`SELECT text_state, detail_requested_at FROM vacancy WHERE id = ?`, r.matchIDs[0]).
 		Scan(&textState, &requestedAt); err != nil {
 		return Known{}, fmt.Errorf("catalog: known: load: %w", err)
 	}

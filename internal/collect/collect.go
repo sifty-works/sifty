@@ -163,10 +163,11 @@ func (c *Collector) run(ctx context.Context, j *runner.Job) error {
 				if ctx.Err() != nil {
 					return
 				}
-				u, _ := url.Parse(s.URL)
 				current := s.Name
 				if current == "" {
-					current = u.Host
+					if u, _ := url.Parse(s.URL); u != nil {
+						current = u.Host
+					}
 				}
 
 				mu.Lock()
@@ -175,7 +176,7 @@ func (c *Collector) run(ctx context.Context, j *runner.Job) error {
 
 				key, _ := config.SourceKey(s.URL)
 				srcStarted := c.now()
-				postings, listErr := source.For(u).List(ctx, c.fetcher, source.SiteConfig{Name: s.Name, URL: s.URL})
+				postings, listErr := c.listSource(ctx, s)
 
 				var cntNew, cntUpdated, cntUnchanged, cntRemoved, cntExcluded int
 				if listErr == nil {
@@ -213,23 +214,7 @@ func (c *Collector) run(ctx context.Context, j *runner.Job) error {
 							needDetail := p.Text == "" && (k.New || (!k.HasText &&
 								(k.Requested.IsZero() || c.now().Sub(k.Requested) > 7*24*time.Hour)))
 							if needDetail {
-								cfg := source.SiteConfig{Name: s.Name, URL: p.URL}
-								det, detErr := source.Detail(ctx, c.fetcher, p, cfg)
-								switch {
-								case detErr == nil:
-									p = det
-									p.Requested = true
-								case errors.Is(detErr, fetch.ErrBlocked):
-									p.TextState = listing.TextBlocked
-								case !errors.Is(detErr, fetch.ErrOffline) && !errors.Is(detErr, fetch.ErrRefused):
-									p.Requested = true
-								}
-								// Check exclusion again on fields revealed by the vacancy's own page.
-								if excl, exclErr := inbox.Excluded(ctx, c.db, p.Title, p.Company, p.ApplyURL); exclErr != nil {
-									c.log.Warn("collect: exclusion check after detail", "error", exclErr)
-								} else {
-									excluded = excl
-								}
+								p, excluded = c.addVacancyPage(ctx, p, s, excluded)
 							}
 						}
 						_, outcome, upsertErr := c.catalog.Upsert(ctx, p, key)
@@ -328,7 +313,7 @@ func (c *Collector) StatusFunc() func() map[string]any {
 				continue
 			}
 			key, _ := config.SourceKey(s.URL)
-			if c.sourceNeedsAttention(key) {
+			if needsAttention(c.querySourceRuns(key)) {
 				attentionCount++
 			}
 		}
@@ -588,37 +573,49 @@ func (c *Collector) buildSourceStatus(key string) map[string]any {
 			strconv.Itoa(lastSuccess.newCnt) + " new"
 	}
 
-	return map[string]any{"text": text, "attention": c.sourceNeedsAttention(key)}
+	return map[string]any{"text": text, "attention": needsAttention(history)}
 }
 
-// sourceNeedsAttention reports whether the source's last three runs (at least
-// three) all ended in error or empty.
-func (c *Collector) sourceNeedsAttention(key string) bool {
-	rows, err := c.db.Query(
-		`SELECT status FROM source_run WHERE source = ? ORDER BY job_id DESC LIMIT 3`,
-		key,
-	)
-	if err != nil {
+// needsAttention reports whether the source's last three runs (at least three)
+// all ended in error or empty, using the history already read for the status.
+func needsAttention(history []sourceRunRec) bool {
+	if len(history) < 3 {
 		return false
 	}
-	defer rows.Close()
-	var statuses []string
-	for rows.Next() {
-		var s string
-		if err := rows.Scan(&s); err != nil {
-			continue
-		}
-		statuses = append(statuses, s)
-	}
-	if len(statuses) < 3 {
-		return false
-	}
-	for _, s := range statuses {
-		if s == "ok" {
+	for _, r := range history[:3] {
+		if r.status == "ok" {
 			return false
 		}
 	}
 	return true
+}
+
+// listSource fetches the posting list from one source.
+func (c *Collector) listSource(ctx context.Context, s config.SourceConfig) ([]listing.Posting, error) {
+	u, _ := url.Parse(s.URL)
+	return source.For(u).List(ctx, c.fetcher, source.SiteConfig{Name: s.Name, URL: s.URL})
+}
+
+// addVacancyPage fetches the vacancy's own page, fills text and empty fields,
+// and re-checks exclusions on the updated fields. It returns the updated
+// posting and whether it is excluded after the re-check.
+func (c *Collector) addVacancyPage(ctx context.Context, p listing.Posting, s config.SourceConfig, excluded bool) (listing.Posting, bool) {
+	det, detErr := source.Detail(ctx, c.fetcher, p, source.SiteConfig{Name: s.Name, URL: p.URL})
+	switch {
+	case detErr == nil:
+		p = det
+		p.Requested = true
+	case errors.Is(detErr, fetch.ErrBlocked):
+		p.TextState = listing.TextBlocked
+	case !errors.Is(detErr, fetch.ErrOffline) && !errors.Is(detErr, fetch.ErrRefused):
+		p.Requested = true
+	}
+	if excl, exclErr := inbox.Excluded(ctx, c.db, p.Title, p.Company, p.ApplyURL); exclErr != nil {
+		c.log.Warn("collect: exclusion check after detail", "error", exclErr)
+	} else {
+		excluded = excl
+	}
+	return p, excluded
 }
 
 // --- Helpers -----------------------------------------------------------------
