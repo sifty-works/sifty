@@ -44,7 +44,6 @@ var phrases = []phrase{
 	{"technical lead", "tech lead"},
 	{"node.js", "nodejs"},
 	{"web3.js", "web3js"},
-	{"nodejs", "nodejs"}, // idempotent guard — already canonical
 	{"layer 2", "l2"},
 }
 

@@ -52,11 +52,10 @@ type env struct {
 
 func newEnv(t *testing.T) *env {
 	t.Helper()
-	return newEnvClock(t, func() time.Time { return base })
+	return newEnvClock(t, func() time.Time { return base }, false)
 }
 
-// newEnvClock creates a test environment with a custom clock.
-// addSource adds a single enabled source to e's config.
+// addSource sets e's config to a single enabled source at url.
 func addSource(t *testing.T, e *env, url string) {
 	t.Helper()
 	e.store.Update(func(c *config.Config) error { //nolint:errcheck
@@ -65,7 +64,25 @@ func addSource(t *testing.T, e *env, url string) {
 	})
 }
 
-func newEnvClock(t *testing.T, now func() time.Time) *env {
+// setSources replaces e's config sources with one enabled entry per url.
+func setSources(t *testing.T, e *env, urls ...string) {
+	t.Helper()
+	srcs := make([]config.SourceConfig, len(urls))
+	for i, u := range urls {
+		srcs[i] = config.SourceConfig{URL: u, Enabled: true}
+	}
+	e.store.Update(func(c *config.Config) error { c.Sources = srcs; return nil }) //nolint:errcheck
+}
+
+// runCollect enqueues a forced collect run and waits for it to finish.
+func runCollect(t *testing.T, e *env) runner.Job {
+	t.Helper()
+	e.r.Enqueue(runner.Spec{Kind: "collect"}) //nolint:errcheck
+	return waitJob(t, e.r)
+}
+
+// newEnvClock creates a test environment with a custom clock and optional offline mode.
+func newEnvClock(t *testing.T, now func() time.Time, offline bool) *env {
 	t.Helper()
 	database := openDB(t)
 	dir := t.TempDir()
@@ -76,7 +93,7 @@ func newEnvClock(t *testing.T, now func() time.Time) *env {
 	fm := fetchtest.NewMap()
 	r := runner.New(database, map[string]int{"net": 4, "cpu": 1, "browser": 1}, now, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	cat := catalog.New(database, now)
-	col := collect.New(store, cat, r, fm, database, false, now, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	col := collect.New(store, cat, r, fm, database, offline, now, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	col.Register()
 
 	h := server.New(server.Options{
@@ -130,25 +147,20 @@ func (e *env) mutate(t *testing.T, method, path string, body map[string]any) (ma
 	return out, resp.StatusCode
 }
 
-// waitJob subscribes first, then checks Last to avoid missing a job that
-// already finished before the subscription channel was created.
+// waitJob polls Last until the most recent collect job reaches a final state.
 func waitJob(t *testing.T, r *runner.Runner) runner.Job {
 	t.Helper()
-	ch, unsub := r.Subscribe()
-	defer unsub()
-	if j, ok := r.Last("collect"); ok && (j.State == "done" || j.State == "failed") {
-		return j
-	}
 	deadline := time.After(5 * time.Second)
 	for {
+		if j, ok := r.Last("collect"); ok && (j.State == "done" || j.State == "failed") {
+			return j
+		}
 		select {
-		case ev := <-ch:
-			if ev.Job.Kind == "collect" && (ev.Job.State == "done" || ev.Job.State == "failed") {
-				return ev.Job
-			}
 		case <-deadline:
 			t.Fatal("timed out waiting for collect job to finish")
 			return runner.Job{}
+		default:
+			time.Sleep(5 * time.Millisecond)
 		}
 	}
 }
@@ -180,17 +192,9 @@ func TestRunWithMixedSourcesEndsDone(t *testing.T) {
 	e.fm.Set("https://failing.example.com/jobs",
 		fetchtest.MapEntry{Err: fetch.ErrNotFound})
 
-	e.store.Update(func(c *config.Config) error { //nolint:errcheck
-		c.Sources = []config.SourceConfig{
-			{URL: "https://boards.greenhouse.io/acme", Enabled: true},
-			{URL: "https://feeds.example.com/jobs.xml", Enabled: true},
-			{URL: "https://failing.example.com/jobs", Enabled: true},
-		}
-		return nil
-	})
+	setSources(t, e, "https://boards.greenhouse.io/acme", "https://feeds.example.com/jobs.xml", "https://failing.example.com/jobs")
 
-	e.r.Enqueue(runner.Spec{Kind: "collect"}) //nolint:errcheck
-	j := waitJob(t, e.r)
+	j := runCollect(t, e)
 
 	if j.State != "done" {
 		t.Errorf("state: got %q, want done", j.State)
@@ -210,16 +214,9 @@ func TestRunAllFailingEndsFailed(t *testing.T) {
 	e.fm.Set("https://failing.example.com/jobs", fetchtest.MapEntry{Err: fetch.ErrNotFound})
 	e.fm.Set("https://feeds.example.com/jobs.xml", fetchtest.MapEntry{Err: fetch.ErrTransient})
 
-	e.store.Update(func(c *config.Config) error { //nolint:errcheck
-		c.Sources = []config.SourceConfig{
-			{URL: "https://failing.example.com/jobs", Enabled: true},
-			{URL: "https://feeds.example.com/jobs.xml", Enabled: true},
-		}
-		return nil
-	})
+	setSources(t, e, "https://failing.example.com/jobs", "https://feeds.example.com/jobs.xml")
 
-	e.r.Enqueue(runner.Spec{Kind: "collect"}) //nolint:errcheck
-	j := waitJob(t, e.r)
+	j := runCollect(t, e)
 
 	if j.State != "failed" {
 		t.Errorf("state: got %q, want failed", j.State)
@@ -239,16 +236,9 @@ func TestRunDeduplicatesPostingsWithinOneRun(t *testing.T) {
 	e.fm.Set("https://feeds.example.com/a.xml", fetchtest.MapEntry{Response: fetch.Response{Status: 200, ContentType: "application/xml", Body: []byte(xmlA)}})
 	e.fm.Set("https://feeds2.example.com/b.xml", fetchtest.MapEntry{Response: fetch.Response{Status: 200, ContentType: "application/xml", Body: []byte(xmlB)}})
 
-	e.store.Update(func(c *config.Config) error { //nolint:errcheck
-		c.Sources = []config.SourceConfig{
-			{URL: "https://feeds.example.com/a.xml", Enabled: true},
-			{URL: "https://feeds2.example.com/b.xml", Enabled: true},
-		}
-		return nil
-	})
+	setSources(t, e, "https://feeds.example.com/a.xml", "https://feeds2.example.com/b.xml")
 
-	e.r.Enqueue(runner.Spec{Kind: "collect"}) //nolint:errcheck
-	waitJob(t, e.r)
+	runCollect(t, e)
 
 	// Catalogue counter must be 1 (one write, not two for the same URL).
 	if cat := e.get(t, "/api/status")["catalogue"].(float64); cat != 1 {
@@ -268,16 +258,9 @@ func TestRunTwoBoardsOnSameAPIHostReadSequentially(t *testing.T) {
 		fetchtest.MapEntry{Response: fetch.Response{Status: 200, ContentType: "application/json",
 			Body: []byte(`{"company":{"name":"OtherCo"},"jobs":[{"id":10,"title":"Dev","absolute_url":"https://boards.greenhouse.io/otherco/jobs/10","content":"<p>x</p>"}]}`)}})
 
-	e.store.Update(func(c *config.Config) error { //nolint:errcheck
-		c.Sources = []config.SourceConfig{
-			{URL: "https://boards.greenhouse.io/acme", Enabled: true},
-			{URL: "https://boards.greenhouse.io/otherco", Enabled: true},
-		}
-		return nil
-	})
+	setSources(t, e, "https://boards.greenhouse.io/acme", "https://boards.greenhouse.io/otherco")
 
-	e.r.Enqueue(runner.Spec{Kind: "collect"}) //nolint:errcheck
-	j := waitJob(t, e.r)
+	j := runCollect(t, e)
 	if j.State != "done" {
 		t.Errorf("state: got %q, want done", j.State)
 	}
@@ -289,43 +272,47 @@ func TestRunTwoBoardsOnSameAPIHostReadSequentially(t *testing.T) {
 
 // --- Due and POST /api/collect -----------------------------------------------
 
-func TestDueAutoOnOffAndWhileQueued(t *testing.T) {
-	// Auto on, no prior run → Due returns true.
+func TestDueAndCollectDeduplication(t *testing.T) {
 	e := newEnv(t)
+	e.fm.Set("https://feeds.example.com/jobs.xml", fetchtest.MapEntry{Err: fetch.ErrNotFound})
+	addSource(t, e, "https://feeds.example.com/jobs.xml")
+
+	// No prior run, auto=true → Due returns true.
 	if !e.col.Due(base) {
 		t.Error("Due: want true when no prior run and auto is on")
 	}
-	// Auto off → Due returns false.
+
+	// POST enqueues a run; Due returns false immediately after (interval not elapsed).
+	e.mutate(t, "POST", "/api/collect", map[string]any{"force": false})
+	if e.col.Due(base) {
+		t.Error("Due: want false after collect is enqueued (interval not yet elapsed)")
+	}
+
+	// Two Enqueue calls while a job is queued or running return the same id.
+	id1, _ := e.r.Enqueue(runner.Spec{Kind: "collect"})
+	id2, _ := e.r.Enqueue(runner.Spec{Kind: "collect"})
+	if id1 != id2 {
+		t.Errorf("dedup: second Enqueue returned id %d, want same as first (%d)", id2, id1)
+	}
+
+	waitJob(t, e.r)
+
+	// Auto off → Due returns false regardless.
 	e.store.Update(func(c *config.Config) error { c.Collection.Auto = false; return nil }) //nolint:errcheck
 	if e.col.Due(base) {
 		t.Error("Due: want false when auto is off")
 	}
 }
 
-func TestDueReturnsFalseWhileRunQueued(t *testing.T) {
-	e := newEnv(t)
-	e.fm.Set("https://feeds.example.com/jobs.xml", fetchtest.MapEntry{Err: fetch.ErrNotFound})
-	e.store.Update(func(c *config.Config) error { //nolint:errcheck
-		c.Sources = []config.SourceConfig{{URL: "https://feeds.example.com/jobs.xml", Enabled: true}}
-		return nil
-	})
-	e.r.Enqueue(runner.Spec{Kind: "collect"}) //nolint:errcheck
-	if e.col.Due(base) {
-		t.Error("Due: want false while collect is queued or running")
-	}
-	waitJob(t, e.r)
-}
-
 func TestDueIntervalMeasuredFromLastRunCreated(t *testing.T) {
 	e := newEnv(t)
 	e.fm.Set("https://feeds.example.com/jobs.xml", fetchtest.MapEntry{Err: fetch.ErrNotFound})
+	addSource(t, e, "https://feeds.example.com/jobs.xml")
 	e.store.Update(func(c *config.Config) error { //nolint:errcheck
-		c.Sources = []config.SourceConfig{{URL: "https://feeds.example.com/jobs.xml", Enabled: true}}
 		c.Collection.Interval = config.Duration(2 * time.Hour)
 		return nil
 	})
-	e.r.Enqueue(runner.Spec{Kind: "collect"}) //nolint:errcheck
-	waitJob(t, e.r)
+	runCollect(t, e)
 
 	if e.col.Due(base.Add(1 * time.Hour)) {
 		t.Error("Due: want false when interval has not elapsed")
@@ -338,10 +325,7 @@ func TestDueIntervalMeasuredFromLastRunCreated(t *testing.T) {
 func TestPostCollectForceFalseEnqueuesWhenDue(t *testing.T) {
 	e := newEnv(t)
 	e.fm.Set("https://feeds.example.com/jobs.xml", fetchtest.MapEntry{Err: fetch.ErrNotFound})
-	e.store.Update(func(c *config.Config) error { //nolint:errcheck
-		c.Sources = []config.SourceConfig{{URL: "https://feeds.example.com/jobs.xml", Enabled: true}}
-		return nil
-	})
+	addSource(t, e, "https://feeds.example.com/jobs.xml")
 	e.mutate(t, "POST", "/api/collect", map[string]any{"force": false})
 	waitJob(t, e.r)
 }
@@ -349,8 +333,8 @@ func TestPostCollectForceFalseEnqueuesWhenDue(t *testing.T) {
 func TestPostCollectForceTrueIgnoresAutoSetting(t *testing.T) {
 	e := newEnv(t)
 	e.fm.Set("https://feeds.example.com/jobs.xml", fetchtest.MapEntry{Err: fetch.ErrNotFound})
+	addSource(t, e, "https://feeds.example.com/jobs.xml")
 	e.store.Update(func(c *config.Config) error { //nolint:errcheck
-		c.Sources = []config.SourceConfig{{URL: "https://feeds.example.com/jobs.xml", Enabled: true}}
 		c.Collection.Auto = false
 		return nil
 	})
@@ -371,55 +355,14 @@ func TestPostCollectForceTrueIgnoresAutoSetting(t *testing.T) {
 	}
 }
 
-func TestPostCollectNoSecondRunWhileOneQueued(t *testing.T) {
-	e := newEnv(t)
-	e.r.Enqueue(runner.Spec{Kind: "collect"}) //nolint:errcheck
-	active1 := e.r.Active()
-	e.mutate(t, "POST", "/api/collect", map[string]any{"force": true})
-	if len(e.r.Active()) > len(active1) {
-		t.Error("second run was enqueued while first is queued/running")
-	}
-}
-
 func TestPostCollectOfflineBlocksAutomatic(t *testing.T) {
-	database := openDB(t)
-	dir := t.TempDir()
-	store, _ := config.Open(filepath.Join(dir, "sifty.yaml"))
-	fm := fetchtest.NewMap()
-	now := func() time.Time { return base }
-	r := runner.New(database, map[string]int{"net": 4}, now, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	cat := catalog.New(database, now)
-	col := collect.New(store, cat, r, fm, database, true, now, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	col.Register()
-	h := server.New(server.Options{Version: "test", Port: 19999,
-		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
-		Status: col.StatusFunc(),
-	}, func(mux *http.ServeMux) { col.RegisterRoutes(mux) })
-	srv := httptest.NewServer(h)
-	defer srv.Close()
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go r.Start(ctx) //nolint:errcheck
-
-	do := func(body map[string]any) int {
-		b, _ := json.Marshal(body)
-		req, _ := http.NewRequest("POST", srv.URL+"/api/collect", bytes.NewReader(b))
-		req.Host = "127.0.0.1:19999"
-		req.Header.Set("Content-Type", "application/json")
-		resp, err := srv.Client().Do(req)
-		if err != nil {
-			return 0
-		}
-		resp.Body.Close()
-		return resp.StatusCode
+	e := newEnvClock(t, func() time.Time { return base }, true)
+	e.mutate(t, "POST", "/api/collect", map[string]any{"force": false})
+	if len(e.r.Active()) != 0 {
+		t.Error("force=false should not enqueue when offline")
 	}
-
-	do(map[string]any{"force": false})
-	if len(r.Active()) != 0 {
-		t.Error("force=false should not enqueue when blocked")
-	}
-	do(map[string]any{"force": true})
-	waitJob(t, r) // job completes instantly (no sources); waitJob fails on timeout
+	e.mutate(t, "POST", "/api/collect", map[string]any{"force": true})
+	waitJob(t, e.r) // job completes instantly (no sources)
 }
 
 // --- /api/sources endpoints --------------------------------------------------
@@ -481,7 +424,7 @@ func TestAddSourceValidationMessages(t *testing.T) {
 	check(map[string]any{"name": strings.Repeat("x", 101), "url": "https://other.example.com/jobs.xml"}, "The name is at most 100 characters.")
 }
 
-func TestToggleAndRemoveSourceWithUnknownKeyReturn404(t *testing.T) {
+func TestSourceCRUD(t *testing.T) {
 	e := newEnv(t)
 	for _, method := range []string{"PATCH", "DELETE"} {
 		_, status := e.mutate(t, method, "/api/sources", map[string]any{"key": "https://no-such.example.com"})
@@ -489,30 +432,18 @@ func TestToggleAndRemoveSourceWithUnknownKeyReturn404(t *testing.T) {
 			t.Errorf("%s unknown key: got %d, want 404", method, status)
 		}
 	}
-}
-
-func TestToggleSourceEnabled(t *testing.T) {
-	e := newEnv(t)
 	body, _ := e.mutate(t, "POST", "/api/sources", map[string]any{"url": "https://feeds.example.com/jobs.xml"})
 	key := body["sources"].([]any)[0].(map[string]any)["key"].(string)
-
 	body, status := e.mutate(t, "PATCH", "/api/sources", map[string]any{"key": key, "enabled": false})
 	if status != 200 {
-		t.Fatalf("status: %d", status)
+		t.Fatalf("PATCH status: %d", status)
 	}
 	if body["sources"].([]any)[0].(map[string]any)["enabled"] != false {
 		t.Error("source should be disabled after PATCH")
 	}
-}
-
-func TestRemoveSourceDeletesFromList(t *testing.T) {
-	e := newEnv(t)
-	body, _ := e.mutate(t, "POST", "/api/sources", map[string]any{"url": "https://feeds.example.com/jobs.xml"})
-	key := body["sources"].([]any)[0].(map[string]any)["key"].(string)
-
-	body, status := e.mutate(t, "DELETE", "/api/sources", map[string]any{"key": key})
+	body, status = e.mutate(t, "DELETE", "/api/sources", map[string]any{"key": key})
 	if status != 200 {
-		t.Fatalf("status: %d", status)
+		t.Fatalf("DELETE status: %d", status)
 	}
 	if len(body["sources"].([]any)) != 0 {
 		t.Error("source should be gone after DELETE")
@@ -553,14 +484,10 @@ func TestStatusCatalogueCounterIncreasesAfterRun(t *testing.T) {
 	e := newEnv(t)
 	e.fm.Set("https://feeds.example.com/jobs.xml",
 		fetchtest.MapEntry{Response: fetch.Response{Status: 200, ContentType: "application/xml", Body: []byte(feedXML)}})
-	e.store.Update(func(c *config.Config) error { //nolint:errcheck
-		c.Sources = []config.SourceConfig{{URL: "https://feeds.example.com/jobs.xml", Enabled: true}}
-		return nil
-	})
+	addSource(t, e, "https://feeds.example.com/jobs.xml")
 
 	before := e.get(t, "/api/status")["catalogue"].(float64)
-	e.r.Enqueue(runner.Spec{Kind: "collect"}) //nolint:errcheck
-	waitJob(t, e.r)
+	runCollect(t, e)
 	after := e.get(t, "/api/status")["catalogue"].(float64)
 	if after <= before {
 		t.Errorf("catalogue should increase after run; before=%v after=%v", before, after)
@@ -604,18 +531,9 @@ func TestRunWritesSourceRunRowsForEachOutcome(t *testing.T) {
 	e.fm.Set("https://noparse.example.com/jobs",
 		fetchtest.MapEntry{Response: fetch.Response{Status: 200, ContentType: "text/html", Body: []byte(badPageHTML)}})
 
-	e.store.Update(func(c *config.Config) error { //nolint:errcheck
-		c.Sources = []config.SourceConfig{
-			{URL: "https://boards.greenhouse.io/acme", Enabled: true},
-			{URL: "https://feeds.example.com/empty.xml", Enabled: true},
-			{URL: "https://blocked.example.com/jobs", Enabled: true},
-			{URL: "https://noparse.example.com/jobs", Enabled: true},
-		}
-		return nil
-	})
+	setSources(t, e, "https://boards.greenhouse.io/acme", "https://feeds.example.com/empty.xml", "https://blocked.example.com/jobs", "https://noparse.example.com/jobs")
 
-	e.r.Enqueue(runner.Spec{Kind: "collect"}) //nolint:errcheck
-	waitJob(t, e.r)
+	runCollect(t, e)
 
 	srcs := sourcesOf(e.get(t, "/api/sources"))
 	if len(srcs) != 4 {
@@ -666,51 +584,52 @@ func TestRunWritesSourceRunRowsForEachOutcome(t *testing.T) {
 	}
 }
 
-func TestSourceStatusErrorWithAndWithoutLastSuccess(t *testing.T) {
-	e := newEnv(t)
-	e.fm.Set("https://feeds.example.com/jobs.xml",
-		fetchtest.MapEntry{Response: fetch.Response{Status: 200, ContentType: "application/xml", Body: []byte(feedXML)}})
-	e.store.Update(func(c *config.Config) error { //nolint:errcheck
-		c.Sources = []config.SourceConfig{{URL: "https://feeds.example.com/jobs.xml", Enabled: true}}
-		return nil
-	})
-
-	// First run: success
-	e.r.Enqueue(runner.Spec{Kind: "collect"}) //nolint:errcheck
-	waitJob(t, e.r)
-	srcs := sourcesOf(e.get(t, "/api/sources"))
-	text := srcs[0]["status"].(map[string]any)["text"].(string)
-	if !strings.HasPrefix(text, "Last success") {
-		t.Errorf("after success: text = %q, want prefix 'Last success'", text)
+func TestSourceStatusErrorText(t *testing.T) {
+	cases := []struct {
+		name         string
+		firstOK      bool   // run a successful fetch first
+		fetchErr     error  // error to inject on the (second) run
+		wantContains string // substring the status text must contain
+		wantHasPrior bool   // text must also contain "last success"
+	}{
+		{
+			name:         "not found without prior success",
+			fetchErr:     fetch.ErrNotFound,
+			wantContains: "Not found",
+		},
+		{
+			name:         "blocked after prior success",
+			firstOK:      true,
+			fetchErr:     fetch.ErrBlocked,
+			wantContains: "Blocked by site",
+			wantHasPrior: true,
+		},
 	}
-
-	// Second run: failure (no prior success → error only; but there IS a prior success here)
-	e.fm.Set("https://feeds.example.com/jobs.xml", fetchtest.MapEntry{Err: fetch.ErrBlocked})
-	e.r.Enqueue(runner.Spec{Kind: "collect"}) //nolint:errcheck
-	waitJob(t, e.r)
-	srcs = sourcesOf(e.get(t, "/api/sources"))
-	text = srcs[0]["status"].(map[string]any)["text"].(string)
-	if !strings.Contains(text, "Blocked by site") {
-		t.Errorf("after failure with prior success: text = %q, want 'Blocked by site'", text)
-	}
-	if !strings.Contains(text, "last success") {
-		t.Errorf("after failure with prior success: text = %q, want 'last success'", text)
-	}
-}
-
-func TestSourceStatusErrorWithoutPriorSuccess(t *testing.T) {
-	e := newEnv(t)
-	e.fm.Set("https://feeds.example.com/jobs.xml", fetchtest.MapEntry{Err: fetch.ErrNotFound})
-	e.store.Update(func(c *config.Config) error { //nolint:errcheck
-		c.Sources = []config.SourceConfig{{URL: "https://feeds.example.com/jobs.xml", Enabled: true}}
-		return nil
-	})
-	e.r.Enqueue(runner.Spec{Kind: "collect"}) //nolint:errcheck
-	waitJob(t, e.r)
-	srcs := sourcesOf(e.get(t, "/api/sources"))
-	text := srcs[0]["status"].(map[string]any)["text"].(string)
-	if text != "Not found" {
-		t.Errorf("error without prior success: text = %q, want 'Not found'", text)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newEnv(t)
+			addSource(t, e, "https://feeds.example.com/jobs.xml")
+			if tc.firstOK {
+				e.fm.Set("https://feeds.example.com/jobs.xml",
+					fetchtest.MapEntry{Response: fetch.Response{Status: 200, ContentType: "application/xml", Body: []byte(feedXML)}})
+				runCollect(t, e)
+				srcs := sourcesOf(e.get(t, "/api/sources"))
+				text := srcs[0]["status"].(map[string]any)["text"].(string)
+				if !strings.HasPrefix(text, "Last success") {
+					t.Fatalf("after success: text = %q, want prefix 'Last success'", text)
+				}
+			}
+			e.fm.Set("https://feeds.example.com/jobs.xml", fetchtest.MapEntry{Err: tc.fetchErr})
+			runCollect(t, e)
+			srcs := sourcesOf(e.get(t, "/api/sources"))
+			text := srcs[0]["status"].(map[string]any)["text"].(string)
+			if !strings.Contains(text, tc.wantContains) {
+				t.Errorf("text = %q, want to contain %q", text, tc.wantContains)
+			}
+			if tc.wantHasPrior && !strings.Contains(text, "last success") {
+				t.Errorf("text = %q, want to contain 'last success'", text)
+			}
+		})
 	}
 }
 
@@ -719,17 +638,13 @@ func TestSourceStatusNoVacanciesIn30Days(t *testing.T) {
 	nowTime := base
 	now := func() time.Time { mu.Lock(); defer mu.Unlock(); return nowTime }
 
-	e := newEnvClock(t, now)
+	e := newEnvClock(t, now, false)
 	e.fm.Set("https://feeds.example.com/empty.xml",
 		fetchtest.MapEntry{Response: fetch.Response{Status: 200, ContentType: "application/xml", Body: []byte(emptyFeedXML)}})
-	e.store.Update(func(c *config.Config) error { //nolint:errcheck
-		c.Sources = []config.SourceConfig{{URL: "https://feeds.example.com/empty.xml", Enabled: true}}
-		return nil
-	})
+	addSource(t, e, "https://feeds.example.com/empty.xml")
 
 	// First run at base: source is empty
-	e.r.Enqueue(runner.Spec{Kind: "collect"}) //nolint:errcheck
-	waitJob(t, e.r)
+	runCollect(t, e)
 
 	// Advance clock past 30 days
 	mu.Lock()
@@ -737,8 +652,7 @@ func TestSourceStatusNoVacanciesIn30Days(t *testing.T) {
 	mu.Unlock()
 
 	// Second run: still empty
-	e.r.Enqueue(runner.Spec{Kind: "collect"}) //nolint:errcheck
-	waitJob(t, e.r)
+	runCollect(t, e)
 
 	srcs := sourcesOf(e.get(t, "/api/sources"))
 	text := srcs[0]["status"].(map[string]any)["text"].(string)
@@ -747,66 +661,51 @@ func TestSourceStatusNoVacanciesIn30Days(t *testing.T) {
 	}
 }
 
-func TestAttentionAfterThreeFailingRunsNotAfterTwo(t *testing.T) {
-	e := newEnv(t)
-	e.fm.Set("https://feeds.example.com/jobs.xml", fetchtest.MapEntry{Err: fetch.ErrBlocked})
-	e.store.Update(func(c *config.Config) error { //nolint:errcheck
-		c.Sources = []config.SourceConfig{{URL: "https://feeds.example.com/jobs.xml", Enabled: true}}
-		return nil
-	})
-
-	for run := 1; run <= 3; run++ {
-		e.r.Enqueue(runner.Spec{Kind: "collect"}) //nolint:errcheck
-		waitJob(t, e.r)
-		srcs := sourcesOf(e.get(t, "/api/sources"))
-		got := srcs[0]["status"].(map[string]any)["attention"].(bool)
-		want := run >= 3
-		if got != want {
-			t.Errorf("after %d runs: attention = %v, want %v", run, got, want)
+func TestAttentionThresholdAndCount(t *testing.T) {
+	t.Run("triggers after three failures not two", func(t *testing.T) {
+		e := newEnv(t)
+		e.fm.Set("https://feeds.example.com/jobs.xml", fetchtest.MapEntry{Err: fetch.ErrBlocked})
+		addSource(t, e, "https://feeds.example.com/jobs.xml")
+		for run := 1; run <= 3; run++ {
+			runCollect(t, e)
+			srcs := sourcesOf(e.get(t, "/api/sources"))
+			got := srcs[0]["status"].(map[string]any)["attention"].(bool)
+			want := run >= 3
+			if got != want {
+				t.Errorf("after %d runs: attention = %v, want %v", run, got, want)
+			}
 		}
-	}
-}
+	})
 
-func TestStatusAttentionCountAndSingular(t *testing.T) {
-	e := newEnv(t)
-	e.fm.Set("https://feeds.example.com/a.xml", fetchtest.MapEntry{Err: fetch.ErrBlocked})
-	e.fm.Set("https://feeds2.example.com/b.xml", fetchtest.MapEntry{Err: fetch.ErrBlocked})
-	e.store.Update(func(c *config.Config) error { //nolint:errcheck
-		c.Sources = []config.SourceConfig{
-			{URL: "https://feeds.example.com/a.xml", Enabled: true},
-			{URL: "https://feeds2.example.com/b.xml", Enabled: true},
+	t.Run("count and text with two sources, singular after disable", func(t *testing.T) {
+		e := newEnv(t)
+		e.fm.Set("https://feeds.example.com/a.xml", fetchtest.MapEntry{Err: fetch.ErrBlocked})
+		e.fm.Set("https://feeds2.example.com/b.xml", fetchtest.MapEntry{Err: fetch.ErrBlocked})
+		setSources(t, e, "https://feeds.example.com/a.xml", "https://feeds2.example.com/b.xml")
+		for i := 0; i < 3; i++ {
+			runCollect(t, e)
 		}
-		return nil
+		st := e.get(t, "/api/status")
+		att := st["attention"].(map[string]any)
+		if att["count"].(float64) != 2 {
+			t.Errorf("attention.count: got %v, want 2", att["count"])
+		}
+		if att["text"] != "2 sources need attention" {
+			t.Errorf("attention.text: got %v, want '2 sources need attention'", att["text"])
+		}
+		e.store.Update(func(c *config.Config) error { //nolint:errcheck
+			c.Sources[1].Enabled = false
+			return nil
+		})
+		st = e.get(t, "/api/status")
+		att = st["attention"].(map[string]any)
+		if att["count"].(float64) != 1 {
+			t.Errorf("after disable: attention.count: got %v, want 1", att["count"])
+		}
+		if att["text"] != "1 source needs attention" {
+			t.Errorf("after disable: attention.text: got %v", att["text"])
+		}
 	})
-
-	// Run 3 times to trigger attention on both sources
-	for i := 0; i < 3; i++ {
-		e.r.Enqueue(runner.Spec{Kind: "collect"}) //nolint:errcheck
-		waitJob(t, e.r)
-	}
-
-	st := e.get(t, "/api/status")
-	att := st["attention"].(map[string]any)
-	if att["count"].(float64) != 2 {
-		t.Errorf("attention.count: got %v, want 2", att["count"])
-	}
-	if att["text"] != "2 sources need attention" {
-		t.Errorf("attention.text: got %v, want '2 sources need attention'", att["text"])
-	}
-
-	// Disable one source; attention count must drop to 1 with singular text
-	e.store.Update(func(c *config.Config) error { //nolint:errcheck
-		c.Sources[1].Enabled = false
-		return nil
-	})
-	st = e.get(t, "/api/status")
-	att = st["attention"].(map[string]any)
-	if att["count"].(float64) != 1 {
-		t.Errorf("after disable: attention.count: got %v, want 1", att["count"])
-	}
-	if att["text"] != "1 source needs attention" {
-		t.Errorf("after disable: attention.text: got %v", att["text"])
-	}
 }
 
 // --- Detail fetch behaviour --------------------------------------------------
@@ -821,8 +720,7 @@ func TestRunDetailFetchesTextForNewPostingWithoutText(t *testing.T) {
 	e.fm.Set("https://generic.example.com/jobs", fetchtest.MapEntry{Response: fetch.Response{Status: 200, ContentType: "text/html", Body: htmlListing(vacURL)}})
 	e.fm.Set(vacURL, fetchtest.MapEntry{Response: fetch.Response{Status: 200, ContentType: "text/html", Body: []byte(`<html><head><script type="application/ld+json">{"@type":"JobPosting","title":"Senior Engineer","hiringOrganization":{"name":"Acme"},"url":"https://generic.example.com/jobs/1","description":"<p>Full text.</p>"}</script></head></html>`)}})
 	addSource(t, e, "https://generic.example.com/jobs")
-	e.r.Enqueue(runner.Spec{Kind: "collect"}) //nolint:errcheck
-	waitJob(t, e.r)
+	runCollect(t, e)
 	if n := len(e.fm.Requests()); n != 2 {
 		t.Errorf("requests: got %d, want 2 (listing+detail)", n)
 	}
@@ -838,8 +736,7 @@ func TestRunDetailSkipsPostingWithText(t *testing.T) {
 	e.fm.Set("https://boards-api.greenhouse.io/v1/boards/acme/jobs?content=true",
 		fetchtest.MapEntry{Response: fetch.Response{Status: 200, ContentType: "application/json", Body: []byte(ghBoardResponse)}})
 	addSource(t, e, "https://boards.greenhouse.io/acme")
-	e.r.Enqueue(runner.Spec{Kind: "collect"}) //nolint:errcheck
-	waitJob(t, e.r)
+	runCollect(t, e)
 	if n := len(e.fm.Requests()); n != 1 {
 		t.Errorf("requests: got %d, want 1 (listing only, no detail)", n)
 	}
@@ -848,15 +745,14 @@ func TestRunDetailSkipsPostingWithText(t *testing.T) {
 func TestRunDetailSkipsWithin7DaysAndRetriesAfter(t *testing.T) {
 	var mu sync.Mutex
 	nowTime := base
-	e := newEnvClock(t, func() time.Time { mu.Lock(); defer mu.Unlock(); return nowTime })
+	e := newEnvClock(t, func() time.Time { mu.Lock(); defer mu.Unlock(); return nowTime }, false)
 	const listURL, vacURL = "https://generic.example.com/jobs", "https://generic.example.com/jobs/2"
 	e.fm.Set(listURL, fetchtest.MapEntry{Response: fetch.Response{Status: 200, ContentType: "text/html", Body: htmlListing(vacURL)}})
 	e.fm.Set(vacURL, fetchtest.MapEntry{Err: fetch.ErrNotFound})
 	addSource(t, e, listURL)
 	run := func(want int) {
 		t.Helper()
-		e.r.Enqueue(runner.Spec{Kind: "collect"}) //nolint:errcheck
-		waitJob(t, e.r)
+		runCollect(t, e)
 		if n := len(e.fm.Requests()); n != want {
 			t.Errorf("requests: got %d, want %d", n, want)
 		}
@@ -878,8 +774,7 @@ func TestRunRemovedAddressGetsNoRequest(t *testing.T) {
 	e.fm.Set("https://generic.example.com/jobs", fetchtest.MapEntry{Response: fetch.Response{Status: 200, ContentType: "text/html", Body: htmlListing(vacURL)}})
 	e.db.Exec(`INSERT INTO tombstone (key) VALUES ('url:` + vacURL + `')`) //nolint:errcheck
 	addSource(t, e, "https://generic.example.com/jobs")
-	e.r.Enqueue(runner.Spec{Kind: "collect"}) //nolint:errcheck
-	waitJob(t, e.r)
+	runCollect(t, e)
 	if n := len(e.fm.Requests()); n != 1 {
 		t.Errorf("requests: got %d, want 1 (listing only)", n)
 	}
@@ -891,8 +786,7 @@ func TestRunBlockedDetailSavesPostingAsBlocked(t *testing.T) {
 	e.fm.Set("https://generic.example.com/jobs", fetchtest.MapEntry{Response: fetch.Response{Status: 200, ContentType: "text/html", Body: htmlListing(vacURL)}})
 	e.fm.Set(vacURL, fetchtest.MapEntry{Err: fetch.ErrBlocked})
 	addSource(t, e, "https://generic.example.com/jobs")
-	e.r.Enqueue(runner.Spec{Kind: "collect"}) //nolint:errcheck
-	waitJob(t, e.r)
+	runCollect(t, e)
 	var state, reqAt string
 	e.db.QueryRow(`SELECT text_state, detail_requested_at FROM vacancy WHERE url = ?`, vacURL).Scan(&state, &reqAt) //nolint:errcheck
 	if state != "blocked" || reqAt != "" {
@@ -904,13 +798,9 @@ func TestSourceRunRowDeletedWithJob(t *testing.T) {
 	e := newEnv(t)
 	e.fm.Set("https://feeds.example.com/jobs.xml",
 		fetchtest.MapEntry{Response: fetch.Response{Status: 200, ContentType: "application/xml", Body: []byte(feedXML)}})
-	e.store.Update(func(c *config.Config) error { //nolint:errcheck
-		c.Sources = []config.SourceConfig{{URL: "https://feeds.example.com/jobs.xml", Enabled: true}}
-		return nil
-	})
+	addSource(t, e, "https://feeds.example.com/jobs.xml")
 
-	e.r.Enqueue(runner.Spec{Kind: "collect"}) //nolint:errcheck
-	j := waitJob(t, e.r)
+	j := runCollect(t, e)
 
 	// Confirm source_run row was written
 	var cnt int
@@ -948,8 +838,7 @@ func TestCollect_ExcludedBeforeDetail(t *testing.T) {
 	// Word exclusion for "engineer" — matches "Engineer" in the greenhouse board.
 	e.db.Exec(`INSERT INTO exclusion (kind,value,norm,profile_id,created) VALUES ('word','engineer','engineer',0,datetime('now'))`) //nolint:errcheck
 
-	e.r.Enqueue(runner.Spec{Kind: "collect"}) //nolint:errcheck
-	waitJob(t, e.r)
+	runCollect(t, e)
 
 	// Both postings are saved; "Engineer" is excluded from view but still upserted.
 	var cnt int
@@ -975,8 +864,7 @@ func TestCollect_ExcludedAfterDetail(t *testing.T) {
 	// Company exclusion for "ExclCo" — not visible in the listing, only after Detail.
 	e.db.Exec(`INSERT INTO exclusion (kind,value,norm,profile_id,created) VALUES ('company','ExclCo','exclco',0,datetime('now'))`) //nolint:errcheck
 
-	e.r.Enqueue(runner.Spec{Kind: "collect"}) //nolint:errcheck
-	waitJob(t, e.r)
+	runCollect(t, e)
 
 	// The posting is saved with detail text; it is excluded from view but still upserted.
 	var cnt int

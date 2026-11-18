@@ -51,7 +51,7 @@ type progressJSON struct {
 	Current string `json:"current,omitempty"`
 }
 
-// Job is the record callers read (via Last, Active, Event) and the handle
+// Job is the record callers read (via Last, Active) and the handle
 // passed to Kind.Run. The r field is set only on a job passed to Run.
 type Job struct {
 	ID        int64
@@ -73,7 +73,7 @@ type Job struct {
 }
 
 // Progress updates the job's progress. Writes to the database at most once
-// per second; always notifies subscribers.
+// per second.
 func (j *Job) Progress(done, total int, current string) {
 	j.r.writeProgress(j, done, total, current)
 }
@@ -84,11 +84,6 @@ func (j *Job) Progress(done, total int, current string) {
 // returned and release is a no-op.
 func (j *Job) Lane(ctx context.Context, name string) (func(), error) {
 	return j.r.acquireLane(ctx, name)
-}
-
-// Event is sent to subscribers on every state or progress change.
-type Event struct {
-	Job Job
 }
 
 // permanentError wraps an error to signal that the job must not be retried.
@@ -148,7 +143,6 @@ type Runner struct {
 	lanes map[string]*lane
 
 	mu     sync.Mutex
-	subs   []chan Event
 	active map[int64]*jobState // jobs currently executing
 
 	wake chan struct{}
@@ -232,33 +226,6 @@ func (r *Runner) Enqueue(s Spec) (int64, error) {
 	}
 	r.signal()
 	return id, nil
-}
-
-// Subscribe returns a channel that receives an Event for every state or
-// progress change, and a function to cancel the subscription. The channel
-// is buffered; slow readers may miss events (they are dropped, not blocked).
-// Calling the returned function more than once is safe.
-func (r *Runner) Subscribe() (<-chan Event, func()) {
-	ch := make(chan Event, 64)
-	r.mu.Lock()
-	r.subs = append(r.subs, ch)
-	r.mu.Unlock()
-
-	var once sync.Once
-	unsub := func() {
-		once.Do(func() {
-			r.mu.Lock()
-			for i, s := range r.subs {
-				if s == ch {
-					r.subs = append(r.subs[:i], r.subs[i+1:]...)
-					break
-				}
-			}
-			r.mu.Unlock()
-			close(ch)
-		})
-	}
-	return ch, unsub
 }
 
 // Last returns the most recently created job of the given kind.
@@ -382,7 +349,6 @@ func (r *Runner) markRunning(j *Job) error {
 	}
 	j.State = stateRunning
 	j.Updated = r.now()
-	r.publish(Event{Job: *j})
 	return nil
 }
 
@@ -447,7 +413,6 @@ func (r *Runner) finishJob(ctx context.Context, j *Job, runErr error) {
 		r.log.Error("runner: failed to update job state", "id", j.ID, "state", j.State, "error", dbErr)
 	}
 
-	r.publish(Event{Job: *j})
 	r.signal()
 }
 
@@ -469,7 +434,6 @@ func (r *Runner) writeProgress(j *Job, done, total int, current string) {
 	if writeDB {
 		state.progAt = now
 	}
-	snap := *j
 	state.mu.Unlock()
 
 	if writeDB {
@@ -481,7 +445,6 @@ func (r *Runner) writeProgress(j *Job, done, total int, current string) {
 			r.log.Warn("runner: failed to write job progress", "id", j.ID, "error", err)
 		}
 	}
-	r.publish(Event{Job: snap})
 }
 
 func (r *Runner) acquireLane(ctx context.Context, name string) (func(), error) {
@@ -495,17 +458,6 @@ func (r *Runner) acquireLane(ctx context.Context, name string) (func(), error) {
 		return func() {}, err
 	}
 	return rel, nil
-}
-
-func (r *Runner) publish(e Event) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	for _, ch := range r.subs {
-		select {
-		case ch <- e:
-		default:
-		}
-	}
 }
 
 func (r *Runner) deleteOldJobs() {

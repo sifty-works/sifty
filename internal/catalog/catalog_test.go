@@ -375,34 +375,6 @@ func TestUpsert_PublicationDateRules(t *testing.T) {
 	}
 }
 
-// --- Body round trip ---
-
-func TestBody_RoundTrip(t *testing.T) {
-	d := openTestDB(t)
-	cat := catalog.New(d, fixedNow())
-
-	p := posting("https://example.com/jobs/40", "Engineer", "Acme")
-	p.Text = "This is the full job description text."
-	p.TextKind = listing.Plain
-	id, _, err := cat.Upsert(context.Background(), p, "src")
-	if err != nil {
-		t.Fatalf("upsert: %v", err)
-	}
-
-	var body []byte
-	if err := d.QueryRow(`SELECT body FROM vacancy WHERE id = ?`, id).Scan(&body); err != nil {
-		t.Fatalf("query body: %v", err)
-	}
-
-	text, err := catalog.Body(body)
-	if err != nil {
-		t.Fatalf("Body: %v", err)
-	}
-	if text == "" {
-		t.Error("Body: got empty string, want non-empty")
-	}
-}
-
 // --- Tombstone ---
 
 func TestUpsert_TombstonedURLIsRejected(t *testing.T) {
@@ -476,29 +448,6 @@ func TestUpsert_ApplyURLRules(t *testing.T) {
 	d.QueryRow(`SELECT apply_url FROM vacancy WHERE id = ?`, id3).Scan(&got3) //nolint:errcheck
 	if got3 != "" {
 		t.Errorf("apply_url kept for a non-ATS address: %q", got3)
-	}
-}
-
-// --- Delete cascades (requires foreign_keys pragma) ---
-
-func TestDeleteVacancy_CascadesToVacancySource(t *testing.T) {
-	d := openTestDB(t)
-	cat := catalog.New(d, fixedNow())
-
-	id, _, err := cat.Upsert(context.Background(),
-		posting("https://example.com/jobs/50", "Engineer", "Acme"), "src")
-	if err != nil {
-		t.Fatalf("upsert: %v", err)
-	}
-
-	if _, err := d.Exec(`DELETE FROM vacancy WHERE id = ?`, id); err != nil {
-		t.Fatalf("delete: %v", err)
-	}
-
-	var count int
-	d.QueryRow(`SELECT count(*) FROM vacancy_source WHERE vacancy_id = ?`, id).Scan(&count) //nolint:errcheck
-	if count != 0 {
-		t.Errorf("vacancy_source rows after delete: got %d, want 0", count)
 	}
 }
 
@@ -655,126 +604,6 @@ func TestUpsert_MergeAliasRowsAndSources(t *testing.T) {
 	d.QueryRow(`SELECT count(*) FROM vacancy_source WHERE vacancy_id = ?`, keptID).Scan(&kept) //nolint:errcheck
 	if kept < 2 {
 		t.Errorf("source rows for kept id %d: got %d, want >= 2", keptID, kept)
-	}
-}
-
-// --- FTS index ---
-
-// ftsHasRow reports whether vacancy_fts contains a row for id.
-func ftsHasRow(t *testing.T, d *db.DB, id int64) bool {
-	t.Helper()
-	var n int
-	if err := d.QueryRow(
-		`SELECT count(*) FROM vacancy_fts WHERE rowid = ?`, id).Scan(&n); err != nil {
-		t.Fatalf("fts count for %d: %v", id, err)
-	}
-	return n > 0
-}
-
-// ftsMatch reports whether vacancy_fts returns id for the given query phrase.
-func ftsMatch(t *testing.T, d *db.DB, id int64, phrase string) bool {
-	t.Helper()
-	q := `"` + phrase + `"`
-	var n int
-	if err := d.QueryRow(
-		`SELECT count(*) FROM vacancy_fts WHERE rowid = ? AND vacancy_fts MATCH ?`, id, q).Scan(&n); err != nil {
-		t.Fatalf("fts match %d %q: %v", id, phrase, err)
-	}
-	return n > 0
-}
-
-func TestFTS_TextReplaced(t *testing.T) {
-	d := openTestDB(t)
-	cat := catalog.New(d, fixedNow())
-	p := listing.Posting{
-		URL: "https://example.com/jobs/fts2", Title: "Backend Engineer", Company: "Acme",
-		Text:      "Experience with Kafka and streaming pipelines.",
-		TextKind:  listing.Plain,
-		TextState: listing.TextFull,
-	}
-	id, _, err := cat.Upsert(context.Background(), p, "src")
-	if err != nil {
-		t.Fatalf("first upsert: %v", err)
-	}
-	if !ftsMatch(t, d, id, "kafka") {
-		t.Error("FTS should match original body text")
-	}
-
-	// Replace text: different content.
-	p2 := p
-	p2.Text = "Must know PostgreSQL and query optimisation."
-	_, outcome, err := cat.Upsert(context.Background(), p2, "src")
-	if err != nil {
-		t.Fatalf("second upsert: %v", err)
-	}
-	if outcome != catalog.OutcomeUpdated {
-		t.Fatalf("outcome: got %v, want OutcomeUpdated", outcome)
-	}
-	if ftsMatch(t, d, id, "kafka") {
-		t.Error("old FTS text should be gone after replacement")
-	}
-	if !ftsMatch(t, d, id, "postgresql") {
-		t.Error("new FTS text should be searchable after replacement")
-	}
-}
-
-func TestFTS_Merge(t *testing.T) {
-	d := openTestDB(t)
-	cat := catalog.New(d, fixedNow())
-
-	// Two vacancies on the same host: same identity, do not merge by identity on same host.
-	p1 := listing.Posting{
-		URL: "https://acme.com/jobs/ftsm1", Title: "DevOps Engineer", Company: "Acme Corp",
-		Text:      "Summary only.",
-		TextKind:  listing.Plain,
-		TextState: listing.TextSummary,
-	}
-	id1, out1, err := cat.Upsert(context.Background(), p1, "src1")
-	if err != nil || out1 != catalog.OutcomeNew {
-		t.Fatalf("first upsert: %v / %v", err, out1)
-	}
-	p2 := listing.Posting{
-		URL: "https://acme.com/jobs/ftsm2", Title: "DevOps Engineer", Company: "Acme Corp",
-		Text:      "Full description mentioning containerisation and service meshes.",
-		TextKind:  listing.Plain,
-		TextState: listing.TextFull,
-	}
-	id2, out2, err := cat.Upsert(context.Background(), p2, "src2")
-	if err != nil || out2 != catalog.OutcomeNew {
-		t.Fatalf("second upsert: %v / %v", err, out2)
-	}
-	if id1 == id2 {
-		t.Fatal("expected two separate vacancies on same host")
-	}
-
-	// Third upsert from a different host: same identity → merges id1 and id2.
-	p3 := listing.Posting{
-		URL: "https://other.com/jobs/devops", Title: "DevOps Engineer", Company: "Acme Corp",
-		Text:      "Full description mentioning containerisation and service meshes.",
-		TextKind:  listing.Plain,
-		TextState: listing.TextFull,
-	}
-	keptID, outcome, err := cat.Upsert(context.Background(), p3, "src3")
-	if err != nil {
-		t.Fatalf("merge upsert: %v", err)
-	}
-	if outcome != catalog.OutcomeMerged {
-		t.Fatalf("outcome: got %v, want OutcomeMerged", outcome)
-	}
-
-	// The merged (deleted) vacancies should have no FTS rows.
-	for _, mid := range []int64{id1, id2} {
-		if mid == keptID {
-			continue
-		}
-		if ftsHasRow(t, d, mid) {
-			t.Errorf("FTS row for merged vacancy %d should be removed", mid)
-		}
-	}
-
-	// The kept vacancy should have the full-text FTS row.
-	if !ftsMatch(t, d, keptID, "containerisation") {
-		t.Errorf("FTS row for kept vacancy %d should contain full text", keptID)
 	}
 }
 

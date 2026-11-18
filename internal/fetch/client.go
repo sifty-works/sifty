@@ -212,13 +212,12 @@ func (c *client) Get(ctx context.Context, rawURL string, opt Opt) (Response, err
 		if reqCtx.Err() != nil {
 			return Response{}, wrapErr(ErrTransient, "request timed out")
 		}
-		// Do not record back-off for permanent errors or address refusals —
-		// only for genuine transient network failures.
-		if !errors.Is(err, ErrBlocked) && !errors.Is(err, ErrNotFound) && !errors.Is(err, ErrRefused) {
+		// Do not record back-off for address refusals — only for genuine
+		// transient network failures.
+		if !errors.Is(err, ErrRefused) {
 			c.recordTransient(domain)
 		}
-		if errors.Is(err, ErrRefused) || errors.Is(err, ErrTransient) ||
-			errors.Is(err, ErrBlocked) || errors.Is(err, ErrNotFound) {
+		if errors.Is(err, ErrRefused) || errors.Is(err, ErrTransient) {
 			return Response{}, err
 		}
 		return Response{}, wrapErr(ErrTransient, "request failed: %v", err)

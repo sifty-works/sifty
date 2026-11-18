@@ -3,6 +3,7 @@ package inbox_test
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
@@ -12,22 +13,34 @@ import (
 
 	"github.com/sifty-works/sifty/internal/catalog"
 	"github.com/sifty-works/sifty/internal/db"
-	"github.com/sifty-works/sifty/internal/inbox"
 	"github.com/sifty-works/sifty/internal/listing"
 )
 
 const fixtureCount = 1200
 
-// TestListMeasure measures the 95th-percentile list time with 1,200 vacancies.
-// Run with SIFTY_MEASURE=1 to execute; otherwise the test is skipped.
+// TestListMeasure measures the 95th-percentile list time over the HTTP handler
+// with 1,200 vacancies. Run with SIFTY_MEASURE=1; otherwise the test is skipped.
 func TestListMeasure(t *testing.T) {
 	if os.Getenv("SIFTY_MEASURE") != "1" {
 		t.Skip("set SIFTY_MEASURE=1 to run")
 	}
 
 	database := buildFixtureDB(t)
-	r := inbox.NewRepoForTest(database)
-	nowFn := func() time.Time { return time.Date(2026, 11, 17, 12, 0, 0, 0, time.UTC) }
+	ts := newTestServer(t, database)
+
+	get := func(path string) {
+		t.Helper()
+		req, _ := http.NewRequest(http.MethodGet, ts.URL+path, nil)
+		req.Host = "127.0.0.1:9999"
+		resp, err := ts.Client().Do(req)
+		if err != nil {
+			t.Fatalf("GET %s: %v", path, err)
+		}
+		resp.Body.Close() //nolint:errcheck
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("GET %s: status %d", path, resp.StatusCode)
+		}
+	}
 
 	const runs = 100
 
@@ -35,30 +48,20 @@ func TestListMeasure(t *testing.T) {
 	noQTimes := make([]time.Duration, runs)
 	for i := range noQTimes {
 		start := time.Now()
-		_, _, err := inbox.ListForTest(context.Background(), r, nowFn, "")
-		if err != nil {
-			t.Fatalf("list (no query): %v", err)
-		}
+		get("/api/vacancies")
 		noQTimes[i] = time.Since(start)
 	}
 
 	// Text-only query: "xenophon2718" appears only in body text, not in title/company/tags.
-	const textQuery = "xenophon2718"
 	textTimes := make([]time.Duration, runs)
 	for i := range textTimes {
 		start := time.Now()
-		_, _, err := inbox.ListForTest(context.Background(), r, nowFn, textQuery)
-		if err != nil {
-			t.Fatalf("list (text query): %v", err)
-		}
+		get("/api/vacancies?q=xenophon2718")
 		textTimes[i] = time.Since(start)
 	}
 
-	p95NoQ := percentile95(noQTimes)
-	p95Text := percentile95(textTimes)
-
-	fmt.Printf("list p95 no-query:   %v\n", p95NoQ)
-	fmt.Printf("list p95 text-query: %v\n", p95Text)
+	fmt.Printf("list p95 no-query:   %v\n", percentile95(noQTimes))
+	fmt.Printf("list p95 text-query: %v\n", percentile95(textTimes))
 }
 
 // buildFixtureDB creates a temporary database populated with fixtureCount vacancies.

@@ -112,85 +112,33 @@ func TestPublicOnly(t *testing.T) {
 
 // --- URL validation ---
 
-func TestGet_credentials_refused(t *testing.T) {
-	f := newTestFetcherWithPolicy(t, fetch.AllowLoopback)
-	_, err := f.Get(context.Background(), "http://user:pass@example.com/", fetch.Opt{})
-	if !errors.Is(err, fetch.ErrRefused) {
-		t.Fatalf("credentials in URL: got %v, want ErrRefused", err)
-	}
-}
-
-func TestGet_unsupported_scheme_refused(t *testing.T) {
-	f := newTestFetcherWithPolicy(t, fetch.AllowLoopback)
-	_, err := f.Get(context.Background(), "ftp://example.com/", fetch.Opt{})
-	if !errors.Is(err, fetch.ErrRefused) {
-		t.Fatalf("ftp scheme: got %v, want ErrRefused", err)
-	}
-}
-
-// --- dialer control: loopback with PublicOnly policy ---
-
-func TestGet_loopback_refused_by_policy(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+func TestGet_refused_conditions(t *testing.T) {
+	loopback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, "hello")
 	}))
-	defer srv.Close()
+	defer loopback.Close()
 
-	// Use PublicOnly policy: dialer control should refuse loopback.
-	f := newTestFetcherWithPolicy(t, fetch.PublicOnly)
-	_, err := f.Get(context.Background(), srv.URL+"/", fetch.Opt{})
-	if !errors.Is(err, fetch.ErrRefused) {
-		t.Fatalf("loopback with PublicOnly: got %v, want ErrRefused", err)
+	cases := []struct {
+		name   string
+		url    string
+		policy fetch.AddressPolicy
+	}{
+		{"credentials in URL", "http://user:pass@example.com/", fetch.AllowLoopback},
+		{"unsupported scheme", "ftp://example.com/", fetch.AllowLoopback},
+		{"loopback address with PublicOnly policy", loopback.URL + "/", fetch.PublicOnly},
 	}
-}
-
-// --- redirects ---
-
-func TestGet_redirect_to_private_refused(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Redirect to a private address.
-		http.Redirect(w, r, "http://192.168.1.1/", http.StatusFound)
-	}))
-	defer srv.Close()
-
-	sl := &sleepRecorder{}
-	f := newTestFetcher(testBlocks(t), newFakeClock(), sl)
-	_, err := f.Get(context.Background(), srv.URL+"/", fetch.Opt{})
-	if !errors.Is(err, fetch.ErrRefused) {
-		t.Fatalf("redirect to private: got %v, want ErrRefused", err)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newTestFetcherWithPolicy(t, tc.policy)
+			_, err := f.Get(context.Background(), tc.url, fetch.Opt{})
+			if !errors.Is(err, fetch.ErrRefused) {
+				t.Errorf("got %v, want ErrRefused", err)
+			}
+		})
 	}
 }
 
 // --- response status codes ---
-
-func TestGet_200_is_content(t *testing.T) {
-	srv := okServer(t, "<p>hello</p>")
-	defer srv.Close()
-
-	sl := &sleepRecorder{}
-	f := newTestFetcher(testBlocks(t), newFakeClock(), sl)
-	resp, err := f.Get(context.Background(), srv.URL+"/", fetch.Opt{})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if resp.Status != 200 {
-		t.Errorf("status = %d, want 200", resp.Status)
-	}
-}
-
-func TestGet_403_is_blocked(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(403)
-	}))
-	defer srv.Close()
-
-	sl := &sleepRecorder{}
-	f := newTestFetcher(testBlocks(t), newFakeClock(), sl)
-	_, err := f.Get(context.Background(), srv.URL+"/", fetch.Opt{})
-	if !errors.Is(err, fetch.ErrBlocked) {
-		t.Fatalf("403: got %v, want ErrBlocked", err)
-	}
-}
 
 func TestGet_block_survives_restart_and_expires(t *testing.T) {
 	var calls atomic.Int32
@@ -220,77 +168,77 @@ func TestGet_block_survives_restart_and_expires(t *testing.T) {
 	}
 }
 
-func TestGet_challenge_header_is_blocked(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("cf-mitigated", "challenge")
-		fmt.Fprint(w, "verify")
-	}))
-	defer srv.Close()
-	f := newTestFetcher(testBlocks(t), newFakeClock(), &sleepRecorder{})
-	if _, err := f.Get(context.Background(), srv.URL+"/", fetch.Opt{}); !errors.Is(err, fetch.ErrBlocked) {
-		t.Errorf("cf-mitigated: challenge: got %v, want ErrBlocked", err)
+func TestGet_challenge_and_block_patterns(t *testing.T) {
+	cases := []struct {
+		name     string
+		handler  http.HandlerFunc
+		wantErr  error // nil means expect 200 content
+		wantBody string
+	}{
+		{
+			name:    "403 is blocked",
+			handler: func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(403) },
+			wantErr: fetch.ErrBlocked,
+		},
+		{
+			name: "cf-mitigated challenge header is blocked",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("cf-mitigated", "challenge")
+				fmt.Fprint(w, "verify")
+			},
+			wantErr: fetch.ErrBlocked,
+		},
+		{
+			name: "challenge-platform script on 503 is blocked",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(503)
+				fmt.Fprint(w, `<html><body><script src="/cdn-cgi/challenge-platform/x"></script></body></html>`)
+			},
+			wantErr: fetch.ErrBlocked,
+		},
+		{
+			name: "challenge-platform script on 200 is content",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				fmt.Fprint(w, `<html><body><script src="/cdn-cgi/challenge-platform/x"></script><p>jobs</p></body></html>`)
+			},
+			wantBody: "jobs",
+		},
+		{
+			name: "Just a moment title is blocked",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				fmt.Fprint(w, "<html><head><title>Just a moment...</title></head></html>")
+			},
+			wantErr: fetch.ErrBlocked,
+		},
+		{
+			name: "reCAPTCHA form on 200 is content",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				fmt.Fprint(w, `<html><body><div class="g-recaptcha">captcha</div></body></html>`)
+			},
+			wantBody: "g-recaptcha",
+		},
+		{"404 not found", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(404) }, fetch.ErrNotFound, ""},
+		{"410 not found", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(410) }, fetch.ErrNotFound, ""},
 	}
-}
-
-func TestGet_challenge_platform_on_503_is_blocked(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(503)
-		fmt.Fprint(w, `<html><body><script src="/cdn-cgi/challenge-platform/x"></script></body></html>`)
-	}))
-	defer srv.Close()
-	f := newTestFetcher(testBlocks(t), newFakeClock(), &sleepRecorder{})
-	if _, err := f.Get(context.Background(), srv.URL+"/", fetch.Opt{}); !errors.Is(err, fetch.ErrBlocked) {
-		t.Errorf("challenge-platform on 503: got %v, want ErrBlocked", err)
-	}
-}
-
-func TestGet_challenge_platform_on_200_is_content(t *testing.T) {
-	body := `<html><body><script src="/cdn-cgi/challenge-platform/x"></script><p>job listing</p></body></html>`
-	srv := okServer(t, body)
-	defer srv.Close()
-	f := newTestFetcher(testBlocks(t), newFakeClock(), &sleepRecorder{})
-	if resp, err := f.Get(context.Background(), srv.URL+"/", fetch.Opt{}); err != nil || resp.Status != 200 {
-		t.Errorf("challenge-platform on 200: err=%v status=%d, want 200 content", err, resp.Status)
-	}
-}
-
-func TestGet_just_a_moment_title_is_blocked(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, "<html><head><title>Just a moment...</title></head></html>")
-	}))
-	defer srv.Close()
-	f := newTestFetcher(testBlocks(t), newFakeClock(), &sleepRecorder{})
-	if _, err := f.Get(context.Background(), srv.URL+"/", fetch.Opt{}); !errors.Is(err, fetch.ErrBlocked) {
-		t.Errorf("'Just a moment...' title: got %v, want ErrBlocked", err)
-	}
-}
-
-func TestGet_recaptcha_form_on_200_is_content(t *testing.T) {
-	body := `<html><body><div class="g-recaptcha">captcha</div></body></html>`
-	srv := okServer(t, body)
-	defer srv.Close()
-	f := newTestFetcher(testBlocks(t), newFakeClock(), &sleepRecorder{})
-	if resp, err := f.Get(context.Background(), srv.URL+"/", fetch.Opt{}); err != nil || resp.Status != 200 {
-		t.Errorf("reCAPTCHA on 200: err=%v status=%d, want 200 content", err, resp.Status)
-	}
-}
-
-func TestGet_not_found_statuses(t *testing.T) {
-	for _, status := range []int{404, 410} {
-		status := status
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(status)
-			fmt.Fprint(w, "not found")
-		}))
-		defer srv.Close()
-		f := newTestFetcher(testBlocks(t), newFakeClock(), &sleepRecorder{})
-		resp, err := f.Get(context.Background(), srv.URL+"/", fetch.Opt{})
-		if !errors.Is(err, fetch.ErrNotFound) {
-			t.Errorf("HTTP %d: got %v, want ErrNotFound", status, err)
-		}
-		if len(resp.Body) != 0 {
-			t.Errorf("HTTP %d returned body, want empty", status)
-		}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(tc.handler)
+			defer srv.Close()
+			f := newTestFetcher(testBlocks(t), newFakeClock(), &sleepRecorder{})
+			resp, err := f.Get(context.Background(), srv.URL+"/", fetch.Opt{})
+			if tc.wantErr != nil {
+				if !errors.Is(err, tc.wantErr) {
+					t.Errorf("got %v, want %v", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil || resp.Status != 200 {
+				t.Errorf("got err=%v status=%d, want 200 content", err, resp.Status)
+			}
+			if tc.wantBody != "" && !strings.Contains(string(resp.Body), tc.wantBody) {
+				t.Errorf("body %q does not contain %q", resp.Body, tc.wantBody)
+			}
+		})
 	}
 }
 
@@ -537,86 +485,73 @@ func TestGet_user_agent(t *testing.T) {
 	}
 }
 
-// --- final redirect URL ---
+// --- redirect behaviour ---
 
-func TestGet_redirect_chain_of_six_followed(t *testing.T) {
-	final := okServer(t, "done")
-	defer final.Close()
-
-	// Build a chain of 6 redirectors, each pointing to the next.
-	var chain [6]*httptest.Server
-	for i := 5; i >= 0; i-- {
-		i := i
-		var target string
-		if i == 5 {
-			target = final.URL + "/"
-		} else {
-			target = chain[i+1].URL + "/"
-		}
-		chain[i] = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			http.Redirect(w, r, target, http.StatusFound)
+// buildRedirectChain builds a chain of n redirectors (each pointing to the next)
+// and returns the first server. The final server in the chain is final.
+func buildRedirectChain(t *testing.T, n int, final string) *httptest.Server {
+	t.Helper()
+	var first *httptest.Server
+	target := final
+	for i := 0; i < n; i++ {
+		tgt := target
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, tgt, http.StatusFound)
 		}))
-		defer chain[i].Close()
+		t.Cleanup(srv.Close)
+		target = srv.URL + "/"
+		first = srv
 	}
-
-	sl := &sleepRecorder{}
-	f := newTestFetcher(testBlocks(t), newFakeClock(), sl)
-	resp, err := f.Get(context.Background(), chain[0].URL+"/", fetch.Opt{})
-	if err != nil {
-		t.Fatalf("chain of 6: unexpected error: %v", err)
-	}
-	if string(resp.Body) != "done" {
-		t.Errorf("body = %q, want %q", resp.Body, "done")
-	}
-	if !strings.HasSuffix(resp.URL, "/") || strings.HasPrefix(resp.URL, chain[0].URL) {
-		t.Errorf("response URL %q does not look like the final server", resp.URL)
-	}
+	return first
 }
 
-func TestGet_seventh_redirect_refused(t *testing.T) {
-	final := okServer(t, "done")
-	defer final.Close()
-
-	// Build a chain of 7 redirectors. The 7th hop should be refused.
-	var chain [7]*httptest.Server
-	for i := 6; i >= 0; i-- {
-		i := i
-		var target string
-		if i == 6 {
-			target = final.URL + "/"
-		} else {
-			target = chain[i+1].URL + "/"
-		}
-		chain[i] = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			http.Redirect(w, r, target, http.StatusFound)
+func TestGet_redirect_behaviour(t *testing.T) {
+	t.Run("redirect to private address is refused", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, "http://192.168.1.1/", http.StatusFound)
 		}))
-		defer chain[i].Close()
-	}
+		defer srv.Close()
+		f := newTestFetcher(testBlocks(t), newFakeClock(), &sleepRecorder{})
+		_, err := f.Get(context.Background(), srv.URL+"/", fetch.Opt{})
+		if !errors.Is(err, fetch.ErrRefused) {
+			t.Errorf("got %v, want ErrRefused", err)
+		}
+	})
 
-	sl := &sleepRecorder{}
-	f := newTestFetcher(testBlocks(t), newFakeClock(), sl)
-	_, err := f.Get(context.Background(), chain[0].URL+"/", fetch.Opt{})
-	if !errors.Is(err, fetch.ErrTransient) {
-		t.Fatalf("7th redirect: got %v, want ErrTransient", err)
-	}
-}
+	t.Run("chain of six redirects is followed", func(t *testing.T) {
+		final := okServer(t, "done")
+		defer final.Close()
+		first := buildRedirectChain(t, 6, final.URL+"/")
+		f := newTestFetcher(testBlocks(t), newFakeClock(), &sleepRecorder{})
+		resp, err := f.Get(context.Background(), first.URL+"/", fetch.Opt{})
+		if err != nil {
+			t.Fatalf("chain of 6: unexpected error: %v", err)
+		}
+		if strings.HasPrefix(resp.URL, first.URL) {
+			t.Errorf("response URL %q should be the final server, not the first", resp.URL)
+		}
+	})
 
-func TestGet_response_url_is_final_after_redirect(t *testing.T) {
-	target := okServer(t, "hi")
-	defer target.Close()
+	t.Run("seventh redirect is refused", func(t *testing.T) {
+		first := buildRedirectChain(t, 7, "http://nowhere.test/")
+		f := newTestFetcher(testBlocks(t), newFakeClock(), &sleepRecorder{})
+		_, err := f.Get(context.Background(), first.URL+"/", fetch.Opt{})
+		if !errors.Is(err, fetch.ErrTransient) {
+			t.Errorf("got %v, want ErrTransient", err)
+		}
+	})
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, target.URL+"/landing", http.StatusMovedPermanently)
-	}))
-	defer srv.Close()
-
-	sl := &sleepRecorder{}
-	f := newTestFetcher(testBlocks(t), newFakeClock(), sl)
-	resp, err := f.Get(context.Background(), srv.URL+"/", fetch.Opt{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.HasSuffix(resp.URL, "/landing") {
-		t.Errorf("URL = %q, want suffix /landing", resp.URL)
-	}
+	t.Run("response URL is final destination after redirect", func(t *testing.T) {
+		target := okServer(t, "hi")
+		defer target.Close()
+		first := buildRedirectChain(t, 1, target.URL+"/landing")
+		f := newTestFetcher(testBlocks(t), newFakeClock(), &sleepRecorder{})
+		resp, err := f.Get(context.Background(), first.URL+"/", fetch.Opt{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.HasSuffix(resp.URL, "/landing") {
+			t.Errorf("URL = %q, want suffix /landing", resp.URL)
+		}
+	})
 }

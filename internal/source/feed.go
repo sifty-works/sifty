@@ -2,30 +2,11 @@ package source
 
 import (
 	"bytes"
-	"context"
 	"encoding/xml"
-	"net/url"
 	"strings"
 
-	"github.com/sifty-works/sifty/internal/fetch"
 	"github.com/sifty-works/sifty/internal/listing"
 )
-
-type feedSource struct{}
-
-func (s *feedSource) Match(_ *url.URL) bool { return true }
-
-func (s *feedSource) List(ctx context.Context, f fetch.Fetcher, cfg SiteConfig) ([]listing.Posting, error) {
-	resp, err := f.Get(ctx, cfg.URL, fetch.Opt{})
-	if err != nil {
-		return nil, err
-	}
-	base := resp.URL
-	if base == "" {
-		base = cfg.URL
-	}
-	return parseFeedXML(resp.Body, base)
-}
 
 // parseFeedXML parses RSS or Atom XML and returns postings.
 // Returns ErrNothingRecognised when the content is not RSS or Atom.

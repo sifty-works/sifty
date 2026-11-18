@@ -104,7 +104,6 @@ type Answerer   interface { Answer(ctx context.Context, v Vacancy, f Form, have 
 type Spec struct { Kind, Subject string; Priority int; Params json.RawMessage }
 type Runner interface {
     Enqueue(Spec) (int64, error)          // deduplicated by (kind, subject) among queued and running
-    Subscribe() <-chan Event              // state, progress, current item
 }
 ```
 

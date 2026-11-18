@@ -24,18 +24,6 @@ func TestOpenInvalidFileReturnsError(t *testing.T) {
 	}
 }
 
-func TestUnsubscribeClosesChannel(t *testing.T) {
-	s, _ := config.Open(filepath.Join(t.TempDir(), "nosuchfile.yaml"))
-	ch, unsub := s.Subscribe()
-	unsub()
-
-	// Channel should be closed after unsubscribe.
-	_, ok := <-ch
-	if ok {
-		t.Error("channel should be closed after unsubscribe")
-	}
-}
-
 // --- Update ------------------------------------------------------------------
 
 func openStore(t *testing.T) (*config.Store, string) {
@@ -274,29 +262,5 @@ func TestUpdateWritesIntervalInShortForm(t *testing.T) {
 	data, _ := os.ReadFile(filepath.Join(dir, "sifty.yaml"))
 	if !strings.Contains(string(data), "interval: 1h30m") {
 		t.Errorf("90m should serialize as 1h30m; got:\n%s", data)
-	}
-}
-
-func TestUnsubscribeTwiceDoesNotPanic(t *testing.T) {
-	s, _ := config.Open(filepath.Join(t.TempDir(), "nosuchfile.yaml"))
-	_, unsub := s.Subscribe()
-	unsub()
-	unsub() // second call must not panic
-}
-
-func TestSubscriberReceivesNewConfig(t *testing.T) {
-	s, _ := openStore(t)
-	ch, unsub := s.Subscribe()
-	defer unsub()
-
-	s.Update(func(c *config.Config) error { c.Port = 8181; return nil }) //nolint:errcheck
-
-	select {
-	case c := <-ch:
-		if c.Port != 8181 {
-			t.Errorf("subscriber got port %d, want 8181", c.Port)
-		}
-	default:
-		t.Fatal("subscriber channel should have a value")
 	}
 }

@@ -56,18 +56,19 @@ func startRunner(t *testing.T, r *runner.Runner) context.CancelFunc {
 	return cancel
 }
 
-func waitEvent(t *testing.T, ch <-chan runner.Event, pred func(runner.Event) bool) runner.Event {
+func waitJob(t *testing.T, r *runner.Runner, kind string) runner.Job {
 	t.Helper()
 	deadline := time.After(5 * time.Second)
 	for {
+		if j, ok := r.Last(kind); ok && (j.State == "done" || j.State == "failed") {
+			return j
+		}
 		select {
-		case ev := <-ch:
-			if pred(ev) {
-				return ev
-			}
 		case <-deadline:
-			t.Fatal("timed out waiting for event")
-			return runner.Event{}
+			t.Fatal("timed out waiting for job to complete")
+			return runner.Job{}
+		default:
+			time.Sleep(5 * time.Millisecond)
 		}
 	}
 }
@@ -76,19 +77,26 @@ func waitEvent(t *testing.T, ch <-chan runner.Event, pred func(runner.Event) boo
 
 func TestDispatchRunsAllQueuedJobs(t *testing.T) {
 	d := openDB(t)
+	done := make(chan string, 3)
 	r := newRunner(d, nil, nil)
-	r.Register(runner.Kind{Name: "noop", Run: func(_ context.Context, _ *runner.Job) error { return nil }})
+	r.Register(runner.Kind{Name: "noop", Run: func(_ context.Context, j *runner.Job) error {
+		done <- j.Subject
+		return nil
+	}})
 	for _, s := range []string{"a", "b", "c"} {
 		r.Enqueue(runner.Spec{Kind: "noop", Subject: s}) //nolint:errcheck
 	}
-	ch, unsub := r.Subscribe()
-	defer unsub()
 	cancel := startRunner(t, r)
 	defer cancel()
-	done := map[string]bool{}
-	for len(done) < 3 {
-		ev := waitEvent(t, ch, func(e runner.Event) bool { return e.Job.State == "done" })
-		done[ev.Job.Subject] = true
+	seen := map[string]bool{}
+	deadline := time.After(5 * time.Second)
+	for len(seen) < 3 {
+		select {
+		case s := <-done:
+			seen[s] = true
+		case <-deadline:
+			t.Fatalf("only %d of 3 jobs ran", len(seen))
+		}
 	}
 }
 
@@ -128,16 +136,26 @@ func TestDeduplicationReturnsExistingID(t *testing.T) {
 	if id2, _ := r.Enqueue(runner.Spec{Kind: "dedup", Subject: "x"}); id1 != id2 {
 		t.Fatalf("dedup while queued: got %d, want %d", id2, id1)
 	}
-	ch, unsub := r.Subscribe()
-	defer unsub()
 	cancel := startRunner(t, r)
 	defer cancel()
-	waitEvent(t, ch, func(e runner.Event) bool { return e.Job.State == "running" })
+	// Poll until the job is running (it blocks on hold).
+	deadline := time.After(5 * time.Second)
+	for {
+		if j, ok := r.Last("dedup"); ok && j.State == "running" {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("timeout waiting for job to start running")
+		default:
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
 	if id3, _ := r.Enqueue(runner.Spec{Kind: "dedup", Subject: "x"}); id1 != id3 {
 		t.Fatalf("dedup while running: got %d, want %d", id3, id1)
 	}
 	close(hold)
-	waitEvent(t, ch, func(e runner.Event) bool { return e.Job.State == "done" })
+	waitJob(t, r, "dedup")
 	if id4, _ := r.Enqueue(runner.Spec{Kind: "dedup", Subject: "x"}); id4 == id1 {
 		t.Error("after done: expected new id, got same")
 	}
@@ -243,44 +261,6 @@ func TestJobWaitingForLaneDoesNotBlockOtherLane(t *testing.T) {
 	close(holdNet)
 }
 
-// --- subscribe, progress ---
-
-func TestSubscribeAndProgress(t *testing.T) {
-	d := openDB(t)
-	r := newRunner(d, nil, nil)
-	r.Register(runner.Kind{Name: "prog", Run: func(_ context.Context, j *runner.Job) error {
-		j.Progress(1, 10, "step-a")
-		return nil
-	}})
-	ch, unsub := r.Subscribe()
-	defer unsub()
-	r.Enqueue(runner.Spec{Kind: "prog", Subject: "1"}) //nolint:errcheck
-	cancel := startRunner(t, r)
-	defer cancel()
-	var sawRunning, sawProgress bool
-	waitEvent(t, ch, func(e runner.Event) bool {
-		if e.Job.State == "running" {
-			sawRunning = true
-		}
-		if e.Job.Total > 0 {
-			sawProgress = true
-		}
-		return e.Job.State == "done"
-	})
-	if !sawRunning {
-		t.Error("running state not observed")
-	}
-	if !sawProgress {
-		t.Error("no progress event received")
-	}
-}
-
-func TestUnsubscribeTwiceDoesNotPanic(t *testing.T) {
-	_, unsub := newRunner(openDB(t), nil, nil).Subscribe()
-	unsub()
-	unsub() // must not panic
-}
-
 // --- retries, permanent, panic ---
 
 func TestRetryNotBeforeIsSetCorrectly(t *testing.T) {
@@ -318,14 +298,12 @@ func TestPermanentErrorFailsImmediately(t *testing.T) {
 	r.Register(runner.Kind{Name: "perm", Run: func(_ context.Context, _ *runner.Job) error {
 		return runner.Permanent(errors.New("done"))
 	}})
-	ch, unsub := r.Subscribe()
-	defer unsub()
 	r.Enqueue(runner.Spec{Kind: "perm", Subject: "1"}) //nolint:errcheck
 	cancel := startRunner(t, r)
 	defer cancel()
-	ev := waitEvent(t, ch, func(e runner.Event) bool { return e.Job.Kind == "perm" && e.Job.State == "failed" })
-	if ev.Job.Attempts != 1 {
-		t.Errorf("permanent: attempts = %d, want 1", ev.Job.Attempts)
+	j := waitJob(t, r, "perm")
+	if j.Attempts != 1 {
+		t.Errorf("permanent: attempts = %d, want 1", j.Attempts)
 	}
 }
 
@@ -334,28 +312,19 @@ func TestThirdFailureMarksFailed(t *testing.T) {
 	cl := newClock(base)
 	r := newRunner(d, nil, cl)
 	r.Register(runner.Kind{Name: "retry3", Run: func(_ context.Context, _ *runner.Job) error { return errors.New("always fails") }})
-	ch, unsub := r.Subscribe()
-	defer unsub()
 	r.Enqueue(runner.Spec{Kind: "retry3", Subject: "1"}) //nolint:errcheck
 	cancel := startRunner(t, r)
 	defer cancel()
 	timeout := time.After(10 * time.Second)
 	for {
+		if j, ok := r.Last("retry3"); ok && j.State == "failed" {
+			if j.Attempts != 3 {
+				t.Errorf("failed at attempts=%d, want 3", j.Attempts)
+			}
+			return
+		}
 		select {
-		case ev := <-ch:
-			if ev.Job.Kind != "retry3" {
-				continue
-			}
-			if ev.Job.State == "failed" {
-				if ev.Job.Attempts != 3 {
-					t.Errorf("failed at attempts=%d, want 3", ev.Job.Attempts)
-				}
-				return
-			}
-			if ev.Job.State == "queued" {
-				cl.Advance(3 * time.Minute)
-			}
-		case <-time.After(200 * time.Millisecond):
+		case <-time.After(100 * time.Millisecond):
 			cl.Advance(3 * time.Minute)
 		case <-timeout:
 			t.Fatal("job never reached failed after 3 attempts")
@@ -367,14 +336,23 @@ func TestPanicRecoveredAsError(t *testing.T) {
 	d := openDB(t)
 	r := newRunner(d, nil, nil)
 	r.Register(runner.Kind{Name: "panic", Run: func(_ context.Context, _ *runner.Job) error { panic("test panic") }})
-	ch, unsub := r.Subscribe()
-	defer unsub()
 	r.Enqueue(runner.Spec{Kind: "panic", Subject: "1"}) //nolint:errcheck
 	cancel := startRunner(t, r)
 	defer cancel()
-	waitEvent(t, ch, func(e runner.Event) bool {
-		return e.Job.Kind == "panic" && (e.Job.State == "queued" || e.Job.State == "failed")
-	})
+	// The panic is recovered as an error; the job is re-queued for retry.
+	// Wait for attempts > 0, which confirms the panic did not crash the runner.
+	deadline := time.After(5 * time.Second)
+	for {
+		if j, ok := r.Last("panic"); ok && j.Attempts > 0 {
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatal("timed out: panic job did not complete its first attempt")
+		default:
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
 }
 
 func TestShutdownLeavesJobRunningForRestart(t *testing.T) {
@@ -492,17 +470,26 @@ func TestLastAndActive(t *testing.T) {
 	r.Register(runner.Kind{Name: "q", Run: func(ctx context.Context, _ *runner.Job) error { <-hold; return nil }})
 	r.Enqueue(runner.Spec{Kind: "q", Subject: "a"}) //nolint:errcheck
 	r.Enqueue(runner.Spec{Kind: "q", Subject: "b"}) //nolint:errcheck
-	ch, unsub := r.Subscribe()
-	defer unsub()
 	cancel := startRunner(t, r)
 	defer cancel()
-	waitEvent(t, ch, func(e runner.Event) bool { return e.Job.State == "running" })
+	// Poll until at least one job is running or queued.
+	deadline := time.After(5 * time.Second)
+	for {
+		if len(r.Active()) > 0 {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("timeout waiting for active jobs")
+		default:
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
 	if len(r.Active()) == 0 {
 		t.Error("Active returned nothing while jobs are running/queued")
 	}
 	close(hold)
-	waitEvent(t, ch, func(e runner.Event) bool { return e.Job.State == "done" })
-	time.Sleep(30 * time.Millisecond)
+	waitJob(t, r, "q")
 	if _, ok := r.Last("q"); !ok {
 		t.Error("Last returned false after job completed")
 	}

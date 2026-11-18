@@ -97,9 +97,8 @@ func (s *Store) Update(fn func(c *Config) error) error {
 		return fmt.Errorf("writing settings: %w", err)
 	}
 
-	// 8. Swap the in-memory config and notify subscribers.
+	// 8. Swap the in-memory config.
 	s.cfg = newCfg
-	s.notify(newCfg)
 	return nil
 }
 
