@@ -27,7 +27,7 @@ web:
 	  exit 1; \
 	fi; \
 	rm -rf web/dist; \
-	mkdir -p web/dist; \
+	mkdir -p web/dist; touch web/dist/.gitkeep; \
 	tar -xzf "$$archive" -C web/dist --strip-components=0; \
 	rm -f "$$archive"; \
 	echo "$$want" > "$$marker"; \
