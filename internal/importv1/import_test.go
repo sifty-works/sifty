@@ -82,11 +82,29 @@ CREATE TABLE block_rules(
   UNIQUE(kind, value)
 );
 CREATE TABLE user_profiles(
-  id         TEXT    PRIMARY KEY,
-  revision   INTEGER NOT NULL,
-  data       TEXT    NOT NULL,
-  created_at TEXT    NOT NULL,
-  updated_at TEXT    NOT NULL
+  id          TEXT    PRIMARY KEY,
+  revision    INTEGER NOT NULL,
+  data        TEXT    NOT NULL,
+  created_at  TEXT    NOT NULL,
+  updated_at  TEXT    NOT NULL,
+  archived_at TEXT
+);
+CREATE TABLE profile_job_stages(
+  id             INTEGER PRIMARY KEY,
+  profile_id     TEXT    NOT NULL REFERENCES user_profiles(id),
+  job_id         INTEGER NOT NULL REFERENCES jobs(id),
+  status         TEXT    NOT NULL,
+  outcome_reason TEXT,
+  updated_at     TEXT    NOT NULL,
+  UNIQUE(profile_id, job_id)
+);
+CREATE TABLE profile_workflow_history(
+  id         INTEGER PRIMARY KEY,
+  profile_id TEXT    NOT NULL REFERENCES user_profiles(id),
+  job_id     INTEGER NOT NULL REFERENCES jobs(id),
+  created    TEXT    NOT NULL,
+  from_stage TEXT    NOT NULL,
+  to_stage   TEXT    NOT NULL
 );
 `
 
@@ -1289,5 +1307,376 @@ func TestImport_ExclusionsImported(t *testing.T) {
 	// Report includes per-profile except-words.
 	if !strings.Contains(report, "not imported") {
 		t.Errorf("report missing per-profile except words notice: %s", report)
+	}
+}
+
+// --- Profile, decision and application tests ---
+
+// insertJob is a helper to insert a minimal job row.
+func insertJob(t *testing.T, db *sql.DB, id int64, url string) {
+	t.Helper()
+	_, err := db.Exec(`
+		INSERT INTO jobs (id, identity, title, company, original_url,
+		  description, description_status, first_seen, last_seen)
+		VALUES (?,?,?,?,?,?,?,?,?)`,
+		id, "co|title", "Title", "Co", url, "t", "available",
+		"2024-06-01T00:00:00Z", "2024-06-01T00:00:00Z",
+	)
+	if err != nil {
+		t.Fatalf("insertJob %d: %v", id, err)
+	}
+}
+
+// insertProfile inserts a user_profiles row.
+func insertProfile(t *testing.T, db *sql.DB, id, name, createdAt string, archived bool) {
+	t.Helper()
+	var archivedAt interface{}
+	if archived {
+		archivedAt = "2024-07-01T00:00:00Z"
+	}
+	_, err := db.Exec(
+		`INSERT INTO user_profiles (id, revision, data, created_at, updated_at, archived_at)
+		 VALUES (?,1,?,?,?,?)`,
+		id,
+		fmt.Sprintf(`{"name":%q}`, name),
+		createdAt, createdAt, archivedAt,
+	)
+	if err != nil {
+		t.Fatalf("insertProfile %q: %v", id, err)
+	}
+}
+
+// insertStage inserts a profile_job_stages row.
+func insertStage(t *testing.T, db *sql.DB, profileID string, jobID int64, status, reason, updatedAt string) {
+	t.Helper()
+	var r interface{}
+	if reason != "" {
+		r = reason
+	}
+	_, err := db.Exec(
+		`INSERT INTO profile_job_stages (profile_id, job_id, status, outcome_reason, updated_at)
+		 VALUES (?,?,?,?,?)`,
+		profileID, jobID, status, r, updatedAt,
+	)
+	if err != nil {
+		t.Fatalf("insertStage profile=%q job=%d: %v", profileID, jobID, err)
+	}
+}
+
+func TestImport_ProfilesNonArchivedImported(t *testing.T) {
+	fromDir := makeOldDir(t, "")
+	oldDB := openOldDB(t, fromDir)
+
+	// Three profiles: two active, one archived.
+	insertProfile(t, oldDB, "pa", "Alice", "2024-01-01T00:00:00Z", false)
+	insertProfile(t, oldDB, "pb", "Bob", "2024-02-01T00:00:00Z", false)
+	insertProfile(t, oldDB, "pc", "Charlie", "2024-03-01T00:00:00Z", true)
+
+	targetDir := t.TempDir()
+	report := runImport(t, fromDir, targetDir)
+	newDB := openNewDB(t, targetDir)
+
+	// Two profiles written (Charlie is archived).
+	var n int
+	newDB.QueryRow(`SELECT count(*) FROM profile`).Scan(&n) //nolint:errcheck
+	if n != 2 {
+		t.Errorf("profile count: got %d, want 2", n)
+	}
+
+	// First profile by creation order gets new id 1.
+	var data1 string
+	newDB.QueryRow(`SELECT data FROM profile WHERE id=1`).Scan(&data1) //nolint:errcheck
+	if !strings.Contains(data1, "Alice") {
+		t.Errorf("profile 1 data: got %q, want Alice", data1)
+	}
+
+	// Second profile gets new id 2.
+	var data2 string
+	newDB.QueryRow(`SELECT data FROM profile WHERE id=2`).Scan(&data2) //nolint:errcheck
+	if !strings.Contains(data2, "Bob") {
+		t.Errorf("profile 2 data: got %q, want Bob", data2)
+	}
+
+	// Report counts.
+	if !strings.Contains(report, "Profiles: 3 read, 2 written, 1 dropped") {
+		t.Errorf("report profiles line: %s", report)
+	}
+}
+
+func TestImport_DecisionStageKinds(t *testing.T) {
+	fromDir := makeOldDir(t, "")
+	oldDB := openOldDB(t, fromDir)
+
+	insertJob(t, oldDB, 1, "https://example.com/jobs/1")
+	insertJob(t, oldDB, 2, "https://example.com/jobs/2")
+	insertJob(t, oldDB, 3, "https://example.com/jobs/3")
+	insertJob(t, oldDB, 4, "https://example.com/jobs/4")
+	insertProfile(t, oldDB, "pa", "Alice", "2024-01-01T00:00:00Z", false)
+
+	// All four stage kinds.
+	insertStage(t, oldDB, "pa", 1, "new", "", "2024-06-01T10:00:00Z")
+	insertStage(t, oldDB, "pa", 2, "saved", "", "2024-06-02T10:00:00Z")
+	insertStage(t, oldDB, "pa", 3, "rejected", "not a fit", "2024-06-03T10:00:00Z")
+	insertStage(t, oldDB, "pa", 4, "applied", "", "2024-06-04T10:00:00Z")
+
+	targetDir := t.TempDir()
+	runImport(t, fromDir, targetDir)
+	newDB := openNewDB(t, targetDir)
+
+	// Job 1 (new) → no decision row.
+	var cnt int
+	newDB.QueryRow(`SELECT count(*) FROM decision WHERE vacancy=1`).Scan(&cnt) //nolint:errcheck
+	if cnt != 0 {
+		t.Errorf("vacancy 1 (new): want no decision, got %d", cnt)
+	}
+
+	// Job 2 (saved) → shortlist.
+	var stage2 string
+	newDB.QueryRow(`SELECT stage FROM decision WHERE vacancy=2`).Scan(&stage2) //nolint:errcheck
+	if stage2 != "shortlist" {
+		t.Errorf("vacancy 2: got stage %q, want shortlist", stage2)
+	}
+
+	// Job 3 (rejected) → dismissed with reason.
+	var stage3, reason3 string
+	newDB.QueryRow(`SELECT stage, reason FROM decision WHERE vacancy=3`).Scan(&stage3, &reason3) //nolint:errcheck
+	if stage3 != "dismissed" {
+		t.Errorf("vacancy 3: got stage %q, want dismissed", stage3)
+	}
+	if reason3 != "not a fit" {
+		t.Errorf("vacancy 3: got reason %q, want 'not a fit'", reason3)
+	}
+
+	// Job 4 (applied) → applied.
+	var stage4 string
+	newDB.QueryRow(`SELECT stage FROM decision WHERE vacancy=4`).Scan(&stage4) //nolint:errcheck
+	if stage4 != "applied" {
+		t.Errorf("vacancy 4: got stage %q, want applied", stage4)
+	}
+}
+
+func TestImport_DecisionOnMergedVacancy(t *testing.T) {
+	fromDir := makeOldDir(t, "")
+	oldDB := openOldDB(t, fromDir)
+
+	// Two jobs with the same canonical URL (duplicates) — lower id kept.
+	insertJob(t, oldDB, 10, "https://example.com/jobs/merge?utm_source=a")
+	insertJob(t, oldDB, 20, "https://example.com/jobs/merge?utm_source=b")
+	insertProfile(t, oldDB, "pa", "Alice", "2024-01-01T00:00:00Z", false)
+
+	// Stage is on the aliased job (20).
+	insertStage(t, oldDB, "pa", 20, "saved", "", "2024-06-01T00:00:00Z")
+
+	targetDir := t.TempDir()
+	runImport(t, fromDir, targetDir)
+	newDB := openNewDB(t, targetDir)
+
+	// Decision must be on the kept vacancy (10).
+	var stage string
+	err := newDB.QueryRow(`SELECT stage FROM decision WHERE vacancy=10 AND profile=1`).Scan(&stage)
+	if err != nil {
+		t.Fatalf("decision for kept vacancy: %v", err)
+	}
+	if stage != "shortlist" {
+		t.Errorf("stage: got %q, want shortlist", stage)
+	}
+
+	// No decision on the aliased vacancy (20 — not a vacancy row).
+	var cnt int
+	newDB.QueryRow(`SELECT count(*) FROM decision WHERE vacancy=20`).Scan(&cnt) //nolint:errcheck
+	if cnt != 0 {
+		t.Errorf("decision on aliased vacancy: want 0, got %d", cnt)
+	}
+}
+
+func TestImport_MergedVacancyStrongestStageWins(t *testing.T) {
+	fromDir := makeOldDir(t, "")
+	oldDB := openOldDB(t, fromDir)
+
+	// Two jobs with the same canonical URL (UTM params are stripped).
+	insertJob(t, oldDB, 10, "https://example.com/jobs/merge?utm_source=a")
+	insertJob(t, oldDB, 20, "https://example.com/jobs/merge?utm_source=b")
+	insertProfile(t, oldDB, "pa", "Alice", "2024-01-01T00:00:00Z", false)
+
+	// Kept job (10): dismissed; aliased job (20): applied. Applied wins.
+	insertStage(t, oldDB, "pa", 10, "rejected", "stale", "2024-06-01T00:00:00Z")
+	insertStage(t, oldDB, "pa", 20, "applied", "", "2024-06-02T00:00:00Z")
+
+	targetDir := t.TempDir()
+	runImport(t, fromDir, targetDir)
+	newDB := openNewDB(t, targetDir)
+
+	var stage string
+	err := newDB.QueryRow(`SELECT stage FROM decision WHERE vacancy=10 AND profile=1`).Scan(&stage)
+	if err != nil {
+		t.Fatalf("decision: %v", err)
+	}
+	if stage != "applied" {
+		t.Errorf("stage: got %q, want applied (strongest wins)", stage)
+	}
+}
+
+func TestImport_ApplicationWithRecordedMoveToApplied(t *testing.T) {
+	fromDir := makeOldDir(t, "")
+	oldDB := openOldDB(t, fromDir)
+
+	insertJob(t, oldDB, 1, "https://example.com/jobs/1")
+	insertProfile(t, oldDB, "pa", "Alice", "2024-01-01T00:00:00Z", false)
+	insertProfile(t, oldDB, "pb", "Bob", "2024-02-01T00:00:00Z", false)
+
+	// Set applied_at on job 1.
+	_, err := oldDB.Exec(`UPDATE jobs SET applied_at='2024-07-15T12:00:00Z' WHERE id=1`)
+	if err != nil {
+		t.Fatalf("set applied_at: %v", err)
+	}
+
+	// History: Bob moved job 1 to applied.
+	_, err = oldDB.Exec(`
+		INSERT INTO profile_workflow_history (profile_id, job_id, created, from_stage, to_stage)
+		VALUES ('pb', 1, '2024-07-15T12:00:00Z', 'saved', 'applied')`)
+	if err != nil {
+		t.Fatalf("insert history: %v", err)
+	}
+
+	targetDir := t.TempDir()
+	runImport(t, fromDir, targetDir)
+	newDB := openNewDB(t, targetDir)
+
+	var appVacancy int64
+	var appliedAt string
+	var appProfile int64
+	var appProfileName string
+	err = newDB.QueryRow(`SELECT vacancy, applied_at, profile, profile_name FROM application WHERE vacancy=1`).
+		Scan(&appVacancy, &appliedAt, &appProfile, &appProfileName)
+	if err != nil {
+		t.Fatalf("query application: %v", err)
+	}
+	if appliedAt != "2024-07-15T12:00:00Z" {
+		t.Errorf("applied_at: got %q", appliedAt)
+	}
+	// Bob's new id is 2 (second by creation).
+	if appProfile != 2 {
+		t.Errorf("profile: got %d, want 2 (Bob)", appProfile)
+	}
+	if appProfileName != "Bob" {
+		t.Errorf("profile_name: got %q, want Bob", appProfileName)
+	}
+}
+
+func TestImport_ApplicationFallsBackToFirstProfile(t *testing.T) {
+	fromDir := makeOldDir(t, "")
+	oldDB := openOldDB(t, fromDir)
+
+	insertJob(t, oldDB, 1, "https://example.com/jobs/1")
+	insertProfile(t, oldDB, "pa", "Alice", "2024-01-01T00:00:00Z", false)
+
+	// applied_at set, but no history row.
+	_, err := oldDB.Exec(`UPDATE jobs SET applied_at='2024-08-01T00:00:00Z' WHERE id=1`)
+	if err != nil {
+		t.Fatalf("set applied_at: %v", err)
+	}
+
+	targetDir := t.TempDir()
+	runImport(t, fromDir, targetDir)
+	newDB := openNewDB(t, targetDir)
+
+	var appProfile int64
+	newDB.QueryRow(`SELECT profile FROM application WHERE vacancy=1`).Scan(&appProfile) //nolint:errcheck
+	if appProfile != 1 {
+		t.Errorf("profile: got %d, want 1 (Alice, the first profile)", appProfile)
+	}
+}
+
+func TestImport_ReadMarksImported(t *testing.T) {
+	fromDir := makeOldDir(t, "")
+	oldDB := openOldDB(t, fromDir)
+
+	insertJob(t, oldDB, 1, "https://example.com/jobs/1")
+	insertJob(t, oldDB, 2, "https://example.com/jobs/2")
+
+	// Job 1 has been seen; job 2 has not.
+	_, err := oldDB.Exec(`UPDATE jobs SET seen_at='2024-06-10T08:00:00Z' WHERE id=1`)
+	if err != nil {
+		t.Fatalf("set seen_at: %v", err)
+	}
+
+	targetDir := t.TempDir()
+	report := runImport(t, fromDir, targetDir)
+	newDB := openNewDB(t, targetDir)
+
+	var seenAt1, seenAt2 string
+	newDB.QueryRow(`SELECT seen_at FROM vacancy WHERE id=1`).Scan(&seenAt1) //nolint:errcheck
+	newDB.QueryRow(`SELECT seen_at FROM vacancy WHERE id=2`).Scan(&seenAt2) //nolint:errcheck
+
+	if seenAt1 != "2024-06-10T08:00:00Z" {
+		t.Errorf("vacancy 1 seen_at: got %q, want 2024-06-10T08:00:00Z", seenAt1)
+	}
+	if seenAt2 != "" {
+		t.Errorf("vacancy 2 seen_at: got %q, want empty", seenAt2)
+	}
+
+	if !strings.Contains(report, "Read marks: 1 before, 1 written") {
+		t.Errorf("report read marks: %s", report)
+	}
+}
+
+func TestImport_StageDifferenceReported(t *testing.T) {
+	fromDir := makeOldDir(t, "")
+	oldDB := openOldDB(t, fromDir)
+
+	insertJob(t, oldDB, 1, "https://example.com/jobs/1")
+	insertJob(t, oldDB, 2, "https://example.com/jobs/2")
+	insertProfile(t, oldDB, "pa", "Alice", "2024-01-01T00:00:00Z", false)
+
+	// Job 1: jobs.status = 'saved' (shortlist), profile stage = 'applied' → difference.
+	_, err := oldDB.Exec(`UPDATE jobs SET status='saved' WHERE id=1`)
+	if err != nil {
+		t.Fatalf("update status: %v", err)
+	}
+	insertStage(t, oldDB, "pa", 1, "applied", "", "2024-06-01T00:00:00Z")
+
+	// Job 2: jobs.status = 'new' (inbox), profile stage = 'new' → no difference.
+	insertStage(t, oldDB, "pa", 2, "new", "", "2024-06-01T00:00:00Z")
+
+	targetDir := t.TempDir()
+	report := runImport(t, fromDir, targetDir)
+
+	if !strings.Contains(report, `vacancy id=1`) {
+		t.Errorf("report missing difference for vacancy 1: %s", report)
+	}
+	if !strings.Contains(report, `jobs.status="saved"`) {
+		t.Errorf("report missing jobs.status: %s", report)
+	}
+	if strings.Contains(report, `vacancy id=2`) {
+		t.Errorf("report should not mention vacancy 2 (no difference): %s", report)
+	}
+}
+
+func TestImport_ReadMarksMergedVacancyLatestWins(t *testing.T) {
+	fromDir := makeOldDir(t, "")
+	oldDB := openOldDB(t, fromDir)
+
+	// Two jobs with the same canonical URL (UTM params are stripped) — lower id is kept.
+	insertJob(t, oldDB, 10, "https://example.com/jobs/mark?utm_medium=email")
+	insertJob(t, oldDB, 20, "https://example.com/jobs/mark?utm_medium=social")
+
+	// Aliased job (20) has a later seen_at than kept (10).
+	_, err := oldDB.Exec(`UPDATE jobs SET seen_at='2024-05-01T00:00:00Z' WHERE id=10`)
+	if err != nil {
+		t.Fatalf("set seen_at 10: %v", err)
+	}
+	_, err = oldDB.Exec(`UPDATE jobs SET seen_at='2024-06-15T00:00:00Z' WHERE id=20`)
+	if err != nil {
+		t.Fatalf("set seen_at 20: %v", err)
+	}
+
+	targetDir := t.TempDir()
+	runImport(t, fromDir, targetDir)
+	newDB := openNewDB(t, targetDir)
+
+	var seenAt string
+	newDB.QueryRow(`SELECT seen_at FROM vacancy WHERE id=10`).Scan(&seenAt) //nolint:errcheck
+	if seenAt != "2024-06-15T00:00:00Z" {
+		t.Errorf("seen_at: got %q, want later date from aliased job", seenAt)
 	}
 }

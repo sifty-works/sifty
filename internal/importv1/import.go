@@ -76,6 +76,25 @@ type importReport struct {
 	ProfileExceptWords []string // words from per-profile except lists, reported but not imported
 
 	NonImportedKeys []string
+
+	ProfilesRead    int
+	ProfilesWritten int
+	ProfilesDropped int // archived profiles
+
+	StagesRead      int
+	StagesNew       int // kept as inbox (no decision row)
+	StagesShortlist int
+	StagesApplied   int
+	StagesDismissed int
+	StagesDropped   int // vacancy not imported or profile archived
+
+	StageDifferences []string // per-vacancy differences: jobs.status vs first profile
+
+	ApplicationsRead    int
+	ApplicationsWritten int
+
+	ReadMarksBefore  int // vacancies with a non-empty seen_at in old DB
+	ReadMarksWritten int
 }
 
 // --- old schema row types ---
@@ -97,6 +116,24 @@ type oldJob struct {
 	lastSeen          string
 	tags              string
 	descriptionHTML   sql.NullString
+	status            string         // used for comparison with first profile only
+	appliedAt         sql.NullString // becomes an application row when non-empty
+	seenAt            sql.NullString // becomes vacancy.seen_at
+}
+
+type oldProfile struct {
+	id         string
+	data       string // JSON: {"name": "…", …}
+	createdAt  string
+	archivedAt sql.NullString // non-NULL means archived
+}
+
+type oldStage struct {
+	profileID     string
+	jobID         int64
+	status        string // new|saved|rejected|applied
+	outcomeReason sql.NullString
+	updatedAt     string
 }
 
 type oldSighting struct {
@@ -262,6 +299,30 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 	}
 	report.LastRunFound = !lastRunTime.IsZero()
 
+	// Count read marks in old data.
+	for _, j := range jobs {
+		if j.seenAt.Valid && j.seenAt.String != "" {
+			report.ReadMarksBefore++
+		}
+	}
+
+	// Read profiles and stages.
+	profiles, err := readProfiles(ctx, copyDB)
+	if err != nil {
+		return nil, fmt.Errorf("reading profiles: %w", err)
+	}
+
+	stages, err := readProfileStages(ctx, copyDB)
+	if err != nil {
+		return nil, fmt.Errorf("reading profile stages: %w", err)
+	}
+	report.StagesRead = len(stages)
+
+	lastAppliedMove, err := readLastAppliedMove(ctx, copyDB)
+	if err != nil {
+		return nil, fmt.Errorf("reading last applied moves: %w", err)
+	}
+
 	// Build source name → key map from old config.
 	sourceKeyByName := buildSourceKeyMap(oldCfg)
 
@@ -321,6 +382,7 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 		textState      listing.TextState
 		body           []byte
 		hash           string
+		seenAt         string // latest non-empty seen_at across kept and aliased
 	}
 	mergedData := make(map[int64]*mergeData) // keptID → best values
 
@@ -345,6 +407,10 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 			continue
 		}
 		pub, pubBasis := parsePublishedAt(vj.job.publishedAt, vj.job.publishedBasis)
+		seenAt := ""
+		if vj.job.seenAt.Valid && vj.job.seenAt.String != "" {
+			seenAt = normDateUTC(vj.job.seenAt.String)
+		}
 		mergedData[vj.job.id] = &mergeData{
 			firstSeen:      firstSeen,
 			publishedAt:    pub,
@@ -353,6 +419,7 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 			textState:      ts,
 			body:           body,
 			hash:           hash,
+			seenAt:         seenAt,
 		}
 	}
 
@@ -391,6 +458,12 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 			kept.textState = ts
 			kept.body = body
 			kept.hash = hash
+		}
+		// Latest seenAt.
+		if vj.job.seenAt.Valid && vj.job.seenAt.String != "" {
+			if sa := normDateUTC(vj.job.seenAt.String); sa > kept.seenAt {
+				kept.seenAt = sa
+			}
 		}
 	}
 
@@ -450,12 +523,13 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 			INSERT INTO vacancy
 				(id, identity, title, company, url, apply_url, location, tags, source_fields,
 				 published_at, published_basis, expires_at,
-				 first_seen, last_seen, text_state, content_hash, version, body)
-			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+				 first_seen, last_seen, text_state, content_hash, version, body, seen_at)
+			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 			j.id, identity, j.title, company, vj.canonURL, applyURL, location,
 			j.tags, "{}",
 			md.publishedAt, md.publishedBasis, expiresAt,
 			md.firstSeen, md.lastSeen, string(md.textState), md.hash, 1, md.body,
+			md.seenAt,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("inserting vacancy %d: %w", j.id, err)
@@ -466,6 +540,9 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 			}
 		}
 		report.VacanciesWritten++
+		if md.seenAt != "" {
+			report.ReadMarksWritten++
+		}
 	}
 
 	// Write sightings.
@@ -680,6 +757,263 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 	}
 	report.ProfileExceptWords = profileWords
 
+	// --- Profiles ---
+	//
+	// Sort by created_at ascending (then by id for stability) so the first
+	// created profile always gets new id 1.
+	sort.Slice(profiles, func(i, k int) bool {
+		if profiles[i].createdAt != profiles[k].createdAt {
+			return profiles[i].createdAt < profiles[k].createdAt
+		}
+		return profiles[i].id < profiles[k].id
+	})
+
+	report.ProfilesRead = len(profiles)
+	for _, p := range profiles {
+		if p.archivedAt.Valid && p.archivedAt.String != "" {
+			report.ProfilesDropped++
+		}
+	}
+
+	// profileIDMap maps old TEXT profile id → new INTEGER id.
+	profileIDMap := make(map[string]int64)
+	type profileEntry struct {
+		newID int64
+		name  string
+	}
+	var profilesByNewID []profileEntry
+
+	for _, p := range profiles {
+		if p.archivedAt.Valid && p.archivedAt.String != "" {
+			continue // skip archived
+		}
+		newID := int64(len(profilesByNewID) + 1)
+		var d struct {
+			Name string `json:"name"`
+		}
+		json.Unmarshal([]byte(p.data), &d) //nolint:errcheck
+		name := d.Name
+		if name == "" {
+			name = "Profile"
+		}
+		profileIDMap[p.id] = newID
+		profilesByNewID = append(profilesByNewID, profileEntry{newID: newID, name: name})
+		report.ProfilesWritten++
+	}
+
+	if len(profilesByNewID) > 0 {
+		// Replace the default "Profile" row and insert all old profiles.
+		if _, err := tx.ExecContext(ctx, `DELETE FROM profile`); err != nil {
+			return nil, fmt.Errorf("deleting default profile: %w", err)
+		}
+		for _, pp := range profilesByNewID {
+			newData, _ := json.Marshal(struct {
+				Name string `json:"name"`
+			}{Name: pp.name})
+			if _, err := tx.ExecContext(ctx,
+				`INSERT INTO profile (id, data) VALUES (?,?)`,
+				pp.newID, string(newData),
+			); err != nil {
+				return nil, fmt.Errorf("inserting profile %d: %w", pp.newID, err)
+			}
+		}
+		// Update the autoincrement sequence so the application never reuses old ids.
+		maxProfileID := int64(len(profilesByNewID))
+		res, err := tx.ExecContext(ctx,
+			`UPDATE sqlite_sequence SET seq=? WHERE name='profile' AND seq<?`,
+			maxProfileID, maxProfileID,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("updating sqlite_sequence for profile: %w", err)
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			var exists int
+			tx.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_sequence WHERE name='profile'`).Scan(&exists) //nolint:errcheck
+			if exists == 0 {
+				if _, err := tx.ExecContext(ctx,
+					`INSERT INTO sqlite_sequence (name, seq) VALUES ('profile', ?)`, maxProfileID,
+				); err != nil {
+					return nil, fmt.Errorf("inserting sqlite_sequence for profile: %w", err)
+				}
+			}
+		}
+	}
+
+	// --- Decisions ---
+	//
+	// stageMap accumulates the strongest stage per (newProfileID, newVacancyID).
+	type decisionEntry struct {
+		stage     string
+		reason    string
+		decidedAt string
+	}
+	stageMap := make(map[int64]map[int64]*decisionEntry)
+
+	for _, s := range stages {
+		newProfileID, ok := profileIDMap[s.profileID]
+		if !ok {
+			report.StagesDropped++ // archived profile
+			continue
+		}
+		// Follow alias.
+		newVacancyID := s.jobID
+		if keptID, isAlias := duplicateAlias[newVacancyID]; isAlias {
+			newVacancyID = keptID
+		}
+		if !keepIDs[newVacancyID] {
+			report.StagesDropped++ // vacancy not imported
+			continue
+		}
+		// Map old status to new stage.
+		var newStage, reason string
+		switch s.status {
+		case "new":
+			report.StagesNew++
+			continue // no decision row
+		case "saved":
+			newStage = "shortlist"
+			report.StagesShortlist++
+		case "rejected":
+			newStage = "dismissed"
+			if s.outcomeReason.Valid {
+				reason = s.outcomeReason.String
+			}
+			report.StagesDismissed++
+		case "applied":
+			newStage = "applied"
+			report.StagesApplied++
+		default:
+			report.StagesDropped++
+			continue
+		}
+		decidedAt := normDateUTC(s.updatedAt)
+		if decidedAt == "" {
+			decidedAt = time.Now().UTC().Format(time.RFC3339)
+		}
+		if _, ok := stageMap[newProfileID]; !ok {
+			stageMap[newProfileID] = make(map[int64]*decisionEntry)
+		}
+		existing, exists := stageMap[newProfileID][newVacancyID]
+		if !exists || stageStrength(newStage) > stageStrength(existing.stage) ||
+			(stageStrength(newStage) == stageStrength(existing.stage) && decidedAt > existing.decidedAt) {
+			stageMap[newProfileID][newVacancyID] = &decisionEntry{
+				stage:     newStage,
+				reason:    reason,
+				decidedAt: decidedAt,
+			}
+		}
+	}
+
+	for profileID, vacMap := range stageMap {
+		for vacancyID, entry := range vacMap {
+			if _, err := tx.ExecContext(ctx,
+				`INSERT INTO decision (profile, vacancy, stage, reason, decided_at) VALUES (?,?,?,?,?)`,
+				profileID, vacancyID, entry.stage, entry.reason, entry.decidedAt,
+			); err != nil {
+				return nil, fmt.Errorf("inserting decision profile=%d vacancy=%d: %w", profileID, vacancyID, err)
+			}
+		}
+	}
+
+	// --- Comparison: jobs.status vs first profile's stage ---
+	//
+	// jobs.status is the old per-vacancy denormalised copy of the first profile's
+	// stage. It is compared here but never imported.
+	if len(profilesByNewID) > 0 {
+		firstProfileNewID := profilesByNewID[0].newID
+		firstProfileDecisions := stageMap[firstProfileNewID]
+		for _, j := range jobs {
+			if !keepIDs[j.id] {
+				continue // only kept vacancies
+			}
+			// Map jobs.status to new stage.
+			var jobsStage string
+			switch j.status {
+			case "saved":
+				jobsStage = "shortlist"
+			case "rejected":
+				jobsStage = "dismissed"
+			case "applied":
+				jobsStage = "applied"
+			default:
+				jobsStage = "" // "new" or empty → Inbox
+			}
+			var profileStage string
+			if entry, ok := firstProfileDecisions[j.id]; ok {
+				profileStage = entry.stage
+			}
+			if jobsStage != profileStage {
+				report.StageDifferences = append(report.StageDifferences,
+					fmt.Sprintf("vacancy id=%d: jobs.status=%q, first profile=%q", j.id, j.status, profileStage))
+			}
+		}
+	}
+
+	// --- Applications ---
+	//
+	// Every non-empty jobs.applied_at becomes an application row. Aliased jobs
+	// are mapped to their keptID. Duplicate (vacancy, applied_at) pairs are
+	// deduplicated.
+	type appKey struct {
+		vacancyID int64
+		appliedAt string
+	}
+	seenApps := make(map[appKey]bool)
+
+	for _, j := range jobs {
+		if !j.appliedAt.Valid || j.appliedAt.String == "" {
+			continue
+		}
+		appliedAt := normDateUTC(j.appliedAt.String)
+		if appliedAt == "" {
+			continue
+		}
+		report.ApplicationsRead++
+
+		newVacancyID := j.id
+		if keptID, isAlias := duplicateAlias[newVacancyID]; isAlias {
+			newVacancyID = keptID
+		}
+		if !keepIDs[newVacancyID] {
+			continue
+		}
+
+		key := appKey{newVacancyID, appliedAt}
+		if seenApps[key] {
+			continue
+		}
+		seenApps[key] = true
+
+		// Find the profile that last moved this job to applied.
+		var newProfileID int64
+		var profileName string
+		if oldPID, ok := lastAppliedMove[j.id]; ok {
+			if newID, ok := profileIDMap[oldPID]; ok {
+				newProfileID = newID
+			}
+		}
+		if newProfileID == 0 && len(profilesByNewID) > 0 {
+			newProfileID = profilesByNewID[0].newID
+		}
+		if newProfileID == 0 {
+			newProfileID = 1 // last resort when no profiles were imported
+		}
+		for _, pp := range profilesByNewID {
+			if pp.newID == newProfileID {
+				profileName = pp.name
+				break
+			}
+		}
+
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO application (vacancy, applied_at, profile, profile_name) VALUES (?,?,?,?)`,
+			newVacancyID, appliedAt, newProfileID, profileName,
+		); err != nil {
+			return nil, fmt.Errorf("inserting application for vacancy=%d: %w", newVacancyID, err)
+		}
+		report.ApplicationsWritten++
+	}
+
 	// Write last run as a job row.
 	if !lastRunTime.IsZero() {
 		ts := lastRunTime.UTC().Format("2006-01-02T15:04:05Z")
@@ -856,6 +1190,20 @@ func betterTextState(candidate, current listing.TextState) bool {
 	return textRank(candidate) > textRank(current)
 }
 
+// stageStrength returns a numeric strength for a stage so the strongest stage
+// wins when two old vacancies merge into one.
+func stageStrength(stage string) int {
+	switch stage {
+	case "applied":
+		return 3
+	case "shortlist":
+		return 2
+	case "dismissed":
+		return 1
+	}
+	return 0
+}
+
 func textRank(s listing.TextState) int {
 	switch s {
 	case listing.TextFull:
@@ -1004,7 +1352,8 @@ func readJobs(ctx context.Context, db *sql.DB) ([]oldJob, error) {
 		SELECT id, identity, title, company, original_url, apply_url,
 		       description, description_status, location,
 		       published_at, published_basis, expires_at,
-		       first_seen, last_seen, tags, description_html
+		       first_seen, last_seen, tags, description_html,
+		       status, applied_at, seen_at
 		FROM jobs`)
 	if err != nil {
 		return nil, err
@@ -1018,12 +1367,71 @@ func readJobs(ctx context.Context, db *sql.DB) ([]oldJob, error) {
 			&j.description, &j.descriptionStatus, &j.location,
 			&j.publishedAt, &j.publishedBasis, &j.expiresAt,
 			&j.firstSeen, &j.lastSeen, &j.tags, &j.descriptionHTML,
+			&j.status, &j.appliedAt, &j.seenAt,
 		); err != nil {
 			return nil, err
 		}
 		jobs = append(jobs, j)
 	}
 	return jobs, rows.Err()
+}
+
+func readProfiles(ctx context.Context, db *sql.DB) ([]oldProfile, error) {
+	rows, err := db.QueryContext(ctx,
+		`SELECT id, data, created_at, archived_at FROM user_profiles ORDER BY created_at ASC, id ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []oldProfile
+	for rows.Next() {
+		var p oldProfile
+		if err := rows.Scan(&p.id, &p.data, &p.createdAt, &p.archivedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+func readProfileStages(ctx context.Context, db *sql.DB) ([]oldStage, error) {
+	rows, err := db.QueryContext(ctx,
+		`SELECT profile_id, job_id, status, outcome_reason, updated_at FROM profile_job_stages`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []oldStage
+	for rows.Next() {
+		var s oldStage
+		if err := rows.Scan(&s.profileID, &s.jobID, &s.status, &s.outcomeReason, &s.updatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
+// readLastAppliedMove returns a map from old job_id to the old profile_id that
+// last moved that job to the applied stage.
+func readLastAppliedMove(ctx context.Context, db *sql.DB) (map[int64]string, error) {
+	// ORDER BY created ASC so later rows overwrite earlier ones.
+	rows, err := db.QueryContext(ctx,
+		`SELECT job_id, profile_id FROM profile_workflow_history WHERE to_stage='applied' ORDER BY created ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make(map[int64]string)
+	for rows.Next() {
+		var jobID int64
+		var profileID string
+		if err := rows.Scan(&jobID, &profileID); err != nil {
+			return nil, err
+		}
+		result[jobID] = profileID
+	}
+	return result, rows.Err()
 }
 
 func readSightings(ctx context.Context, db *sql.DB) ([]oldSighting, error) {
@@ -1192,6 +1600,27 @@ func formatReport(r *importReport) string {
 		fmt.Fprintf(&sb, "Keys in search.yaml not imported: %s\n",
 			strings.Join(r.NonImportedKeys, ", "))
 	}
+
+	fmt.Fprintf(&sb, "Profiles: %d read, %d written, %d dropped (archived)\n",
+		r.ProfilesRead, r.ProfilesWritten, r.ProfilesDropped)
+
+	fmt.Fprintf(&sb, "Stages: %d read, %d new (inbox), %d shortlist, %d applied, %d dismissed, %d dropped\n",
+		r.StagesRead, r.StagesNew, r.StagesShortlist, r.StagesApplied, r.StagesDismissed, r.StagesDropped)
+
+	if len(r.StageDifferences) > 0 {
+		fmt.Fprintf(&sb, "Stage differences (jobs.status vs first profile): %d\n", len(r.StageDifferences))
+		for _, d := range r.StageDifferences {
+			fmt.Fprintf(&sb, "  %s\n", d)
+		}
+	} else {
+		fmt.Fprintf(&sb, "Stage differences (jobs.status vs first profile): 0\n")
+	}
+
+	fmt.Fprintf(&sb, "Applications: %d read, %d written\n",
+		r.ApplicationsRead, r.ApplicationsWritten)
+
+	fmt.Fprintf(&sb, "Read marks: %d before, %d written\n",
+		r.ReadMarksBefore, r.ReadMarksWritten)
 
 	return sb.String()
 }
