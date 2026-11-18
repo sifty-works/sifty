@@ -14,6 +14,24 @@ import (
 	"github.com/sifty-works/sifty/internal/listing"
 )
 
+// Stage is the inbox stage of a vacancy row.
+type Stage string
+
+const (
+	StageInbox     Stage = "inbox"
+	StageShortlist Stage = "shortlist"
+	StageApplied   Stage = "applied"
+	StageDismissed Stage = "dismissed"
+)
+
+// ConfirmDialog names the confirmation dialog to show before an action.
+type ConfirmDialog string
+
+const (
+	ConfirmOutcome ConfirmDialog = "outcome"
+	ConfirmDelete  ConfirmDialog = "delete"
+)
+
 // Row is one vacancy row in the API list response.
 type Row struct {
 	ID        int64  `json:"id"`
@@ -22,7 +40,7 @@ type Row struct {
 	Location  string `json:"location"`
 	Published string `json:"published"`
 	Unread    bool   `json:"unread"`
-	Stage     string `json:"stage"`
+	Stage     Stage  `json:"stage"`
 	Reason    string `json:"reason,omitempty"`
 	Applied   string `json:"applied,omitempty"`
 	Expired   bool   `json:"expired,omitempty"`
@@ -51,7 +69,7 @@ func toRow(rr repoRow, now time.Time) Row {
 		Location:  locationText(rr.location),
 		Published: publicationLine(rr.publishedAt, rr.publishedBasis, now),
 		Unread:    rr.unread,
-		Stage:     rr.stage,
+		Stage:     Stage(rr.stage),
 		Reason:    rr.reason,
 		Applied:   appliedText(rr.appliedAt, rr.appliedName, rr.stage, now),
 		Expired:   rr.expiresAt != "" && rr.expiresAt <= nowStr,
@@ -286,12 +304,27 @@ func emptyText(rowCount int, stage, q string) string {
 
 // --- Vacancy view types and functions ---
 
+// Outcome is one answer shown in the outcome confirmation dialog.
+type Outcome struct {
+	Key       string `json:"key"`
+	Label     string `json:"label"`
+	To        Stage  `json:"to,omitempty"`
+	Reason    string `json:"reason,omitempty"`
+	Confirmed bool   `json:"confirmed,omitempty"`
+}
+
 // Action is one available action on the vacancy page.
+// To is the target stage for decision endpoints (from is the row's stage).
+// Confirm names the dialog to show before the action ("outcome" or "delete").
+// Outcomes lists the choices shown in the outcome dialog.
 type Action struct {
-	Key     string `json:"key"`
-	Label   string `json:"label"`
-	URL     string `json:"url,omitempty"`
-	Message string `json:"message,omitempty"`
+	Key      string        `json:"key"`
+	Label    string        `json:"label"`
+	To       Stage         `json:"to,omitempty"`
+	URL      string        `json:"url,omitempty"`
+	Message  string        `json:"message,omitempty"`
+	Confirm  ConfirmDialog `json:"confirm,omitempty"`
+	Outcomes []Outcome     `json:"outcomes,omitempty"`
 }
 
 // ListingView describes the vacancy's text as shown on the vacancy page.
@@ -301,14 +334,22 @@ type ListingView struct {
 	Empty string `json:"empty,omitempty"`
 }
 
+// VacancySource is one source that carried a vacancy, as returned by the API.
+// URL is the source address; it is omitted when the internal source identifier
+// is not a valid HTTP address.
+type VacancySource struct {
+	Name string `json:"name"`
+	URL  string `json:"url,omitempty"`
+}
+
 // VacancyView is the vacancy page API response.
 type VacancyView struct {
 	Row
-	Sources  []string    `json:"sources"`
-	Original string      `json:"original"`
-	Status   string      `json:"status,omitempty"`
-	Actions  []Action    `json:"actions"`
-	Listing  ListingView `json:"listing"`
+	Sources  []VacancySource `json:"sources"`
+	Original string          `json:"original"`
+	Status   string          `json:"status,omitempty"`
+	Actions  []Action        `json:"actions"`
+	Listing  ListingView     `json:"listing"`
 }
 
 // listingState returns the display text for a vacancy's text_state value.
@@ -326,20 +367,24 @@ func listingState(textState string) string {
 	return "Not fetched"
 }
 
-// sourceLabel returns "Found on <name>" for a source key.
+// toVacancySource converts an internal source key to a VacancySource.
 // When the key appears in names, that name is used. Otherwise the hostname of
-// the key URL is used, with a leading "www." stripped.
-func sourceLabel(src string, names map[string]string) string {
-	name := names[src]
-	if name == "" {
-		if u, err := url.Parse(src); err == nil && u.Host != "" {
+// the key URL is used, with a leading "www." stripped. URL is set when src is
+// a valid http(s) address.
+func toVacancySource(src string, names map[string]string) VacancySource {
+	name, srcURL := names[src], ""
+	if u, err := url.Parse(src); err == nil && u.Host != "" {
+		if name == "" {
 			name = strings.TrimPrefix(strings.ToLower(u.Host), "www.")
+		}
+		if u.Scheme == "http" || u.Scheme == "https" {
+			srcURL = src
 		}
 	}
 	if name == "" {
 		name = src
 	}
-	return "Found on " + name
+	return VacancySource{Name: name, URL: srcURL}
 }
 
 // statusText returns the status line shown on the vacancy page.
@@ -373,44 +418,58 @@ func validApplyURL(raw string) bool {
 }
 
 // stageActions returns the actions available in stage, in the order the page
-// shows them.
+// shows them. Labels carry no keyboard hints; to is the decision target stage;
+// confirm names the dialog the client must show before proceeding.
 func stageActions(stage, vacURL, applyURL, company string) []Action {
 	switch stage {
 	case "inbox":
-		var out []Action
+		out := make([]Action, 0, 3)
 		if company != "" {
 			out = append(out, Action{Key: "block", Label: "Block company"})
 		}
 		return append(out,
-			Action{Key: "dismiss", Label: "✕ Dismiss N"},
-			Action{Key: "select", Label: "✓ Select Y"})
+			Action{Key: "dismiss", Label: "Dismiss", To: StageDismissed},
+			Action{Key: "select", Label: "Select", To: StageShortlist})
 	case "shortlist":
 		apply := buildApplyAction(vacURL, applyURL)
 		return []Action{
-			{Key: "inbox", Label: "Move to Inbox"},
+			{Key: "inbox", Label: "Move to Inbox", To: StageInbox},
 			apply,
-			{Key: "confirm", Label: "✓ Confirm application…"},
-			{Key: "delete", Label: "× Delete role…"},
+			{Key: "confirm", Label: "Confirm application…", To: StageApplied, Confirm: ConfirmOutcome,
+				Outcomes: []Outcome{
+					{Key: "not-yet", Label: "Not yet"},
+					{Key: "stale", Label: "No, vacancy is stale", To: StageDismissed, Reason: "vacancy is stale"},
+					{Key: "closed", Label: "No, vacancy is closed", To: StageDismissed, Reason: "vacancy is closed"},
+					{Key: "unsuitable", Label: "No, not suitable", To: StageDismissed, Reason: "not suitable"},
+					{Key: "applied", Label: "Yes, applied", To: StageApplied, Confirmed: true},
+				}},
+			{Key: "delete", Label: "Delete role…", Confirm: ConfirmDelete},
 		}
 	case "applied":
-		return []Action{{Key: "undo", Label: "Undo"}, {Key: "delete", Label: "Delete role…"}}
+		return []Action{
+			{Key: "undo", Label: "Undo", To: StageShortlist},
+			{Key: "delete", Label: "Delete role…", Confirm: ConfirmDelete},
+		}
 	case "dismissed":
-		return []Action{{Key: "restore", Label: "Restore to Inbox"}, {Key: "delete", Label: "Delete role…"}}
+		return []Action{
+			{Key: "restore", Label: "Restore to Inbox", To: StageInbox},
+			{Key: "delete", Label: "Delete role…", Confirm: ConfirmDelete},
+		}
 	}
-	return nil
+	return []Action{}
 }
 
 // buildApplyAction builds the apply Action for the shortlist stage.
 // It carries a URL when a valid http(s) address without credentials is found,
-// otherwise a message.
+// otherwise a message. Labels carry no keyboard hints.
 func buildApplyAction(vacURL, applyURL string) Action {
 	if validApplyURL(applyURL) {
-		return Action{Key: "apply", Label: "Apply ↗ A", URL: applyURL}
+		return Action{Key: "apply", Label: "Apply", URL: applyURL}
 	}
 	if validApplyURL(vacURL) {
-		return Action{Key: "apply", Label: "Apply ↗ A", URL: vacURL}
+		return Action{Key: "apply", Label: "Apply", URL: vacURL}
 	}
-	return Action{Key: "apply", Label: "Apply ↗ A",
+	return Action{Key: "apply", Label: "Apply",
 		Message: "No valid employer or original listing URL is available. The role stays in Shortlist."}
 }
 
@@ -435,9 +494,9 @@ func vacancyView(ctx context.Context, database *db.DB, now func() time.Time,
 	t := now()
 	row := toRow(raws[0], t)
 
-	var sources []string
+	sources := make([]VacancySource, 0, len(vd.sources))
 	for _, src := range vd.sources {
-		sources = append(sources, sourceLabel(src, sourceNames))
+		sources = append(sources, toVacancySource(src, sourceNames))
 	}
 
 	html, err := catalog.Body(vd.body)

@@ -31,6 +31,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return cmdConfig(rest, stdout, stderr)
 	case "import-v1":
 		return cmdImportV1(ctx, rest, stdout, stderr)
+	case "gen-api":
+		return cmdGenAPI(rest, stdout, stderr)
 	default:
 		fmt.Fprintln(stderr, usage())
 		return fmt.Errorf("unknown command: %s", cmd)
@@ -103,6 +105,7 @@ Commands:
   serve          Start the application server
   import-v1      Import data from the previous application
   config         Manage configuration
+  gen-api        Generate api/openapi.yaml from the route registry
   version        Print the version
 
 Run 'sifty serve --help' for serve options.`

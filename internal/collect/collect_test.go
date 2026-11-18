@@ -287,8 +287,10 @@ func TestDueAndCollectDeduplication(t *testing.T) {
 	if e.col.Due(base) {
 		t.Error("Due: want false after collect is enqueued (interval not yet elapsed)")
 	}
+	waitJob(t, e.r) // let the POST-triggered job finish before testing dedup
 
-	// Two Enqueue calls while a job is queued or running return the same id.
+	// Two consecutive Enqueue calls for the same kind deduplicate: the second
+	// returns the same id as the first because the job is still queued.
 	id1, _ := e.r.Enqueue(runner.Spec{Kind: "collect"})
 	id2, _ := e.r.Enqueue(runner.Spec{Kind: "collect"})
 	if id1 != id2 {

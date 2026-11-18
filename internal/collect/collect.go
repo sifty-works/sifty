@@ -4,7 +4,6 @@ package collect
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -269,201 +268,195 @@ func (c *Collector) run(ctx context.Context, j *runner.Job) error {
 }
 
 // StatusFunc returns a function suitable for server.Options.Status.
-// It provides "collecting", "lastRun" and "catalogue" keys.
-func (c *Collector) StatusFunc() func() map[string]any {
-	return func() map[string]any {
-		var collecting any
-		for _, j := range c.runner.Active() {
-			if j.Kind == "collect" {
-				text := "Collecting…"
-				if j.Total > 0 && j.Done < j.Total {
-					text = fmt.Sprintf("Collecting… %d of %d sources", j.Done+1, j.Total)
-				}
-				collecting = map[string]any{
-					"done":  j.Done,
-					"total": j.Total,
-					"text":  text,
-				}
-				break
-			}
-		}
-		var lastRun any
-		if j, ok := c.runner.Last("collect"); ok {
-			switch j.State {
-			case "done", "failed", "interrupted":
-				msg := ""
-				if j.State == "failed" {
-					msg = j.Error
-				}
-				lastRun = map[string]any{
-					"state":    j.State,
-					"finished": j.Updated.UTC().Format(time.RFC3339),
-					"message":  msg,
-				}
-			}
-		}
-		c.mu.Lock()
-		written := c.written
-		c.mu.Unlock()
+func (c *Collector) StatusFunc() func() server.StatusExtra {
+	return c.buildStatusExtra
+}
 
-		cfg := c.store.Get()
-		var attentionCount int
-		for _, s := range cfg.Sources {
-			if !s.Enabled {
-				continue
+// buildStatusExtra assembles the collection-specific status fields.
+func (c *Collector) buildStatusExtra() server.StatusExtra {
+	var collecting *server.CollectProgress
+	for _, j := range c.runner.Active() {
+		if j.Kind == "collect" {
+			text := "Collecting…"
+			if j.Total > 0 && j.Done < j.Total {
+				text = fmt.Sprintf("Collecting… %d of %d sources", j.Done+1, j.Total)
 			}
-			key, _ := config.SourceKey(s.URL)
-			if needsAttention(c.querySourceRuns(key)) {
-				attentionCount++
-			}
-		}
-		var attentionVal any
-		if attentionCount > 0 {
-			noun := "sources need"
-			if attentionCount == 1 {
-				noun = "source needs"
-			}
-			attentionVal = map[string]any{
-				"count": attentionCount,
-				"text":  strconv.Itoa(attentionCount) + " " + noun + " attention",
-			}
-		}
-
-		return map[string]any{
-			"collecting": collecting,
-			"lastRun":    lastRun,
-			"catalogue":  written,
-			"attention":  attentionVal,
+			collecting = &server.CollectProgress{Done: j.Done, Total: j.Total, Text: text}
+			break
 		}
 	}
+	var lastRun *server.LastRun
+	if j, ok := c.runner.Last("collect"); ok {
+		switch j.State {
+		case "done", "failed", "interrupted":
+			msg := ""
+			if j.State == "failed" {
+				msg = j.Error
+			}
+			lastRun = &server.LastRun{
+				State:    j.State,
+				Finished: j.Updated.UTC().Format(time.RFC3339),
+				Message:  msg,
+			}
+		}
+	}
+	c.mu.Lock()
+	written := c.written
+	c.mu.Unlock()
+
+	cfg := c.store.Get()
+	var attentionCount int
+	for _, s := range cfg.Sources {
+		if !s.Enabled {
+			continue
+		}
+		key, _ := config.SourceKey(s.URL)
+		if needsAttention(c.querySourceRuns(key)) {
+			attentionCount++
+		}
+	}
+	var attention *server.Attention
+	if attentionCount > 0 {
+		noun := "sources need"
+		if attentionCount == 1 {
+			noun = "source needs"
+		}
+		attention = &server.Attention{
+			Count: attentionCount,
+			Text:  strconv.Itoa(attentionCount) + " " + noun + " attention",
+		}
+	}
+
+	return server.StatusExtra{
+		Collecting: collecting,
+		LastRun:    lastRun,
+		Catalogue:  written,
+		Attention:  attention,
+	}
+}
+
+// --- Sources API types -------------------------------------------------------
+
+// SourceStatus describes the last run result for one source.
+type SourceStatus struct {
+	Text      string `json:"text"`
+	Attention bool   `json:"attention"`
+}
+
+// Source is one entry in the sources list.
+type Source struct {
+	Key     string        `json:"key"`
+	Name    string        `json:"name"`
+	URL     string        `json:"url"`
+	Enabled bool          `json:"enabled"`
+	Status  *SourceStatus `json:"status,omitempty"`
+}
+
+// SourcesResp is the response body for all /api/sources endpoints and
+// PUT /api/sources/schedule.
+type SourcesResp struct {
+	Sources  []Source `json:"sources"`
+	Auto     bool     `json:"auto"`
+	Interval string   `json:"interval"`
+}
+
+// addSourceReq is the request body for POST /api/sources.
+type addSourceReq struct {
+	Name string `json:"name"`
+	URL  string `json:"url"`
+}
+
+// toggleSourceReq is the request body for PATCH /api/sources.
+type toggleSourceReq struct {
+	Key     string `json:"key"`
+	Enabled bool   `json:"enabled"`
+}
+
+// removeSourceReq is the request body for DELETE /api/sources.
+type removeSourceReq struct {
+	Key string `json:"key"`
+}
+
+// scheduleReq is the request body for PUT /api/sources/schedule.
+type scheduleReq struct {
+	Auto     bool   `json:"auto"`
+	Interval string `json:"interval"`
+}
+
+// collectReq is the request body for POST /api/collect.
+type collectReq struct {
+	Force bool `json:"force"`
+}
+
+// updateSources applies update to the config and returns the sources response.
+func (c *Collector) updateSources(update func(*config.Config) error) (SourcesResp, error) {
+	if err := c.store.Update(update); err != nil {
+		return SourcesResp{}, err
+	}
+	return c.buildSourcesResp(), nil
 }
 
 // RegisterRoutes registers all collect-related routes on mux.
 func (c *Collector) RegisterRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("GET /api/sources", c.handleSourcesList)
-	mux.HandleFunc("POST /api/sources", c.handleSourcesAdd)
-	mux.HandleFunc("PATCH /api/sources", c.handleSourcesToggle)
-	mux.HandleFunc("DELETE /api/sources", c.handleSourcesRemove)
-	mux.HandleFunc("PUT /api/sources/schedule", c.handleSchedule)
-	mux.HandleFunc("POST /api/collect", c.handleCollect)
-}
+	server.Handle(mux, "GET /api/sources", c.log, func(r *http.Request, _ struct{}) (SourcesResp, error) {
+		return c.buildSourcesResp(), nil
+	})
 
-// --- Sources API -------------------------------------------------------------
-
-func (c *Collector) handleSourcesList(w http.ResponseWriter, _ *http.Request) {
-	server.WriteJSON(w, c.sourcesBody())
-}
-
-func (c *Collector) handleSourcesAdd(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Name string `json:"name"`
-		URL  string `json:"url"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		server.MapError(w, apperr.Invalid{Message: "Invalid request body."}, c.log)
-		return
-	}
-	err := c.store.Update(func(cfg *config.Config) error {
-		cfg.Sources = append(cfg.Sources, config.SourceConfig{
-			Name:    req.Name,
-			URL:     req.URL,
-			Enabled: true,
+	server.Handle(mux, "POST /api/sources", c.log, func(r *http.Request, req addSourceReq) (SourcesResp, error) {
+		return c.updateSources(func(cfg *config.Config) error {
+			cfg.Sources = append(cfg.Sources, config.SourceConfig{
+				Name:    req.Name,
+				URL:     req.URL,
+				Enabled: true,
+			})
+			return nil
 		})
-		return nil
 	})
-	if server.MapError(w, err, c.log) {
-		return
-	}
-	server.WriteJSON(w, c.sourcesBody())
-}
 
-func (c *Collector) handleSourcesToggle(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Key     string `json:"key"`
-		Enabled bool   `json:"enabled"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		server.MapError(w, apperr.Invalid{Message: "Invalid request body."}, c.log)
-		return
-	}
-	err := c.store.Update(func(cfg *config.Config) error {
-		for i := range cfg.Sources {
-			key, _ := config.SourceKey(cfg.Sources[i].URL)
-			if key == req.Key {
-				cfg.Sources[i].Enabled = req.Enabled
-				return nil
+	server.Handle(mux, "PATCH /api/sources", c.log, func(r *http.Request, req toggleSourceReq) (SourcesResp, error) {
+		return c.updateSources(func(cfg *config.Config) error {
+			for i := range cfg.Sources {
+				key, _ := config.SourceKey(cfg.Sources[i].URL)
+				if key == req.Key {
+					cfg.Sources[i].Enabled = req.Enabled
+					return nil
+				}
 			}
-		}
-		return apperr.NotFound{Message: "This source is no longer in the list. Refresh the page."}
+			return apperr.NotFound{Message: "This source is no longer in the list. Refresh the page."}
+		})
 	})
-	if server.MapError(w, err, c.log) {
-		return
-	}
-	server.WriteJSON(w, c.sourcesBody())
-}
 
-func (c *Collector) handleSourcesRemove(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Key string `json:"key"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		server.MapError(w, apperr.Invalid{Message: "Invalid request body."}, c.log)
-		return
-	}
-	err := c.store.Update(func(cfg *config.Config) error {
-		for i, s := range cfg.Sources {
-			key, _ := config.SourceKey(s.URL)
-			if key == req.Key {
-				cfg.Sources = append(cfg.Sources[:i], cfg.Sources[i+1:]...)
-				return nil
+	server.Handle(mux, "DELETE /api/sources", c.log, func(r *http.Request, req removeSourceReq) (SourcesResp, error) {
+		return c.updateSources(func(cfg *config.Config) error {
+			for i, s := range cfg.Sources {
+				key, _ := config.SourceKey(s.URL)
+				if key == req.Key {
+					cfg.Sources = append(cfg.Sources[:i], cfg.Sources[i+1:]...)
+					return nil
+				}
 			}
+			return apperr.NotFound{Message: "This source is no longer in the list. Refresh the page."}
+		})
+	})
+
+	server.Handle(mux, "PUT /api/sources/schedule", c.log, func(r *http.Request, req scheduleReq) (SourcesResp, error) {
+		d, err := time.ParseDuration(req.Interval)
+		if err != nil {
+			return SourcesResp{}, apperr.Invalid{Message: req.Interval}
 		}
-		return apperr.NotFound{Message: "This source is no longer in the list. Refresh the page."}
+		return c.updateSources(func(cfg *config.Config) error {
+			cfg.Collection.Auto = req.Auto
+			cfg.Collection.Interval = config.Duration(d)
+			return nil
+		})
 	})
-	if server.MapError(w, err, c.log) {
-		return
-	}
-	server.WriteJSON(w, c.sourcesBody())
-}
 
-func (c *Collector) handleSchedule(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Auto     bool   `json:"auto"`
-		Interval string `json:"interval"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		server.MapError(w, apperr.Invalid{Message: "Invalid request body."}, c.log)
-		return
-	}
-	d, err := time.ParseDuration(req.Interval)
-	if err != nil {
-		server.MapError(w, apperr.Invalid{Message: req.Interval}, c.log)
-		return
-	}
-	updateErr := c.store.Update(func(cfg *config.Config) error {
-		cfg.Collection.Auto = req.Auto
-		cfg.Collection.Interval = config.Duration(d)
-		return nil
+	server.Handle(mux, "POST /api/collect", c.log, func(r *http.Request, req collectReq) (server.StatusExtra, error) {
+		if req.Force || (!c.blocked && c.Due(c.now())) {
+			c.runner.Enqueue(runner.Spec{Kind: "collect"}) //nolint:errcheck
+		}
+		return c.buildStatusExtra(), nil
 	})
-	if server.MapError(w, updateErr, c.log) {
-		return
-	}
-	server.WriteJSON(w, c.sourcesBody())
-}
-
-// --- POST /api/collect -------------------------------------------------------
-
-func (c *Collector) handleCollect(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Force bool `json:"force"`
-	}
-	json.NewDecoder(r.Body).Decode(&req) //nolint:errcheck // default force=false on parse error
-
-	if req.Force || (!c.blocked && c.Due(c.now())) {
-		c.runner.Enqueue(runner.Spec{Kind: "collect"}) //nolint:errcheck
-	}
-
-	http.Redirect(w, r, "/api/status", http.StatusSeeOther)
 }
 
 // --- Source run helpers ------------------------------------------------------
@@ -531,8 +524,8 @@ func (c *Collector) querySourceRuns(key string) []sourceRunRec {
 	return out
 }
 
-// buildSourceStatus returns the status object for a source, or nil if it never ran.
-func (c *Collector) buildSourceStatus(key string) map[string]any {
+// buildSourceStatus returns the status for a source, or nil if it never ran.
+func (c *Collector) buildSourceStatus(key string) *SourceStatus {
 	history := c.querySourceRuns(key)
 	if len(history) == 0 {
 		return nil
@@ -573,7 +566,7 @@ func (c *Collector) buildSourceStatus(key string) map[string]any {
 			strconv.Itoa(lastSuccess.newCnt) + " new"
 	}
 
-	return map[string]any{"text": text, "attention": needsAttention(history)}
+	return &SourceStatus{Text: text, Attention: needsAttention(history)}
 }
 
 // needsAttention reports whether the source's last three runs (at least three)
@@ -620,10 +613,10 @@ func (c *Collector) addVacancyPage(ctx context.Context, p listing.Posting, s con
 
 // --- Helpers -----------------------------------------------------------------
 
-// sourcesBody builds the response body for all /api/sources endpoints.
-func (c *Collector) sourcesBody() map[string]any {
+// buildSourcesResp assembles the response for all /api/sources endpoints.
+func (c *Collector) buildSourcesResp() SourcesResp {
 	cfg := c.store.Get()
-	sources := make([]map[string]any, len(cfg.Sources))
+	sources := make([]Source, len(cfg.Sources))
 	for i, s := range cfg.Sources {
 		name := s.Name
 		if name == "" {
@@ -632,17 +625,17 @@ func (c *Collector) sourcesBody() map[string]any {
 			}
 		}
 		key, _ := config.SourceKey(s.URL)
-		sources[i] = map[string]any{
-			"key":     key,
-			"name":    name,
-			"url":     s.URL,
-			"enabled": s.Enabled,
-			"status":  c.buildSourceStatus(key),
+		sources[i] = Source{
+			Key:     key,
+			Name:    name,
+			URL:     s.URL,
+			Enabled: s.Enabled,
+			Status:  c.buildSourceStatus(key),
 		}
 	}
-	return map[string]any{
-		"sources":  sources,
-		"auto":     cfg.Collection.Auto,
-		"interval": cfg.Collection.Interval.String(),
+	return SourcesResp{
+		Sources:  sources,
+		Auto:     cfg.Collection.Auto,
+		Interval: cfg.Collection.Interval.String(),
 	}
 }

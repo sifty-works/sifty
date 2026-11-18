@@ -65,6 +65,7 @@ func apiGet(t *testing.T, ts *httptest.Server, path string) map[string]any {
 	}
 	var body map[string]any
 	json.NewDecoder(resp.Body).Decode(&body) //nolint:errcheck
+	checkShape(t, http.MethodGet, path, body)
 	return body
 }
 
@@ -81,7 +82,43 @@ func apiJSON(t *testing.T, ts *httptest.Server, method, path string, body any) (
 	defer resp.Body.Close()
 	var out map[string]any
 	json.NewDecoder(resp.Body).Decode(&out) //nolint:errcheck
+	if resp.StatusCode == http.StatusOK {
+		checkShape(t, method, path, out)
+	}
 	return out, resp.StatusCode
+}
+
+// checkShape validates body against the registered response type for the
+// given method and path. It is a no-op when no matching route is found.
+func checkShape(t *testing.T, method, path string, body map[string]any) {
+	t.Helper()
+	base, _, _ := strings.Cut(path, "?")
+	for _, ri := range server.Routes() {
+		m, pat, _ := strings.Cut(ri.Pattern, " ")
+		if m != method || ri.RespType == nil || !routeMatch(pat, base) {
+			continue
+		}
+		for _, v := range server.ValidateShape(ri.RespType, body, "") {
+			t.Errorf("response shape %s %s: %s", method, path, v)
+		}
+		return
+	}
+}
+
+// routeMatch reports whether path matches pat. Segments enclosed in {} match
+// any non-empty path segment; all others must be equal.
+func routeMatch(pat, path string) bool {
+	ps := strings.Split(strings.TrimPrefix(pat, "/"), "/")
+	qs := strings.Split(strings.TrimPrefix(path, "/"), "/")
+	if len(ps) != len(qs) {
+		return false
+	}
+	for i, seg := range ps {
+		if !strings.HasPrefix(seg, "{") && seg != qs[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func getRows(body map[string]any) []any {
@@ -869,9 +906,10 @@ func TestVacancyView_ApplyRules(t *testing.T) {
 	}
 }
 
-// TestVacancyView_FoundOn checks that sources are rendered as "Found on <name>",
-// using the configured name when available, the host otherwise.
-func TestVacancyView_FoundOn(t *testing.T) {
+// TestVacancyView_Sources checks that sources are returned as {name, url?} objects,
+// using the configured name when available and the host otherwise, with url set for
+// http(s) source keys and omitted for opaque identifiers.
+func TestVacancyView_Sources(t *testing.T) {
 	d := openTestDB(t)
 	id := add(t, newCat(d), post("https://named.example.com/jobs/f1", "R", "Co"))
 	nowStr := testNow.UTC().Format(time.RFC3339)
@@ -890,13 +928,23 @@ func TestVacancyView_FoundOn(t *testing.T) {
 	}
 	srcs, _ := body["sources"].([]any)
 	if len(srcs) != 2 {
-		t.Fatalf("sources: got %d, want 2", len(srcs))
+		t.Fatalf("sources: got %d items, want 2", len(srcs))
 	}
-	if s, _ := srcs[0].(string); s != "Found on Named Board" {
-		t.Errorf("named: got %q", s)
+	// First source: opaque key "src" mapped to "Named Board"; no URL because "src" is not http(s).
+	s0, _ := srcs[0].(map[string]any)
+	if s0["name"] != "Named Board" {
+		t.Errorf("named source name: got %q, want %q", s0["name"], "Named Board")
 	}
-	if s, _ := srcs[1].(string); s != "Found on hn.example.org" {
-		t.Errorf("unnamed: got %q", s)
+	if _, hasURL := s0["url"]; hasURL {
+		t.Errorf("named source: url should be absent for opaque key, got %q", s0["url"])
+	}
+	// Second source: "https://hn.example.org" → name from host, URL present.
+	s1, _ := srcs[1].(map[string]any)
+	if s1["name"] != "hn.example.org" {
+		t.Errorf("unnamed source name: got %q, want %q", s1["name"], "hn.example.org")
+	}
+	if s1["url"] != "https://hn.example.org" {
+		t.Errorf("unnamed source url: got %q, want %q", s1["url"], "https://hn.example.org")
 	}
 }
 

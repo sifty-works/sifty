@@ -34,6 +34,15 @@ check: build
 	go vet ./...
 	@echo "--- go test ---"
 	go test ./...
+	@echo "--- openapi ---"
+	@tmp=$$(mktemp); \
+	 $(BINARY) gen-api --out "$$tmp"; \
+	 if ! diff -q api/openapi.yaml "$$tmp" > /dev/null 2>&1; then \
+	   echo "api/openapi.yaml is stale; run '$(BINARY) gen-api' to regenerate"; \
+	   diff api/openapi.yaml "$$tmp"; \
+	   rm -f "$$tmp"; exit 1; \
+	 fi; \
+	 rm -f "$$tmp"
 	@echo "--- npm check ---"
 	npm --prefix web run check
 

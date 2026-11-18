@@ -23,6 +23,46 @@ import (
 	"github.com/sifty-works/sifty/internal/apperr"
 )
 
+// CollectProgress describes a running collection job.
+type CollectProgress struct {
+	Done  int    `json:"done"`
+	Total int    `json:"total"`
+	Text  string `json:"text"`
+}
+
+// LastRun describes the outcome of the most recent collection run.
+type LastRun struct {
+	State    string `json:"state"`
+	Finished string `json:"finished"`
+	Message  string `json:"message"`
+}
+
+// Attention describes sources needing attention.
+type Attention struct {
+	Count int    `json:"count"`
+	Text  string `json:"text"`
+}
+
+// StatusExtra carries the collection-specific fields merged into GET /api/status.
+// It is provided by the Collector via Options.Status.
+type StatusExtra struct {
+	Collecting *CollectProgress `json:"collecting"`
+	LastRun    *LastRun         `json:"lastRun"`
+	Catalogue  int64            `json:"catalogue"`
+	Attention  *Attention       `json:"attention"`
+}
+
+// StatusResp is the response body for GET /api/status.
+type StatusResp struct {
+	Version    string           `json:"version"`
+	Offline    bool             `json:"offline"`
+	Debug      bool             `json:"debug"`
+	Collecting *CollectProgress `json:"collecting"`
+	LastRun    *LastRun         `json:"lastRun"`
+	Catalogue  int64            `json:"catalogue"`
+	Attention  *Attention       `json:"attention"`
+}
+
 const (
 	maxBodyBytes  = 1 << 20 // 1 MB
 	slowThreshold = 500 * time.Millisecond
@@ -38,8 +78,8 @@ type Options struct {
 	Offline bool
 	Debug   bool
 	Logger  *slog.Logger
-	Static  fs.FS                 // web/dist subtree; nil when the frontend was not built
-	Status  func() map[string]any // extra keys merged into GET /api/status; nil is allowed
+	Static  fs.FS              // web/dist subtree; nil when the frontend was not built
+	Status  func() StatusExtra // collection status merged into GET /api/status; nil is allowed
 }
 
 // New builds and returns the HTTP handler for the application.
@@ -47,19 +87,17 @@ type Options struct {
 func New(opts Options, routes func(*http.ServeMux)) http.Handler {
 	mux := http.NewServeMux()
 
-	// Status endpoint: fixed keys plus any keys from the Status function.
-	mux.HandleFunc("GET /api/status", func(w http.ResponseWriter, r *http.Request) {
-		out := map[string]any{
-			"version": opts.Version,
-			"offline": opts.Offline,
-			"debug":   opts.Debug,
-		}
+	// Status endpoint.
+	Handle(mux, "GET /api/status", opts.Logger, func(r *http.Request, _ struct{}) (StatusResp, error) {
+		resp := StatusResp{Version: opts.Version, Offline: opts.Offline, Debug: opts.Debug}
 		if opts.Status != nil {
-			for k, v := range opts.Status() {
-				out[k] = v
-			}
+			extra := opts.Status()
+			resp.Collecting = extra.Collecting
+			resp.LastRun = extra.LastRun
+			resp.Catalogue = extra.Catalogue
+			resp.Attention = extra.Attention
 		}
-		writeJSON(w, http.StatusOK, out)
+		return resp, nil
 	})
 
 	// Register capability routes.

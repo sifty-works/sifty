@@ -183,6 +183,8 @@ type Response struct { Text string; InTokens, OutTokens int }
 
 ## Endpoints
 
+`api/openapi.yaml` is the one description of the HTTP interface. It is generated from the Go types by `sifty gen-api` and kept up to date by `make check`. The table below summarises the full endpoint set; the implemented routes are described by the generated schema.
+
 | Group | Endpoints |
 |---|---|
 | Lists and vacancies | `GET /api/vacancies?profile&stage&q&sort&filters` (rows of about 350 bytes, counts per stage and per filter value); `GET /api/vacancies/{id}?profile`; `POST /api/vacancies/{id}/decision {profile,from,to,reason?,confirmed?}`; `POST /api/vacancies/{id}/seen`; `DELETE /api/vacancies/{id}?profile`; `POST /api/vacancies/{id}/refresh` |

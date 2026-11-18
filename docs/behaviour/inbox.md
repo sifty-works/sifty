@@ -124,7 +124,7 @@ Then the dialog "Did you submit your application?" asks for the outcome: Not yet
 
 - the industries as badges and the company;
 - the title;
-- "Listing expired", the publication date, "Found on X" for each source, "Original listing ↗", and "Applied <date> from <profile>" when there is an application;
+- "Listing expired", the publication date, each source by name as a link to the source address (hover shows "Found on <name>"), "Original listing ↗", and "Applied <date> from <profile>" when there is an application;
 - the actions of the current stage.
 
 **Tabs** Overview and Application. Application is unavailable in Inbox with the hint "Shortlist this role to open Application".

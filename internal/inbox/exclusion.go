@@ -131,10 +131,31 @@ func previewCount(ctx context.Context, database *db.DB, kind, value string) (int
 	return before - after, nil
 }
 
-func exclResponse(rows []exclRow) map[string]any {
-	list := make([]map[string]any, len(rows))
+// ExclusionKind is the kind of an exclusion rule.
+type ExclusionKind string
+
+const (
+	KindWord    ExclusionKind = "word"
+	KindCompany ExclusionKind = "company"
+)
+
+// Exclusion is one exclusion rule as returned by the API.
+type Exclusion struct {
+	ID    int64         `json:"id"`
+	Kind  ExclusionKind `json:"kind"`
+	Value string        `json:"value"`
+	Scope string        `json:"scope"`
+}
+
+// ExclusionsResp is the response body for GET/POST/DELETE /api/exclusions.
+type ExclusionsResp struct {
+	Exclusions []Exclusion `json:"exclusions"`
+}
+
+func toExclusionsResp(rows []exclRow) ExclusionsResp {
+	list := make([]Exclusion, len(rows))
 	for i, r := range rows {
-		list[i] = map[string]any{"id": r.id, "kind": r.kind, "value": r.value, "scope": "All profiles"}
+		list[i] = Exclusion{ID: r.id, Kind: ExclusionKind(r.kind), Value: r.value, Scope: "All profiles"}
 	}
-	return map[string]any{"exclusions": list}
+	return ExclusionsResp{Exclusions: list}
 }
