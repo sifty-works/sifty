@@ -178,7 +178,7 @@ type Response struct { Text string; InTokens, OutTokens int }
 
 ## Frontend
 
-- `api/client.ts`: one typed function per endpoint. `state/`: the list cache by profile, stage and query, optimistic decisions, decisions of the session, filters, query and sort remembered in the browser. `views/`: shell, tabs, list, row, filters, vacancy view, fit band, ask and offer cards, listing, Shortlist check, dialogs, profile pages, settings pages. `keyboard.ts`: keys by physical position.
+- `api/client.ts`: one typed function per endpoint. `state/`: the list cache by profile, stage and query; decisions of the session (decided rows kept on screen until reload; the decision answer replaces the row; decision p95 under 20 ms); filters, query and sort remembered in the browser. `views/`: shell, tabs, list, row, filters, vacancy view, fit band, ask and offer cards, listing, Shortlist check, dialogs, profile pages, settings pages. `keyboard.ts`: keys by physical position.
 - Views do not call the API directly and compute no verdict or threshold.
 
 ## Endpoints

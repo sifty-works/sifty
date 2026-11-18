@@ -4,6 +4,7 @@ Notable changes of Sifty, newest first. Versions follow `MAJOR.MINOR.PATCH`.
 
 ## Unreleased
 
+- Select (Y), Dismiss (N), Move to Inbox, Undo and Restore on the vacancy page; decided Inbox roles stay on screen until reload; Apply (A) opens the employer's page and asks whether the application was submitted; Delete asks before removing a role for good.
 - Inbox, Shortlist and Archive (Applied and Dismissed) tabs with their counts; the list sits beside the vacancy page, whose width can be dragged; J and K move through the list, unread roles are bold until opened, and the page shows where the role was found, its status, its actions and the listing text.
 - The server answers the vacancy page: where the role was found, the original listing, its status, the actions of its stage with the apply address, and the listing text with its state; an expired listing is marked in the list too.
 - `sifty import-v1` also brings the profiles that are not archived, their decisions (saved becomes Shortlist, rejected Dismissed with its reason), the confirmed applications and the read marks, and reports any difference between a vacancy's old status and its first profile's decision.
