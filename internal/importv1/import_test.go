@@ -68,6 +68,26 @@ CREATE TABLE collection_runs(
   mode TEXT NOT NULL,
   config_hash TEXT NOT NULL
 );
+CREATE TABLE stop_words(
+  id         INTEGER PRIMARY KEY,
+  word       TEXT    NOT NULL,
+  created_at TEXT    NOT NULL,
+  UNIQUE(word)
+);
+CREATE TABLE block_rules(
+  id         INTEGER PRIMARY KEY,
+  kind       TEXT    NOT NULL,
+  value      TEXT    NOT NULL,
+  created_at TEXT    NOT NULL,
+  UNIQUE(kind, value)
+);
+CREATE TABLE user_profiles(
+  id         TEXT    PRIMARY KEY,
+  revision   INTEGER NOT NULL,
+  data       TEXT    NOT NULL,
+  created_at TEXT    NOT NULL,
+  updated_at TEXT    NOT NULL
+);
 `
 
 // makeOldDB creates a fresh old-schema SQLite database at path and sets its
@@ -1224,5 +1244,50 @@ func TestImport_VacancyDroppedWhenCanonicalFails(t *testing.T) {
 	}
 	if !strings.Contains(report, "dropped id=1") {
 		t.Errorf("report missing drop notice: %s", report)
+	}
+}
+
+func TestImport_ExclusionsImported(t *testing.T) {
+	fromDir := makeOldDir(t, "")
+	oldDB := openOldDB(t, fromDir)
+
+	// Word exclusions from stop_words.
+	oldDB.Exec(`INSERT INTO stop_words (word, created_at) VALUES ('rust', '2024-01-01T00:00:00Z')`)   //nolint:errcheck
+	oldDB.Exec(`INSERT INTO stop_words (word, created_at) VALUES ('crypto', '2024-01-02T00:00:00Z')`) //nolint:errcheck
+	// Company exclusions from block_rules.
+	oldDB.Exec(`INSERT INTO block_rules (kind, value, created_at) VALUES ('company', 'Globex', '2024-01-01T00:00:00Z')`) //nolint:errcheck
+	// Source-kind block rule must not be imported.
+	oldDB.Exec(`INSERT INTO block_rules (kind, value, created_at) VALUES ('source', 'example.com', '2024-01-01T00:00:00Z')`) //nolint:errcheck
+	// Per-profile except-words in user_profiles.data.
+	oldDB.Exec(`INSERT INTO user_profiles (id, revision, data, created_at, updated_at) VALUES ('p1', 1, '{"search":{"except":["machine learning","blockchain"]}}', '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z')`) //nolint:errcheck
+
+	targetDir := t.TempDir()
+	report := runImport(t, fromDir, targetDir)
+	newDB := openNewDB(t, targetDir)
+
+	// 2 word exclusions and 1 company exclusion should be written.
+	var n int
+	newDB.QueryRow(`SELECT count(*) FROM exclusion`).Scan(&n) //nolint:errcheck
+	if n != 3 {
+		t.Errorf("exclusion count: got %d, want 3", n)
+	}
+	var kind string
+	newDB.QueryRow(`SELECT kind FROM exclusion WHERE value='Globex'`).Scan(&kind) //nolint:errcheck
+	if kind != "company" {
+		t.Errorf("Globex: kind=%q, want company", kind)
+	}
+	// Source block_rules must not appear.
+	var cnt int
+	newDB.QueryRow(`SELECT count(*) FROM exclusion WHERE value='example.com'`).Scan(&cnt) //nolint:errcheck
+	if cnt != 0 {
+		t.Errorf("source block rule must not be imported: got %d", cnt)
+	}
+	// Report includes exclusion count.
+	if !strings.Contains(report, "Exclusions: 3 written") {
+		t.Errorf("report missing exclusion count: %s", report)
+	}
+	// Report includes per-profile except-words.
+	if !strings.Contains(report, "not imported") {
+		t.Errorf("report missing per-profile except words notice: %s", report)
 	}
 }

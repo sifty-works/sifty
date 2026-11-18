@@ -19,6 +19,7 @@ import (
 	"github.com/sifty-works/sifty/internal/config"
 	"github.com/sifty-works/sifty/internal/db"
 	"github.com/sifty-works/sifty/internal/fetch"
+	"github.com/sifty-works/sifty/internal/inbox"
 	"github.com/sifty-works/sifty/internal/listing"
 	"github.com/sifty-works/sifty/internal/runner"
 	"github.com/sifty-works/sifty/internal/server"
@@ -176,7 +177,7 @@ func (c *Collector) run(ctx context.Context, j *runner.Job) error {
 				srcStarted := c.now()
 				postings, listErr := source.For(u).List(ctx, c.fetcher, source.SiteConfig{Name: s.Name, URL: s.URL})
 
-				var cntNew, cntUpdated, cntUnchanged, cntRemoved int
+				var cntNew, cntUpdated, cntUnchanged, cntRemoved, cntExcluded int
 				if listErr == nil {
 					for _, p := range postings {
 						canon, err := listing.Canonical(p.URL)
@@ -201,24 +202,43 @@ func (c *Collector) run(ctx context.Context, j *runner.Job) error {
 							cntRemoved++
 							continue
 						}
-						needDetail := p.Text == "" && (k.New || (!k.HasText &&
-							(k.Requested.IsZero() || c.now().Sub(k.Requested) > 7*24*time.Hour)))
-						if needDetail {
-							cfg := source.SiteConfig{Name: s.Name, URL: p.URL}
-							det, detErr := source.Detail(ctx, c.fetcher, p, cfg)
-							switch {
-							case detErr == nil:
-								p = det
-								p.Requested = true
-							case errors.Is(detErr, fetch.ErrBlocked):
-								p.TextState = listing.TextBlocked
-							case !errors.Is(detErr, fetch.ErrOffline) && !errors.Is(detErr, fetch.ErrRefused):
-								p.Requested = true
+						// Skip Detail but still upsert if the posting matches an exclusion.
+						excluded := false
+						if excl, exclErr := inbox.Excluded(ctx, c.db, p.Title, p.Company); exclErr != nil {
+							c.log.Warn("collect: exclusion check", "error", exclErr)
+						} else {
+							excluded = excl
+						}
+						if !excluded {
+							needDetail := p.Text == "" && (k.New || (!k.HasText &&
+								(k.Requested.IsZero() || c.now().Sub(k.Requested) > 7*24*time.Hour)))
+							if needDetail {
+								cfg := source.SiteConfig{Name: s.Name, URL: p.URL}
+								det, detErr := source.Detail(ctx, c.fetcher, p, cfg)
+								switch {
+								case detErr == nil:
+									p = det
+									p.Requested = true
+								case errors.Is(detErr, fetch.ErrBlocked):
+									p.TextState = listing.TextBlocked
+								case !errors.Is(detErr, fetch.ErrOffline) && !errors.Is(detErr, fetch.ErrRefused):
+									p.Requested = true
+								}
+								// Check exclusion again on fields revealed by the vacancy's own page.
+								if excl, exclErr := inbox.Excluded(ctx, c.db, p.Title, p.Company); exclErr != nil {
+									c.log.Warn("collect: exclusion check after detail", "error", exclErr)
+								} else {
+									excluded = excl
+								}
 							}
 						}
 						_, outcome, upsertErr := c.catalog.Upsert(ctx, p, key)
 						if upsertErr != nil {
 							c.log.Warn("collect: upsert failed", "url", p.URL, "error", upsertErr)
+							continue
+						}
+						if excluded {
+							cntExcluded++
 							continue
 						}
 						switch outcome {
@@ -243,7 +263,7 @@ func (c *Collector) run(ctx context.Context, j *runner.Job) error {
 
 				runStatus, errText := sourceRunStatus(listErr, len(postings))
 				c.writeSourceRun(j.ID, key, srcStarted, c.now(), runStatus, errText,
-					len(postings), cntNew, cntUpdated, cntUnchanged, 0, cntRemoved)
+					len(postings), cntNew, cntUpdated, cntUnchanged, cntExcluded, cntRemoved)
 
 				mu.Lock()
 				doneCount++

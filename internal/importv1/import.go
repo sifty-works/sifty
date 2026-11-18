@@ -5,6 +5,7 @@ package importv1
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -70,6 +71,9 @@ type importReport struct {
 
 	LastRunFound   bool
 	LastRunWritten bool
+
+	ExclusionsWritten  int
+	ProfileExceptWords []string // words from per-profile except lists, reported but not imported
 
 	NonImportedKeys []string
 }
@@ -629,6 +633,53 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 		}
 	}
 
+	// Write exclusions from stop_words (word kind) and block_rules company kind.
+	stopWords, err := readStopWords(ctx, copyDB)
+	if err != nil {
+		return nil, fmt.Errorf("reading stop_words: %w", err)
+	}
+	for _, sw := range stopWords {
+		value := strings.TrimSpace(sw.word)
+		if value == "" {
+			continue
+		}
+		norm := strings.ToLower(value)
+		res, err := tx.ExecContext(ctx,
+			`INSERT OR IGNORE INTO exclusion (kind,value,norm,profile_id,created) VALUES ('word',?,?,0,?)`,
+			value, norm, sw.created)
+		if err != nil {
+			return nil, fmt.Errorf("inserting word exclusion %q: %w", value, err)
+		}
+		if n, _ := res.RowsAffected(); n > 0 {
+			report.ExclusionsWritten++
+		}
+	}
+	companies, err := readBlockRules(ctx, copyDB)
+	if err != nil {
+		return nil, fmt.Errorf("reading block_rules: %w", err)
+	}
+	for _, c := range companies {
+		value := strings.TrimSpace(c.value)
+		if value == "" || strings.EqualFold(value, "Unknown") {
+			continue
+		}
+		norm := strings.TrimSuffix(listing.Identity(value, ""), "|")
+		res, err := tx.ExecContext(ctx,
+			`INSERT OR IGNORE INTO exclusion (kind,value,norm,profile_id,created) VALUES ('company',?,?,0,?)`,
+			value, norm, c.created)
+		if err != nil {
+			return nil, fmt.Errorf("inserting company exclusion %q: %w", value, err)
+		}
+		if n, _ := res.RowsAffected(); n > 0 {
+			report.ExclusionsWritten++
+		}
+	}
+	profileWords, err := readProfileExceptWords(ctx, copyDB)
+	if err != nil {
+		return nil, fmt.Errorf("reading profile except words: %w", err)
+	}
+	report.ProfileExceptWords = profileWords
+
 	// Write last run as a job row.
 	if !lastRunTime.IsZero() {
 		ts := lastRunTime.UTC().Format("2006-01-02T15:04:05Z")
@@ -873,6 +924,81 @@ func parseOldDate(s string) (time.Time, error) {
 
 // --- DB readers ---
 
+type oldStopWord struct{ word, created string }
+type oldBlockRule struct{ value, created string }
+
+func readStopWords(ctx context.Context, db *sql.DB) ([]oldStopWord, error) {
+	rows, err := db.QueryContext(ctx, `SELECT word, created_at FROM stop_words ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []oldStopWord
+	for rows.Next() {
+		var r oldStopWord
+		if err := rows.Scan(&r.word, &r.created); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+func readBlockRules(ctx context.Context, db *sql.DB) ([]oldBlockRule, error) {
+	rows, err := db.QueryContext(ctx, `SELECT value, created_at FROM block_rules WHERE kind='company' ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []oldBlockRule
+	for rows.Next() {
+		var r oldBlockRule
+		if err := rows.Scan(&r.value, &r.created); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// readProfileExceptWords collects the unique except-words from all user profile data blobs.
+func readProfileExceptWords(ctx context.Context, db *sql.DB) ([]string, error) {
+	rows, err := db.QueryContext(ctx, `SELECT data FROM user_profiles`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	seen := make(map[string]string) // lowercase → original
+	for rows.Next() {
+		var data string
+		if err := rows.Scan(&data); err != nil {
+			continue
+		}
+		var d struct {
+			Search struct {
+				Except []string `json:"except"`
+			} `json:"search"`
+		}
+		if err := json.Unmarshal([]byte(data), &d); err != nil {
+			continue
+		}
+		for _, w := range d.Search.Except {
+			if w = strings.TrimSpace(w); w != "" {
+				lower := strings.ToLower(w)
+				if _, ok := seen[lower]; !ok {
+					seen[lower] = w
+				}
+			}
+		}
+	}
+	var out []string
+	for _, v := range seen {
+		out = append(out, v)
+	}
+	sort.Strings(out)
+	return out, rows.Err()
+}
+
 func readJobs(ctx context.Context, db *sql.DB) ([]oldJob, error) {
 	rows, err := db.QueryContext(ctx, `
 		SELECT id, identity, title, company, original_url, apply_url,
@@ -1054,6 +1180,12 @@ func formatReport(r *importReport) string {
 		}
 	} else {
 		fmt.Fprintf(&sb, "Last run: none found\n")
+	}
+
+	fmt.Fprintf(&sb, "Exclusions: %d written\n", r.ExclusionsWritten)
+	if len(r.ProfileExceptWords) > 0 {
+		fmt.Fprintf(&sb, "Per-profile except words not imported: %s\n",
+			strings.Join(r.ProfileExceptWords, ", "))
 	}
 
 	if len(r.NonImportedKeys) > 0 {

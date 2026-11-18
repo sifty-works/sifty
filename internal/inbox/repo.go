@@ -39,25 +39,27 @@ const orderNewest = `ORDER BY
 	first_seen DESC,
 	id DESC`
 
-// count returns the total number of vacancies.
+// count returns the total number of non-excluded vacancies.
 func (r *repo) count(ctx context.Context) (int, error) {
 	var n int
-	if err := r.db.QueryRowContext(ctx, `SELECT count(*) FROM vacancy`).Scan(&n); err != nil {
+	if err := r.db.QueryRowContext(ctx,
+		`SELECT count(*) FROM vacancy WHERE `+notExcluded).Scan(&n); err != nil {
 		return 0, fmt.Errorf("inbox: count: %w", err)
 	}
 	return n, nil
 }
 
-// all returns all rows in Newest order, without body.
+// all returns all non-excluded rows in Newest order, without body.
 func (r *repo) all(ctx context.Context) ([]repoRow, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT `+selectCols+` FROM vacancy `+orderNewest)
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT `+selectCols+` FROM vacancy WHERE `+notExcluded+` `+orderNewest)
 	if err != nil {
 		return nil, fmt.Errorf("inbox: all: %w", err)
 	}
 	return scanRows(rows)
 }
 
-// searchMatches returns rows matching q. Title, company and tags are always
+// searchMatches returns non-excluded rows matching q. Title, company and tags are always
 // searched with LIKE. When q is at least 3 characters the vacancy body is
 // also searched via the FTS trigram index.
 func (r *repo) searchMatches(ctx context.Context, q string) ([]repoRow, error) {
@@ -68,13 +70,15 @@ func (r *repo) searchMatches(ctx context.Context, q string) ([]repoRow, error) {
 		fts := ftsPhrase(q)
 		sqlRows, err = r.db.QueryContext(ctx, `
 			SELECT `+selectCols+` FROM vacancy
-			WHERE instr(lower(title), ?) > 0 OR instr(lower(company), ?) > 0 OR instr(lower(tags), ?) > 0
-			   OR id IN (SELECT rowid FROM vacancy_fts WHERE vacancy_fts MATCH ?)
+			WHERE (instr(lower(title), ?) > 0 OR instr(lower(company), ?) > 0 OR instr(lower(tags), ?) > 0
+			   OR id IN (SELECT rowid FROM vacancy_fts WHERE vacancy_fts MATCH ?))
+			AND `+notExcluded+`
 			`+orderNewest, low, low, low, fts)
 	} else {
 		sqlRows, err = r.db.QueryContext(ctx, `
 			SELECT `+selectCols+` FROM vacancy
-			WHERE instr(lower(title), ?) > 0 OR instr(lower(company), ?) > 0 OR instr(lower(tags), ?) > 0
+			WHERE (instr(lower(title), ?) > 0 OR instr(lower(company), ?) > 0 OR instr(lower(tags), ?) > 0)
+			AND `+notExcluded+`
 			`+orderNewest, low, low, low)
 	}
 	if err != nil {

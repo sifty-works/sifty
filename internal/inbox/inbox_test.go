@@ -1,6 +1,7 @@
 package inbox_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -43,7 +44,7 @@ func newTestServer(t *testing.T, d *db.DB) *httptest.Server {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	h := server.New(server.Options{Version: "test", Port: 9999, Logger: logger},
 		func(mux *http.ServeMux) {
-			mux.Handle("GET /api/vacancies", inbox.Handler(d, testNowFn, logger))
+			inbox.RegisterRoutes(mux, d, testNowFn, logger)
 		})
 	ts := httptest.NewServer(h)
 	t.Cleanup(ts.Close)
@@ -342,6 +343,186 @@ func TestSearch(t *testing.T) {
 		if rs := getRows(apiGet(t, ts, "/api/vacancies?q="+q)); len(rs) != 4 {
 			t.Errorf("q=%q: rows %d, want 4", q, len(rs))
 		}
+	}
+}
+
+// apiPostJSON posts JSON to path and returns the decoded body and status code.
+func apiPostJSON(t *testing.T, ts *httptest.Server, path string, body any) (map[string]any, int) {
+	t.Helper()
+	b, _ := json.Marshal(body)
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+path, bytes.NewReader(b))
+	req.Host = "127.0.0.1:9999"
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := ts.Client().Do(req)
+	if err != nil {
+		t.Fatalf("POST %s: %v", path, err)
+	}
+	defer resp.Body.Close()
+	var out map[string]any
+	json.NewDecoder(resp.Body).Decode(&out) //nolint:errcheck
+	return out, resp.StatusCode
+}
+
+// apiDeleteJSON sends a DELETE with a JSON body and returns the decoded body and status code.
+func apiDeleteJSON(t *testing.T, ts *httptest.Server, path string, body any) (map[string]any, int) {
+	t.Helper()
+	b, _ := json.Marshal(body)
+	req, _ := http.NewRequest(http.MethodDelete, ts.URL+path, bytes.NewReader(b))
+	req.Host = "127.0.0.1:9999"
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := ts.Client().Do(req)
+	if err != nil {
+		t.Fatalf("DELETE %s: %v", path, err)
+	}
+	defer resp.Body.Close()
+	var out map[string]any
+	json.NewDecoder(resp.Body).Decode(&out) //nolint:errcheck
+	return out, resp.StatusCode
+}
+
+// --- Exclusions ---
+
+func TestExclusions_CRUD(t *testing.T) {
+	d := openTestDB(t)
+	ts := newTestServer(t, d)
+
+	body := apiGet(t, ts, "/api/exclusions")
+	if excls, _ := body["exclusions"].([]any); len(excls) != 0 {
+		t.Fatalf("initial list: want 0, got %d", len(excls))
+	}
+
+	body, status := apiPostJSON(t, ts, "/api/exclusions", map[string]any{"kind": "word", "value": "kotlin"})
+	if status != http.StatusOK {
+		t.Fatalf("POST: status %d", status)
+	}
+	excls, _ := body["exclusions"].([]any)
+	if len(excls) != 1 {
+		t.Fatalf("after add: want 1, got %d", len(excls))
+	}
+	row, _ := excls[0].(map[string]any)
+	if row["scope"] != "All profiles" {
+		t.Errorf("scope: got %v", row["scope"])
+	}
+	id := row["id"].(float64)
+
+	body, status = apiDeleteJSON(t, ts, "/api/exclusions", map[string]any{"id": id})
+	if status != http.StatusOK {
+		t.Fatalf("DELETE: status %d", status)
+	}
+	if excls, _ := body["exclusions"].([]any); len(excls) != 0 {
+		t.Fatalf("after delete: want 0, got %d", len(excls))
+	}
+}
+
+func TestExclusions_Duplicate(t *testing.T) {
+	d := openTestDB(t)
+	ts := newTestServer(t, d)
+	apiPostJSON(t, ts, "/api/exclusions", map[string]any{"kind": "word", "value": "ruby"})
+	body, status := apiPostJSON(t, ts, "/api/exclusions", map[string]any{"kind": "word", "value": "ruby"})
+	if status != http.StatusOK {
+		t.Fatalf("duplicate: status %d", status)
+	}
+	if excls, _ := body["exclusions"].([]any); len(excls) != 1 {
+		t.Fatalf("duplicate: want 1, got %d", len(excls))
+	}
+}
+
+func TestExclusions_UnknownCompanyRefused(t *testing.T) {
+	d := openTestDB(t)
+	ts := newTestServer(t, d)
+	_, status := apiPostJSON(t, ts, "/api/exclusions", map[string]any{"kind": "company", "value": "Unknown"})
+	if status != http.StatusUnprocessableEntity {
+		t.Fatalf("Unknown company: status %d, want 422", status)
+	}
+}
+
+func TestExclusions_Preview(t *testing.T) {
+	d := openTestDB(t)
+	cat := newCat(d)
+	add(t, cat, post("https://example.com/jobs/pv1", "Rust Engineer", "Zephyr"))
+	add(t, cat, post("https://example.com/jobs/pv2", "Go Developer", "Globex"))
+	ts := newTestServer(t, d)
+
+	for _, tc := range []struct{ kind, value, want string }{
+		{"word", "rust", "Would hide 1 role"},
+		{"word", "engineer", "Would hide 1 role"},
+		{"word", "xyznothing", "Would hide 0 roles"},
+		{"company", "Zephyr", "Would hide 1 role"},
+		{"company", "Globex", "Would hide 1 role"},
+	} {
+		body := apiGet(t, ts, "/api/exclusions/preview?kind="+tc.kind+"&value="+tc.value)
+		if text, _ := body["text"].(string); text != tc.want {
+			t.Errorf("preview kind=%s value=%s: got %q, want %q", tc.kind, tc.value, text, tc.want)
+		}
+	}
+}
+
+func TestExclusions_Filter(t *testing.T) {
+	d := openTestDB(t)
+	cat := newCat(d)
+	add(t, cat, post("https://example.com/jobs/ex1", "Frontend Developer", "Globex"))
+	add(t, cat, post("https://example.com/jobs/ex2", "Backend Engineer", "Acme Corp"))
+	// Greenhouse board-name rule: apply_url board name differs from stored company.
+	add(t, cat, listing.Posting{
+		URL: "https://example.com/jobs/ex3", Title: "Staff Engineer", Company: "Widget Co",
+		ApplyURL: "https://boards.greenhouse.io/widgetboard/jobs/999",
+		Text:     "job", TextKind: listing.Plain, TextState: listing.TextFull,
+	})
+	ts := newTestServer(t, d)
+
+	check := func(label string, wantRows int, wantTotal float64) {
+		t.Helper()
+		lb := apiGet(t, ts, "/api/vacancies")
+		if rs := getRows(lb); len(rs) != wantRows {
+			t.Errorf("%s: rows %d, want %d", label, len(rs), wantRows)
+		}
+		if total, _ := lb["total"].(float64); total != wantTotal {
+			t.Errorf("%s: total %v, want %v", label, total, wantTotal)
+		}
+	}
+
+	check("initial", 3, 3)
+
+	// Word exclusion hides matching title; search also returns nothing.
+	body, _ := apiPostJSON(t, ts, "/api/exclusions", map[string]any{"kind": "word", "value": "frontend"})
+	id1 := body["exclusions"].([]any)[0].(map[string]any)["id"].(float64)
+	check("word filter", 2, 2)
+	if rs := getRows(apiGet(t, ts, "/api/vacancies?q=frontend")); len(rs) != 0 {
+		t.Errorf("word search: rows %d, want 0", len(rs))
+	}
+	apiDeleteJSON(t, ts, "/api/exclusions", map[string]any{"id": id1})
+	check("after word remove", 3, 3)
+
+	// Company exclusion hides vacancy by normalised identity.
+	body, _ = apiPostJSON(t, ts, "/api/exclusions", map[string]any{"kind": "company", "value": "Acme Corp"})
+	id2 := body["exclusions"].([]any)[0].(map[string]any)["id"].(float64)
+	check("company filter", 2, 2)
+	apiDeleteJSON(t, ts, "/api/exclusions", map[string]any{"id": id2})
+	check("after company remove", 3, 3)
+
+	// Greenhouse board-name rule: "widgetboard" does not match "Widget Co" by identity
+	// but matches via apply_url containing .greenhouse.io/widgetboard/jobs/.
+	body, _ = apiPostJSON(t, ts, "/api/exclusions", map[string]any{"kind": "company", "value": "widgetboard"})
+	check("greenhouse rule", 2, 2)
+}
+
+func TestExclusions_UnknownPlaceholderNotMatchedByWord(t *testing.T) {
+	d := openTestDB(t)
+	cat := newCat(d)
+	// Company "Unknown" is a placeholder assigned before the vacancy's own page is read.
+	add(t, cat, post("https://example.com/jobs/unk1", "Frontend Developer", "Unknown"))
+	// A vacancy whose title contains "unknown" should still be hidden.
+	add(t, cat, post("https://example.com/jobs/unk2", "Unknown Role", "Nexus"))
+	ts := newTestServer(t, d)
+
+	apiPostJSON(t, ts, "/api/exclusions", map[string]any{"kind": "word", "value": "unknown"})
+
+	rs := getRows(apiGet(t, ts, "/api/vacancies"))
+	if len(rs) != 1 {
+		t.Fatalf("rows: got %d, want 1 (placeholder company preserved)", len(rs))
+	}
+	if got := field(rs[0], "title"); got != "Frontend Developer" {
+		t.Errorf("remaining row: got %q, want Frontend Developer", got)
 	}
 }
 

@@ -132,7 +132,7 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		Static:  web.StaticFS(),
 		Status:  col.StatusFunc(),
 	}, func(mux *http.ServeMux) {
-		mux.Handle("GET /api/vacancies", inbox.Handler(database, time.Now, logger))
+		inbox.RegisterRoutes(mux, database, time.Now, logger)
 		col.RegisterRoutes(mux)
 	})
 

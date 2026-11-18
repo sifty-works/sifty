@@ -926,3 +926,67 @@ func TestSourceRunRowDeletedWithJob(t *testing.T) {
 		t.Errorf("source_run row should be deleted with its job, got %d rows", cnt)
 	}
 }
+
+// --- Exclusions --------------------------------------------------------------
+
+// exclusionFeed is a minimal RSS feed with no body text so that needDetail=true.
+const exclusionFeed = `<rss version="2.0"><channel>
+<item><title>Go Developer</title><link>https://feeds.example.com/jobs/excl1</link></item>
+</channel></rss>`
+
+// exclusionDetailPage returns a JSON-LD job page revealing company "ExclCo".
+const exclusionDetailPage = `<html><head><script type="application/ld+json">` +
+	`{"@type":"JobPosting","title":"Go Developer","hiringOrganization":{"name":"ExclCo"},"description":"<p>text</p>"}` +
+	`</script></head><body></body></html>`
+
+func TestCollect_ExcludedBeforeDetail(t *testing.T) {
+	e := newEnv(t)
+	e.fm.Set("https://boards-api.greenhouse.io/v1/boards/acme/jobs?content=true",
+		fetchtest.MapEntry{Response: fetch.Response{Status: 200, ContentType: "application/json", Body: []byte(ghBoardResponse)}})
+	addSource(t, e, "https://boards.greenhouse.io/acme")
+
+	// Word exclusion for "engineer" — matches "Engineer" in the greenhouse board.
+	e.db.Exec(`INSERT INTO exclusion (kind,value,norm,profile_id,created) VALUES ('word','engineer','engineer',0,datetime('now'))`) //nolint:errcheck
+
+	e.r.Enqueue(runner.Spec{Kind: "collect"}) //nolint:errcheck
+	waitJob(t, e.r)
+
+	// Both postings are saved; "Engineer" is excluded from view but still upserted.
+	var cnt int
+	e.db.QueryRow(`SELECT count(*) FROM vacancy`).Scan(&cnt) //nolint:errcheck
+	if cnt != 2 {
+		t.Errorf("catalog: got %d vacancies, want 2 (both saved, Engineer excluded from view)", cnt)
+	}
+	var excl int
+	e.db.QueryRow(`SELECT excluded FROM source_run ORDER BY job_id DESC LIMIT 1`).Scan(&excl) //nolint:errcheck
+	if excl != 1 {
+		t.Errorf("source_run.excluded: got %d, want 1", excl)
+	}
+}
+
+func TestCollect_ExcludedAfterDetail(t *testing.T) {
+	e := newEnv(t)
+	e.fm.Set("https://feeds.example.com/excl.xml",
+		fetchtest.MapEntry{Response: fetch.Response{Status: 200, ContentType: "application/xml", Body: []byte(exclusionFeed)}})
+	e.fm.Set("https://feeds.example.com/jobs/excl1",
+		fetchtest.MapEntry{Response: fetch.Response{Status: 200, ContentType: "text/html", Body: []byte(exclusionDetailPage)}})
+	addSource(t, e, "https://feeds.example.com/excl.xml")
+
+	// Company exclusion for "ExclCo" — not visible in the listing, only after Detail.
+	e.db.Exec(`INSERT INTO exclusion (kind,value,norm,profile_id,created) VALUES ('company','ExclCo','exclco',0,datetime('now'))`) //nolint:errcheck
+
+	e.r.Enqueue(runner.Spec{Kind: "collect"}) //nolint:errcheck
+	waitJob(t, e.r)
+
+	// The posting is saved with detail text; it is excluded from view but still upserted.
+	var cnt int
+	e.db.QueryRow(`SELECT count(*) FROM vacancy`).Scan(&cnt) //nolint:errcheck
+	if cnt != 1 {
+		t.Errorf("catalog: got %d vacancies, want 1 (saved with detail text, excluded from view)", cnt)
+	}
+	var excl int
+	e.db.QueryRow(`SELECT excluded FROM source_run ORDER BY job_id DESC LIMIT 1`).Scan(&excl) //nolint:errcheck
+	if excl != 1 {
+		t.Errorf("source_run.excluded: got %d, want 1", excl)
+	}
+}
