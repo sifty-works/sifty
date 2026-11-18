@@ -155,16 +155,7 @@ func (c *Catalog) Upsert(ctx context.Context, p listing.Posting, src string) (in
 	defer tx.Rollback() //nolint:errcheck
 
 	// Tombstone check: url-based and legacy-key-based.
-	tombKeys := []string{"url:" + canonURL}
-	if lk := listing.LegacyKey(p.URL); lk != "" {
-		tombKeys = append(tombKeys, "legacy:"+lk)
-	}
-	if p.ApplyURL != "" {
-		if lk := listing.LegacyKey(p.ApplyURL); lk != "" {
-			tombKeys = append(tombKeys, "legacy:"+lk)
-		}
-	}
-	tombstoned, err := anyTombstoned(ctx, tx, tombKeys)
+	tombstoned, err := anyTombstoned(ctx, tx, tombstoneKeys(canonURL, p.URL, p.ApplyURL))
 	if err != nil {
 		return 0, 0, fmt.Errorf("catalog: upsert: tombstone check: %w", err)
 	}
@@ -199,6 +190,9 @@ func (c *Catalog) Upsert(ctx context.Context, p listing.Posting, src string) (in
 			version:        1,
 			body:           newBody,
 		}
+		if p.Requested {
+			row.detailRequestedAt = nowStr
+		}
 		id, err := save(ctx, tx, row)
 		if err != nil {
 			return 0, 0, fmt.Errorf("catalog: upsert: insert: %w", err)
@@ -232,6 +226,9 @@ func (c *Catalog) Upsert(ctx context.Context, p listing.Posting, src string) (in
 
 	// Apply update rules.
 	upd := ex // start from existing
+	if p.Requested {
+		upd.detailRequestedAt = nowStr
+	}
 
 	upd.title = p.Title // always from posting
 	// A guessed company (derived from the board's address) does not replace a
@@ -272,6 +269,13 @@ func (c *Catalog) Upsert(ctx context.Context, p listing.Posting, src string) (in
 		upd.version = ex.version + 1
 		textChanged = true
 	}
+	// Allow the state to advance to 'blocked' when the vacancy has no stored
+	// text. A vacancy that already has full or summary text keeps it.
+	exHasText := listing.TextState(ex.textState) == listing.TextFull ||
+		listing.TextState(ex.textState) == listing.TextSummary
+	if !textChanged && p.TextState == listing.TextBlocked && !exHasText {
+		upd.textState = textState
+	}
 	upd.lastSeen = nowStr
 
 	if _, err := save(ctx, tx, upd); err != nil {
@@ -303,24 +307,25 @@ func (c *Catalog) Upsert(ctx context.Context, p listing.Posting, src string) (in
 // --- internal helpers ---
 
 type vacancyRow struct {
-	id             int64
-	identity       string
-	title          string
-	company        string
-	url            string
-	applyURL       string
-	location       string
-	tagsJSON       string
-	fieldsJSON     string
-	publishedAt    string
-	publishedBasis string
-	expiresAt      string
-	firstSeen      string
-	lastSeen       string
-	textState      string
-	contentHash    string
-	version        int
-	body           []byte
+	id                int64
+	identity          string
+	title             string
+	company           string
+	url               string
+	applyURL          string
+	location          string
+	tagsJSON          string
+	fieldsJSON        string
+	publishedAt       string
+	publishedBasis    string
+	expiresAt         string
+	firstSeen         string
+	lastSeen          string
+	textState         string
+	contentHash       string
+	version           int
+	body              []byte
+	detailRequestedAt string
 }
 
 // save inserts or updates a vacancy row. When v.id is 0 an INSERT is performed
@@ -334,12 +339,14 @@ func save(ctx context.Context, tx *sql.Tx, v vacancyRow) (int64, error) {
 			INSERT INTO vacancy
 				(identity, title, company, url, apply_url, location, tags, source_fields,
 				 published_at, published_basis, expires_at,
-				 first_seen, last_seen, text_state, content_hash, version, body)
-			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+				 first_seen, last_seen, text_state, content_hash, version, body,
+				 detail_requested_at)
+			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 			v.identity, v.title, v.company, v.url, v.applyURL, v.location,
 			v.tagsJSON, v.fieldsJSON,
 			v.publishedAt, v.publishedBasis, v.expiresAt,
-			v.firstSeen, v.lastSeen, v.textState, v.contentHash, v.version, v.body)
+			v.firstSeen, v.lastSeen, v.textState, v.contentHash, v.version, v.body,
+			v.detailRequestedAt)
 		if err != nil {
 			return 0, err
 		}
@@ -349,12 +356,13 @@ func save(ctx context.Context, tx *sql.Tx, v vacancyRow) (int64, error) {
 		UPDATE vacancy SET
 			identity=?, title=?, company=?, location=?, tags=?, source_fields=?,
 			apply_url=?, published_at=?, published_basis=?, expires_at=?,
-			last_seen=?, text_state=?, content_hash=?, version=?, body=?
+			last_seen=?, text_state=?, content_hash=?, version=?, body=?,
+			detail_requested_at=?
 		WHERE id=?`,
 		v.identity, v.title, v.company, v.location, v.tagsJSON, v.fieldsJSON,
 		v.applyURL, v.publishedAt, v.publishedBasis, v.expiresAt,
 		v.lastSeen, v.textState, v.contentHash, v.version, v.body,
-		v.id)
+		v.detailRequestedAt, v.id)
 	return v.id, err
 }
 
@@ -363,12 +371,14 @@ func loadVacancy(ctx context.Context, tx *sql.Tx, id int64) (vacancyRow, error) 
 	err := tx.QueryRowContext(ctx, `
 		SELECT id, identity, title, company, url, apply_url, location, tags, source_fields,
 		       published_at, published_basis, expires_at,
-		       first_seen, last_seen, text_state, content_hash, version, body
+		       first_seen, last_seen, text_state, content_hash, version, body,
+		       detail_requested_at
 		FROM vacancy WHERE id = ?`, id).Scan(
 		&ex.id, &ex.identity, &ex.title, &ex.company, &ex.url, &ex.applyURL, &ex.location,
 		&ex.tagsJSON, &ex.fieldsJSON,
 		&ex.publishedAt, &ex.publishedBasis, &ex.expiresAt,
-		&ex.firstSeen, &ex.lastSeen, &ex.textState, &ex.contentHash, &ex.version, &ex.body)
+		&ex.firstSeen, &ex.lastSeen, &ex.textState, &ex.contentHash, &ex.version, &ex.body,
+		&ex.detailRequestedAt)
 	return ex, err
 }
 
@@ -553,6 +563,88 @@ func appendUnique(ids []int64, id int64) []int64 {
 		}
 	}
 	return append(ids, id)
+}
+
+// tombstoneKeys returns the tombstone lookup keys for a posting.
+func tombstoneKeys(canonURL, rawURL, applyURL string) []string {
+	keys := []string{"url:" + canonURL}
+	if lk := listing.LegacyKey(rawURL); lk != "" {
+		keys = append(keys, "legacy:"+lk)
+	}
+	if applyURL != "" {
+		if lk := listing.LegacyKey(applyURL); lk != "" {
+			keys = append(keys, "legacy:"+lk)
+		}
+	}
+	return keys
+}
+
+// Known describes the state of a posting as seen by the catalogue.
+// When Removed is true the address is on the removed list.
+// When New is true no vacancy matched.
+// Otherwise HasText and Requested describe the matched vacancy.
+type Known struct {
+	Removed   bool
+	New       bool
+	HasText   bool      // matched vacancy has stored text (full or summary)
+	Requested time.Time // when detail was last requested; zero if never
+}
+
+// Known returns the state of a posting without modifying the catalogue.
+// It uses the same matching rules as Upsert.
+func (c *Catalog) Known(ctx context.Context, p listing.Posting) (Known, error) {
+	canonURL, err := listing.Canonical(p.URL)
+	if err != nil {
+		return Known{}, fmt.Errorf("catalog: known: canonical url: %w", err)
+	}
+	var canonApply, atsApply string
+	for _, raw := range []string{p.ApplyURL, p.URL} {
+		if raw != "" {
+			if ca, ok := listing.ConcreteATS(raw); ok {
+				canonApply, atsApply = ca, ca
+				break
+			}
+		}
+	}
+	company := p.Company
+	if company == "" {
+		company = "Unknown"
+	}
+	identity := listing.Identity(company, p.Title)
+
+	tx, err := c.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return Known{}, fmt.Errorf("catalog: known: begin tx: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	removed, err := anyTombstoned(ctx, tx, tombstoneKeys(canonURL, p.URL, p.ApplyURL))
+	if err != nil {
+		return Known{}, fmt.Errorf("catalog: known: tombstone: %w", err)
+	}
+	if removed {
+		return Known{Removed: true}, nil
+	}
+	matchIDs, err := findMatches(ctx, tx, canonURL, atsApply, canonApply, identity, company)
+	if err != nil {
+		return Known{}, fmt.Errorf("catalog: known: match: %w", err)
+	}
+	if len(matchIDs) == 0 {
+		return Known{New: true}, nil
+	}
+	sort.Slice(matchIDs, func(i, j int) bool { return matchIDs[i] < matchIDs[j] })
+	var textState, requestedAt string
+	if err := tx.QueryRowContext(ctx,
+		`SELECT text_state, detail_requested_at FROM vacancy WHERE id = ?`, matchIDs[0]).
+		Scan(&textState, &requestedAt); err != nil {
+		return Known{}, fmt.Errorf("catalog: known: load: %w", err)
+	}
+	hasText := textState == string(listing.TextFull) || textState == string(listing.TextSummary)
+	var requested time.Time
+	if requestedAt != "" {
+		requested, _ = time.Parse(time.RFC3339, requestedAt)
+	}
+	return Known{HasText: hasText, Requested: requested}, nil
 }
 
 // anyTombstoned reports whether any of the given keys appears in the

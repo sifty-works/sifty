@@ -55,8 +55,8 @@ func (s *genericSource) List(ctx context.Context, f fetch.Fetcher, cfg SiteConfi
 
 // Detail fetches p.URL once and fills text and empty fields. JSON-LD on the
 // page is matched by address or unique title+company; ambiguous pages leave
-// text empty. Without JSON-LD, body/Content extraction is used. A concrete
-// ATS link found on the page becomes ApplyURL when the posting has none.
+// text empty. With SkipJSONLD, matched JSON-LD still fills empty fields but
+// its description is ignored and body/Content is used for text instead.
 func Detail(ctx context.Context, f fetch.Fetcher, p listing.Posting, s SiteConfig) (listing.Posting, error) {
 	s = mergeConfig(s)
 	resp, err := f.Get(ctx, p.URL, fetch.Opt{})
@@ -68,14 +68,15 @@ func Detail(ctx context.Context, f fetch.Fetcher, p listing.Posting, s SiteConfi
 		base = p.URL
 	}
 	useBody := s.SkipJSONLD
-	if !s.SkipJSONLD {
-		if cs := jsonldPostings(resp.Body, base); len(cs) > 0 {
-			if m, ok := matchJSONLD(cs, p); ok {
-				p = mergeDetail(p, m)
+	if cs := jsonldPostings(resp.Body, base); len(cs) > 0 {
+		if m, ok := matchJSONLD(cs, p); ok {
+			if s.SkipJSONLD {
+				m.Text = ""
 			}
-		} else {
-			useBody = true
+			p = mergeDetail(p, m)
 		}
+	} else {
+		useBody = true
 	}
 	if useBody {
 		if raw := extractBodyText(resp.Body, s.Content); raw != "" {

@@ -4,6 +4,7 @@ Notable changes of Sifty, newest first. Versions follow `MAJOR.MINOR.PATCH`.
 
 ## Unreleased
 
+- A new vacancy found without a description gets its text, company and location from its own page; a page that could not be read is tried again after 7 days, and a site that blocks reading marks the vacancy "Blocked by site".
 - Any other site is read too: job postings described on its page, its feed, a Getro board, or links that look like vacancies; We Work Remotely and Remote3 are read through their feeds and web3.career through its vacancy links.
 - A site that blocked Sifty is left alone for 24 hours even across a restart.
 - Each source on the Sources page shows its last success with vacancies seen and new, or the error of its last run in words, or "No vacancies in 30 days"; sources failing three runs in a row are marked, and the header shows "N sources need attention".

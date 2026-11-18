@@ -362,8 +362,6 @@ func TestDetail_match_by_title_and_company(t *testing.T) {
 }
 
 func TestDetail_ambiguous_page_no_text(t *testing.T) {
-	// Page has 2 JSON-LD items with identical title and company; posting URL
-	// does not match either item → ambiguous by title → no text update.
 	const body = `<html><head><script type="application/ld+json">
 [
   {"@type":"JobPosting","title":"Staff Engineer","url":"https://jobs.example.com/se-1","hiringOrganization":{"name":"Acme"},"description":"<p>role 1</p>"},
@@ -411,19 +409,19 @@ func TestDetail_content_selector(t *testing.T) {
 		SkipJSONLD: true,
 		Content:    []source.Attr{{Attr: "class", Substr: "text-dark-grey-text"}},
 	}
-	p := listing.Posting{URL: pageURL, Title: "Solidity Dev", Company: "Web3 Co"}
+	p := listing.Posting{URL: pageURL, Title: "Solidity Dev", Company: "Unknown"}
 	result, err := source.Detail(context.Background(), m, p, cfg)
 	if err != nil {
 		t.Fatalf("Detail: %v", err)
 	}
-	if result.TextState != listing.TextFull {
-		t.Errorf("text state = %q, want full", result.TextState)
-	}
-	if strings.Contains(result.Text, "Not the description") {
-		t.Errorf("text includes non-content chrome")
+	if result.TextState != listing.TextFull || strings.Contains(result.Text, "Not the description") {
+		t.Errorf("text state=%q or includes chrome, want full and content only", result.TextState)
 	}
 	if !strings.Contains(result.Text, "smart contracts") {
 		t.Errorf("text %q missing expected content", result.Text)
+	}
+	if result.Company != "BlockCo" || result.Location != "Remote" {
+		t.Errorf("company=%q location=%q, want BlockCo and Remote from JSON-LD fields", result.Company, result.Location)
 	}
 }
 

@@ -888,6 +888,51 @@ func TestUpsert_GuessedCompanyRules(t *testing.T) {
 	})
 }
 
+// --- Known ---
+
+func TestKnown(t *testing.T) {
+	d := openTestDB(t)
+	cat := catalog.New(d, fixedNow())
+	ctx := context.Background()
+	d.Exec(`INSERT INTO tombstone (key) VALUES ('url:https://example.com/jobs/t1')`) //nolint:errcheck
+	if k, err := cat.Known(ctx, listing.Posting{URL: "https://example.com/jobs/t1", Title: "X", Company: "Y"}); err != nil || !k.Removed {
+		t.Fatalf("tombstoned: %+v err=%v", k, err)
+	}
+	if k, err := cat.Known(ctx, listing.Posting{URL: "https://example.com/jobs/new", Title: "N", Company: "C"}); err != nil || !k.New || k.HasText {
+		t.Fatalf("new: %+v err=%v", k, err)
+	}
+	p := listing.Posting{URL: "https://example.com/jobs/e1", Title: "Dev", Company: "Co", TextState: listing.TextNotFetched}
+	cat.Upsert(ctx, p, "s") //nolint:errcheck
+	if k, err := cat.Known(ctx, p); err != nil || k.New || k.HasText || !k.Requested.IsZero() {
+		t.Fatalf("existing no text: %+v err=%v", k, err)
+	}
+	p2 := posting("https://example.com/jobs/e2", "Dev2", "Co")
+	cat.Upsert(ctx, p2, "s") //nolint:errcheck
+	if k, err := cat.Known(ctx, p2); err != nil || !k.HasText {
+		t.Fatalf("existing with text: %+v err=%v", k, err)
+	}
+	p3 := listing.Posting{URL: "https://example.com/jobs/e3", Title: "Dev3", Company: "Co",
+		TextState: listing.TextNotFetched, Requested: true}
+	cat.Upsert(ctx, p3, "s") //nolint:errcheck
+	if k, _ := cat.Known(ctx, p3); k.Requested.IsZero() {
+		t.Fatal("want non-zero Requested after Upsert with Requested=true")
+	}
+}
+
+func TestUpsert_BlockedStateStoredWithoutText(t *testing.T) {
+	d := openTestDB(t)
+	cat := catalog.New(d, fixedNow())
+	p := listing.Posting{URL: "https://example.com/jobs/b1", Title: "Eng", Company: "Co", TextState: listing.TextNotFetched}
+	id, _, _ := cat.Upsert(context.Background(), p, "s")
+	p.TextState = listing.TextBlocked
+	cat.Upsert(context.Background(), p, "s") //nolint:errcheck
+	var state string
+	d.QueryRow(`SELECT text_state FROM vacancy WHERE id = ?`, id).Scan(&state) //nolint:errcheck
+	if state != "blocked" {
+		t.Errorf("text_state: got %q, want blocked", state)
+	}
+}
+
 func TestUpsert_EmptyBodyNotFetchedDoesNotError(t *testing.T) {
 	// A vacancy stored with an empty body blob and not_fetched state (e.g. from
 	// an import) must not cause a NOT NULL error when a posting without text

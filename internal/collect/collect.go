@@ -192,6 +192,30 @@ func (c *Collector) run(ctx context.Context, j *runner.Job) error {
 						if skip {
 							continue
 						}
+						k, knownErr := c.catalog.Known(ctx, p)
+						if knownErr != nil {
+							c.log.Warn("collect: known failed", "url", p.URL, "error", knownErr)
+							continue
+						}
+						if k.Removed {
+							cntRemoved++
+							continue
+						}
+						needDetail := p.Text == "" && (k.New || (!k.HasText &&
+							(k.Requested.IsZero() || c.now().Sub(k.Requested) > 7*24*time.Hour)))
+						if needDetail {
+							cfg := source.SiteConfig{Name: s.Name, URL: p.URL}
+							det, detErr := source.Detail(ctx, c.fetcher, p, cfg)
+							switch {
+							case detErr == nil:
+								p = det
+								p.Requested = true
+							case errors.Is(detErr, fetch.ErrBlocked):
+								p.TextState = listing.TextBlocked
+							case !errors.Is(detErr, fetch.ErrOffline) && !errors.Is(detErr, fetch.ErrRefused):
+								p.Requested = true
+							}
+						}
 						_, outcome, upsertErr := c.catalog.Upsert(ctx, p, key)
 						if upsertErr != nil {
 							c.log.Warn("collect: upsert failed", "url", p.URL, "error", upsertErr)

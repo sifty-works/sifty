@@ -47,4 +47,8 @@ type Posting struct {
 	Text      string
 	TextKind  Kind
 	TextState TextState
+
+	// Requested is set by the collector when source.Detail was called for this
+	// posting. Upsert records the request time when it is true.
+	Requested bool
 }

@@ -56,6 +56,15 @@ func newEnv(t *testing.T) *env {
 }
 
 // newEnvClock creates a test environment with a custom clock.
+// addSource adds a single enabled source to e's config.
+func addSource(t *testing.T, e *env, url string) {
+	t.Helper()
+	e.store.Update(func(c *config.Config) error { //nolint:errcheck
+		c.Sources = []config.SourceConfig{{URL: url, Enabled: true}}
+		return nil
+	})
+}
+
 func newEnvClock(t *testing.T, now func() time.Time) *env {
 	t.Helper()
 	database := openDB(t)
@@ -797,6 +806,97 @@ func TestStatusAttentionCountAndSingular(t *testing.T) {
 	}
 	if att["text"] != "1 source needs attention" {
 		t.Errorf("after disable: attention.text: got %v", att["text"])
+	}
+}
+
+// --- Detail fetch behaviour --------------------------------------------------
+
+func htmlListing(u string) []byte {
+	return []byte(`<html><body><a href="` + u + `">Senior Engineer</a></body></html>`)
+}
+
+func TestRunDetailFetchesTextForNewPostingWithoutText(t *testing.T) {
+	e := newEnv(t)
+	const vacURL = "https://generic.example.com/jobs/1"
+	e.fm.Set("https://generic.example.com/jobs", fetchtest.MapEntry{Response: fetch.Response{Status: 200, ContentType: "text/html", Body: htmlListing(vacURL)}})
+	e.fm.Set(vacURL, fetchtest.MapEntry{Response: fetch.Response{Status: 200, ContentType: "text/html", Body: []byte(`<html><head><script type="application/ld+json">{"@type":"JobPosting","title":"Senior Engineer","hiringOrganization":{"name":"Acme"},"url":"https://generic.example.com/jobs/1","description":"<p>Full text.</p>"}</script></head></html>`)}})
+	addSource(t, e, "https://generic.example.com/jobs")
+	e.r.Enqueue(runner.Spec{Kind: "collect"}) //nolint:errcheck
+	waitJob(t, e.r)
+	if n := len(e.fm.Requests()); n != 2 {
+		t.Errorf("requests: got %d, want 2 (listing+detail)", n)
+	}
+	var state string
+	e.db.QueryRow(`SELECT text_state FROM vacancy WHERE url = ?`, vacURL).Scan(&state) //nolint:errcheck
+	if state != "full" {
+		t.Errorf("text_state: got %q, want full", state)
+	}
+}
+
+func TestRunDetailSkipsPostingWithText(t *testing.T) {
+	e := newEnv(t)
+	e.fm.Set("https://boards-api.greenhouse.io/v1/boards/acme/jobs?content=true",
+		fetchtest.MapEntry{Response: fetch.Response{Status: 200, ContentType: "application/json", Body: []byte(ghBoardResponse)}})
+	addSource(t, e, "https://boards.greenhouse.io/acme")
+	e.r.Enqueue(runner.Spec{Kind: "collect"}) //nolint:errcheck
+	waitJob(t, e.r)
+	if n := len(e.fm.Requests()); n != 1 {
+		t.Errorf("requests: got %d, want 1 (listing only, no detail)", n)
+	}
+}
+
+func TestRunDetailSkipsWithin7DaysAndRetriesAfter(t *testing.T) {
+	var mu sync.Mutex
+	nowTime := base
+	e := newEnvClock(t, func() time.Time { mu.Lock(); defer mu.Unlock(); return nowTime })
+	const listURL, vacURL = "https://generic.example.com/jobs", "https://generic.example.com/jobs/2"
+	e.fm.Set(listURL, fetchtest.MapEntry{Response: fetch.Response{Status: 200, ContentType: "text/html", Body: htmlListing(vacURL)}})
+	e.fm.Set(vacURL, fetchtest.MapEntry{Err: fetch.ErrNotFound})
+	addSource(t, e, listURL)
+	run := func(want int) {
+		t.Helper()
+		e.r.Enqueue(runner.Spec{Kind: "collect"}) //nolint:errcheck
+		waitJob(t, e.r)
+		if n := len(e.fm.Requests()); n != want {
+			t.Errorf("requests: got %d, want %d", n, want)
+		}
+	}
+	run(2) // first run: listing + detail
+	mu.Lock()
+	nowTime = base.Add(24 * time.Hour)
+	mu.Unlock()
+	run(3) // 1 day later: listing only (within 7-day window)
+	mu.Lock()
+	nowTime = base.Add(8 * 24 * time.Hour)
+	mu.Unlock()
+	run(5) // 8 days after first: listing + detail again
+}
+
+func TestRunRemovedAddressGetsNoRequest(t *testing.T) {
+	e := newEnv(t)
+	const vacURL = "https://generic.example.com/jobs/3"
+	e.fm.Set("https://generic.example.com/jobs", fetchtest.MapEntry{Response: fetch.Response{Status: 200, ContentType: "text/html", Body: htmlListing(vacURL)}})
+	e.db.Exec(`INSERT INTO tombstone (key) VALUES ('url:` + vacURL + `')`) //nolint:errcheck
+	addSource(t, e, "https://generic.example.com/jobs")
+	e.r.Enqueue(runner.Spec{Kind: "collect"}) //nolint:errcheck
+	waitJob(t, e.r)
+	if n := len(e.fm.Requests()); n != 1 {
+		t.Errorf("requests: got %d, want 1 (listing only)", n)
+	}
+}
+
+func TestRunBlockedDetailSavesPostingAsBlocked(t *testing.T) {
+	e := newEnv(t)
+	const vacURL = "https://generic.example.com/jobs/4"
+	e.fm.Set("https://generic.example.com/jobs", fetchtest.MapEntry{Response: fetch.Response{Status: 200, ContentType: "text/html", Body: htmlListing(vacURL)}})
+	e.fm.Set(vacURL, fetchtest.MapEntry{Err: fetch.ErrBlocked})
+	addSource(t, e, "https://generic.example.com/jobs")
+	e.r.Enqueue(runner.Spec{Kind: "collect"}) //nolint:errcheck
+	waitJob(t, e.r)
+	var state, reqAt string
+	e.db.QueryRow(`SELECT text_state, detail_requested_at FROM vacancy WHERE url = ?`, vacURL).Scan(&state, &reqAt) //nolint:errcheck
+	if state != "blocked" || reqAt != "" {
+		t.Errorf("text_state=%q detail_requested_at=%q, want blocked and empty", state, reqAt)
 	}
 }
 

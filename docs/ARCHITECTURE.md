@@ -137,7 +137,7 @@ type Response struct { Text string; InTokens, OutTokens int }
 
 | Table | Holds |
 |---|---|
-| `vacancy` | id, identity, title, company, addresses, location, tags, `source_fields`, dates, first and last seen, `seen_at`, apply address and employer-search state, `content_hash`, `version`, text state, industries (stored for SQL filtering), `body` (sanitised HTML, compressed) |
+| `vacancy` | id, identity, title, company, addresses, location, tags, `source_fields`, dates, first and last seen, `seen_at`, apply address and employer-search state, `content_hash`, `version`, text state, `detail_requested_at`, industries (stored for SQL filtering), `body` (sanitised HTML, compressed) |
 | `vacancy_fts` | contentless full-text index (`content=''`, `contentless_delete=1`, `detail=full` for phrase queries), fed from the plain text at write |
 | `vacancy_source` | where and under which address a vacancy was seen |
 | `vacancy_alias` | old id → id after a merge |
