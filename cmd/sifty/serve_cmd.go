@@ -100,7 +100,11 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	// 8. Build the fetcher: replay dir overrides the real client.
 	var fetcher fetch.Fetcher
 	if flags.replayDir != "" {
-		fetcher = newReplayFetcher(fetchtest.NewDir(flags.replayDir), logger)
+		rm, err := fetchtest.Load(flags.replayDir)
+		if err != nil {
+			return fmt.Errorf("loading replay dir: %w", err)
+		}
+		fetcher = newReplayFetcher(rm, logger)
 	} else {
 		fetcher = fetch.New(fetch.Options{
 			Blocks:  fetch.NewDomainBlocks(database),
@@ -172,18 +176,18 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	}
 }
 
-// replayFetcher wraps fetchtest.Dir and logs addresses not in the index.
+// replayFetcher wraps a fetchtest.Map and logs addresses not in the index.
 type replayFetcher struct {
-	dir *fetchtest.Dir
+	m   *fetchtest.Map
 	log *slog.Logger
 }
 
-func newReplayFetcher(dir *fetchtest.Dir, log *slog.Logger) *replayFetcher {
-	return &replayFetcher{dir: dir, log: log}
+func newReplayFetcher(m *fetchtest.Map, log *slog.Logger) *replayFetcher {
+	return &replayFetcher{m: m, log: log}
 }
 
 func (r *replayFetcher) Get(ctx context.Context, u string, opt fetch.Opt) (fetch.Response, error) {
-	resp, err := r.dir.Get(ctx, u, opt)
+	resp, err := r.m.Get(ctx, u, opt)
 	if errors.Is(err, fetch.ErrNotFound) {
 		r.log.Info("replay: not recorded " + u)
 	}

@@ -1,7 +1,6 @@
 package fetch
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -9,7 +8,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -210,7 +208,7 @@ func (c *client) Get(ctx context.Context, rawURL string, opt Opt) (Response, err
 		}
 		// Per-request timeout fired.
 		if reqCtx.Err() != nil {
-			return Response{}, wrapErr(ErrTransient, "request timed out")
+			return Response{}, ErrTimeout
 		}
 		// Do not record back-off for address refusals — only for genuine
 		// transient network failures.
@@ -261,57 +259,19 @@ func parseAndCheckURL(raw string) (*url.URL, error) {
 	return u, nil
 }
 
-// interpretResponse maps HTTP status + body to a Response or error.
-//
-// Block rules (in order):
-//   - 403 → ErrBlocked
-//   - cf-mitigated: challenge header present → ErrBlocked
-//   - title is exactly "Just a moment..." → ErrBlocked
-//   - 503 body contains "challenge-platform" → ErrBlocked
-//   - all other 2xx → content
+// interpretResponse maps an HTTP response to a Response or error.
+// It applies StatusError for the classification and records the block or
+// success on the domain as a side effect.
 func (c *client) interpretResponse(status int, ct string, header http.Header, body []byte, finalURL string) (Response, error) {
 	domain := domainKey(hostOf(finalURL))
-
-	cloudflareBlocked := header.Get("cf-mitigated") == "challenge" ||
-		containsTitleExact(body, "Just a moment...") ||
-		(status == 503 && bytes.Contains(body, []byte("challenge-platform")))
-
-	switch {
-	case status == 403 || cloudflareBlocked:
-		c.recordBlock(domain)
-		return Response{}, wrapErr(ErrBlocked, "HTTP %d from %s", status, domain)
-
-	case status == 404 || status == 410:
-		return Response{}, wrapErr(ErrNotFound, "HTTP %d from %s", status, domain)
-
-	case status >= 200 && status < 300:
-		c.recordSuccess(domain)
-		return Response{
-			URL:         finalURL,
-			Status:      status,
-			ContentType: ct,
-			Body:        body,
-		}, nil
-
-	default: // 429, other 4xx, 5xx
-		return Response{}, wrapErr(ErrTransient, "HTTP %d from %s", status, domain)
+	if err := StatusError(status, header, body); err != nil {
+		if errors.Is(err, ErrBlocked) {
+			c.recordBlock(domain)
+		}
+		return Response{}, wrapErr(err, "HTTP %d from %s", status, domain)
 	}
-}
-
-// containsTitleExact returns true if the HTML body has a <title> exactly
-// equal to title (case-sensitive, whitespace-trimmed).
-func containsTitleExact(body []byte, title string) bool {
-	lower := bytes.ToLower(body)
-	start := bytes.Index(lower, []byte("<title>"))
-	if start < 0 {
-		return false
-	}
-	start += len("<title>")
-	end := bytes.Index(lower[start:], []byte("</title>"))
-	if end < 0 {
-		return false
-	}
-	return strings.TrimSpace(string(body[start:start+end])) == title
+	c.recordSuccess(domain)
+	return Response{URL: finalURL, Status: status, ContentType: ct, Body: body}, nil
 }
 
 // hostOf returns the host from a URL string.

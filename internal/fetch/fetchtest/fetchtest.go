@@ -4,6 +4,7 @@ package fetchtest
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sync"
@@ -12,8 +13,11 @@ import (
 )
 
 // MapEntry is one entry in a Map fetcher.
+// Header is passed to fetch.StatusError so a recorded 403 or challenge page
+// replays as ErrBlocked without needing to set Err explicitly.
 type MapEntry struct {
 	Response fetch.Response
+	Header   http.Header
 	Err      error
 }
 
@@ -38,7 +42,8 @@ func (m *Map) Set(url string, entry MapEntry) {
 	m.entries[url] = entry
 }
 
-// Get implements fetch.Fetcher. It records the URL in Requests.
+// Get implements fetch.Fetcher. It records the URL in Requests and applies
+// fetch.StatusError so a recorded 403 or challenge page returns ErrBlocked.
 func (m *Map) Get(_ context.Context, url string, _ fetch.Opt) (fetch.Response, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -49,6 +54,9 @@ func (m *Map) Get(_ context.Context, url string, _ fetch.Opt) (fetch.Response, e
 	}
 	if e.Err != nil {
 		return fetch.Response{}, e.Err
+	}
+	if err := fetch.StatusError(e.Response.Status, e.Header, e.Response.Body); err != nil {
+		return fetch.Response{}, err
 	}
 	return e.Response, nil
 }
@@ -70,51 +78,11 @@ type dirEntry struct {
 	BodyFile    string `json:"body_file"`
 }
 
-// Dir is a Fetcher that answers from a folder of recorded responses.
-// The folder must contain an index.json listing each URL with its status,
-// content type, and the name of a body file. The index and all body files are
-// loaded at construction. A request for a URL that is not in the index returns
-// fetch.ErrNotFound and records the URL so callers can assert which addresses
-// were requested.
-type Dir struct {
-	entries map[string]fetch.Response
-	mu      sync.Mutex
-	unknown []string
-}
-
-// NewDir returns a Dir fetcher rooted at path. It panics if the index cannot
-// be read.
-func NewDir(path string) *Dir {
-	entries, err := loadIndex(path)
-	if err != nil {
-		panic("fetchtest.NewDir: " + err.Error())
-	}
-	return &Dir{entries: entries}
-}
-
-// Get implements fetch.Fetcher.
-func (d *Dir) Get(_ context.Context, url string, _ fetch.Opt) (fetch.Response, error) {
-	if resp, ok := d.entries[url]; ok {
-		return resp, nil
-	}
-	d.mu.Lock()
-	d.unknown = append(d.unknown, url)
-	d.mu.Unlock()
-	return fetch.Response{}, fetch.ErrNotFound
-}
-
-// Unknown returns all URLs that were requested but not in the index.
-func (d *Dir) Unknown() []string {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	out := make([]string, len(d.unknown))
-	copy(out, d.unknown)
-	return out
-}
-
-// loadIndex reads index.json from path and returns a map of URL to pre-loaded response.
-func loadIndex(path string) (map[string]fetch.Response, error) {
-	f, err := os.Open(filepath.Join(path, "index.json"))
+// Load reads a folder of recorded responses and returns a Map fetcher.
+// The folder must contain index.json listing each URL with its status,
+// content type and the name of a body file.
+func Load(dir string) (*Map, error) {
+	f, err := os.Open(filepath.Join(dir, "index.json"))
 	if err != nil {
 		return nil, err
 	}
@@ -123,18 +91,18 @@ func loadIndex(path string) (map[string]fetch.Response, error) {
 	if err := json.NewDecoder(f).Decode(&idx); err != nil {
 		return nil, err
 	}
-	m := make(map[string]fetch.Response, len(idx.Entries))
+	m := NewMap()
 	for _, e := range idx.Entries {
-		body, err := os.ReadFile(filepath.Join(path, e.BodyFile))
+		body, err := os.ReadFile(filepath.Join(dir, e.BodyFile))
 		if err != nil {
 			return nil, err
 		}
-		m[e.URL] = fetch.Response{
+		m.Set(e.URL, MapEntry{Response: fetch.Response{
 			URL:         e.URL,
 			Status:      e.Status,
 			ContentType: e.ContentType,
 			Body:        body,
-		}
+		}})
 	}
 	return m, nil
 }

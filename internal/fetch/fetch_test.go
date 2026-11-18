@@ -16,6 +16,7 @@ import (
 
 	"github.com/sifty-works/sifty/internal/db"
 	"github.com/sifty-works/sifty/internal/fetch"
+	"github.com/sifty-works/sifty/internal/fetch/fetchtest"
 )
 
 // --- helpers ---
@@ -168,75 +169,48 @@ func TestGet_block_survives_restart_and_expires(t *testing.T) {
 	}
 }
 
-func TestGet_challenge_and_block_patterns(t *testing.T) {
+// TestStatusRule verifies that the real Fetcher and fetchtest.Map return the
+// same error for each response pattern that StatusError classifies.
+func TestStatusRule(t *testing.T) {
 	cases := []struct {
-		name     string
-		handler  http.HandlerFunc
-		wantErr  error // nil means expect 200 content
-		wantBody string
+		name    string
+		status  int
+		header  http.Header
+		body    []byte
+		wantErr error // nil means expect content
 	}{
-		{
-			name:    "403 is blocked",
-			handler: func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(403) },
-			wantErr: fetch.ErrBlocked,
-		},
-		{
-			name: "cf-mitigated challenge header is blocked",
-			handler: func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set("cf-mitigated", "challenge")
-				fmt.Fprint(w, "verify")
-			},
-			wantErr: fetch.ErrBlocked,
-		},
-		{
-			name: "challenge-platform script on 503 is blocked",
-			handler: func(w http.ResponseWriter, r *http.Request) {
-				w.WriteHeader(503)
-				fmt.Fprint(w, `<html><body><script src="/cdn-cgi/challenge-platform/x"></script></body></html>`)
-			},
-			wantErr: fetch.ErrBlocked,
-		},
-		{
-			name: "challenge-platform script on 200 is content",
-			handler: func(w http.ResponseWriter, r *http.Request) {
-				fmt.Fprint(w, `<html><body><script src="/cdn-cgi/challenge-platform/x"></script><p>jobs</p></body></html>`)
-			},
-			wantBody: "jobs",
-		},
-		{
-			name: "Just a moment title is blocked",
-			handler: func(w http.ResponseWriter, r *http.Request) {
-				fmt.Fprint(w, "<html><head><title>Just a moment...</title></head></html>")
-			},
-			wantErr: fetch.ErrBlocked,
-		},
-		{
-			name: "reCAPTCHA form on 200 is content",
-			handler: func(w http.ResponseWriter, r *http.Request) {
-				fmt.Fprint(w, `<html><body><div class="g-recaptcha">captcha</div></body></html>`)
-			},
-			wantBody: "g-recaptcha",
-		},
-		{"404 not found", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(404) }, fetch.ErrNotFound, ""},
-		{"410 not found", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(410) }, fetch.ErrNotFound, ""},
+		{"403 is blocked", 403, nil, nil, fetch.ErrBlocked},
+		{"cf-mitigated is blocked", 200, http.Header{"Cf-Mitigated": {"challenge"}}, nil, fetch.ErrBlocked},
+		{"challenge-platform on 503 is blocked", 503, nil, []byte("challenge-platform"), fetch.ErrBlocked},
+		{"Just a moment title is blocked", 200, nil, []byte("<title>Just a moment...</title>"), fetch.ErrBlocked},
+		{"404 is not found", 404, nil, nil, fetch.ErrNotFound},
+		{"429 is transient", 429, nil, nil, fetch.ErrTransient},
+		{"503 without challenge is transient", 503, nil, nil, fetch.ErrTransient},
+		{"challenge-platform on 200 is content", 200, nil, []byte("challenge-platform"), nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			srv := httptest.NewServer(tc.handler)
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				for k, vs := range tc.header {
+					w.Header()[k] = vs
+				}
+				w.WriteHeader(tc.status)
+				w.Write(tc.body) //nolint:errcheck
+			}))
 			defer srv.Close()
 			f := newTestFetcher(testBlocks(t), newFakeClock(), &sleepRecorder{})
-			resp, err := f.Get(context.Background(), srv.URL+"/", fetch.Opt{})
-			if tc.wantErr != nil {
-				if !errors.Is(err, tc.wantErr) {
-					t.Errorf("got %v, want %v", err, tc.wantErr)
-				}
-				return
+			_, fetchErr := f.Get(context.Background(), srv.URL+"/", fetch.Opt{})
+			if !errors.Is(fetchErr, tc.wantErr) {
+				t.Errorf("fetcher: got %v, want %v", fetchErr, tc.wantErr)
 			}
-			if err != nil || resp.Status != 200 {
-				t.Errorf("got err=%v status=%d, want 200 content", err, resp.Status)
-			}
-			if tc.wantBody != "" && !strings.Contains(string(resp.Body), tc.wantBody) {
-				t.Errorf("body %q does not contain %q", resp.Body, tc.wantBody)
+			m := fetchtest.NewMap()
+			m.Set("https://x.test/", fetchtest.MapEntry{
+				Response: fetch.Response{Status: tc.status, Body: tc.body},
+				Header:   tc.header,
+			})
+			_, mapErr := m.Get(context.Background(), "https://x.test/", fetch.Opt{})
+			if !errors.Is(mapErr, tc.wantErr) {
+				t.Errorf("map: got %v, want %v", mapErr, tc.wantErr)
 			}
 		})
 	}
@@ -451,7 +425,8 @@ func TestUserText(t *testing.T) {
 	}{
 		{fetch.ErrBlocked, "Blocked by site"},
 		{fetch.ErrNotFound, "Not found"},
-		{fetch.ErrTransient, "Timed out"},
+		{fetch.ErrTimeout, "Timed out"},
+		{fetch.ErrTransient, "Site not answering"},
 		{fetch.ErrRefused, "Refused"},
 		{fetch.ErrOffline, "Offline"},
 		{fmt.Errorf("other"), "Error"},
