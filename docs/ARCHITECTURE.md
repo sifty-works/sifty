@@ -35,13 +35,13 @@ These rules come from what made the previous application grow to several times t
 ### Collection
 
 ```go
-type Fetcher interface { Get(ctx context.Context, url string, opt Opt) (Response, error) } // errors: ErrBlocked, ErrNotFound, ErrTransient
+type Fetcher interface { Get(ctx context.Context, url string, opt Opt) (Response, error) } // errors: ErrBlocked, ErrNotFound, ErrTransient, ErrRefused, ErrOffline
 type Source interface {
     Match(u *url.URL) bool
     List(ctx context.Context, f Fetcher, s SiteConfig) ([]Posting, error)
 }
 func Detail(ctx context.Context, f Fetcher, p Posting, s SiteConfig) (Posting, error) // fills text; only called where the listing has none
-func Normalize(raw string, kind Kind, vocab Vocab) string       // the only path from any input to stored HTML
+func Normalize(raw string, kind Kind) string                    // the only path from any input to stored HTML
 func (c *Catalog) Upsert(ctx context.Context, p Posting, src string) (int64, Outcome, error) // New|Updated|Unchanged|Merged|Tombstoned, one transaction
 ```
 
@@ -49,7 +49,7 @@ func (c *Catalog) Upsert(ctx context.Context, p Posting, src string) (int64, Out
 - Site quirks are data in `SiteConfig` (content selector, link pattern, feed address, skip JSON-LD), so a site-specific source is usually a configuration line over the generic source. The applicant-tracking-system client is shared by collection and by the employer search.
 - `Detail` is called only when the listing has no text and the posting is new, or known without text and not requested in the last 7 days, and never while its domain is blocked; `Catalog.Known` tells which. The audit proposed requesting every known vacancy every 7 days to detect changes; that is not done, because a vacancy with text is never requested again.
 - `Posting` carries the structured fields a source states (salary, employment type and the like) as a compact `source_fields` value, which the reader uses before asking a model.
-- Domains are collected in parallel and sequentially within a domain. Each source's result is written to `source_run`.
+- Sources are read in parallel, one after another within one requested host (boards sharing a Greenhouse, Lever or Ashby API form one group). Each source's result is written to `source_run`.
 - **Industries** (`industry`): a vocabulary of industries with keywords, shipped as embedded data and edited in Settings (written to `<data>/vocab/industries.yaml`). Industries are assigned by keyword match when a vacancy's title, tags or text change, and stored on the vacancy because the list filters on them in SQL. A change of the vocabulary queues reassignment of all vacancies as CPU work; a vacancy without text keeps its industries. No model call.
 
 ### Assessment
@@ -104,8 +104,6 @@ type Answerer   interface { Answer(ctx context.Context, v Vacancy, f Form, have 
 type Spec struct { Kind, Subject string; Priority int; Params json.RawMessage }
 type Runner interface {
     Enqueue(Spec) (int64, error)          // deduplicated by (kind, subject) among queued and running
-    Bump(kind, subject string, prio int)
-    Cancel(id int64) error
     Subscribe() <-chan Event              // state, progress, current item
 }
 ```
