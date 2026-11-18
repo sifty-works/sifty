@@ -224,6 +224,38 @@ func TestList_xml_feed_via_generic(t *testing.T) {
 	}
 }
 
+// ── a16z script source ────────────────────────────────────────────────────────
+
+func TestList_a16z_portfolio_jobs(t *testing.T) {
+	body := mustReadFile(t, "testdata/a16z.html")
+	addr := "https://a16zfrontier.com/"
+	m := fetchtest.NewMap()
+	m.Set(addr, fetchtest.MapEntry{Response: fetch.Response{URL: addr, Status: 200, Body: body}})
+	u := mustParseURL(t, addr)
+	ps, err := source.For(u).List(context.Background(), m, source.SiteConfig{URL: addr})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(ps) != 2 {
+		t.Fatalf("got %d postings, want 2", len(ps))
+	}
+	if ps[0].Company != "Decentral Labs" {
+		t.Errorf("company[0] = %q", ps[0].Company)
+	}
+	if ps[0].Location != "New York" {
+		t.Errorf("location[0] = %q, want New York (not remote)", ps[0].Location)
+	}
+	if ps[1].Company != "Chain Works" {
+		t.Errorf("company[1] = %q", ps[1].Company)
+	}
+	if ps[1].Location != "Remote" {
+		t.Errorf("location[1] = %q, want Remote", ps[1].Location)
+	}
+	if reqs := m.Requests(); len(reqs) != 1 {
+		t.Errorf("requests = %v, want exactly 1", reqs)
+	}
+}
+
 // ── Nothing recognised ────────────────────────────────────────────────────────
 
 func TestList_nothing_recognised(t *testing.T) {
@@ -239,13 +271,15 @@ func TestList_nothing_recognised(t *testing.T) {
 
 // ── Site config by host ───────────────────────────────────────────────────────
 
-func TestList_site_config_uses_feed_url(t *testing.T) {
-	// Each site URL must be redirected to its configured FeedURL; www. is stripped.
+func TestList_site_config_uses_list_url(t *testing.T) {
+	// Each site address is read at its configured list address; www. is stripped.
 	feedBody := mustReadFile(t, "testdata/rss.xml")
 	for _, tc := range []struct{ site, feed string }{
 		{"https://remote3.co/", "https://remote3.co/api/rss"},
 		{"https://www.remote3.co/", "https://remote3.co/api/rss"},
 		{"https://weworkremotely.com/", "https://weworkremotely.com/remote-jobs.rss"},
+		{"https://cryptocurrencyjobs.co/", "https://cryptocurrencyjobs.co/index.xml"},
+		{"https://jobs.framework.ventures/", "https://jobs.framework.ventures/jobs"},
 	} {
 		t.Run(tc.site, func(t *testing.T) {
 			m := fetchtest.NewMap()

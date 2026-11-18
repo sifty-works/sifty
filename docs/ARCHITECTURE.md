@@ -46,7 +46,7 @@ func (c *Catalog) Upsert(ctx context.Context, p Posting, src string) (int64, Out
 ```
 
 - `Fetcher` is the only way to job sites, vacancy pages, employers' career pages and link documents: public-address checks on every redirect, size limit, timeout, per-domain spacing and back-off, and a memory of blocked domains (`domain_block`) that survives a restart. The form-reading browser uses the same per-domain spacing and `domain_block`. Model adapters and the web search client have their own clients.
-- Site quirks are data in `SiteConfig` (content selector, link pattern, feed address, skip JSON-LD), so a site-specific source is usually a configuration line over the generic source. The applicant-tracking-system client is shared by collection and by the employer search.
+- Site quirks are data in `SiteConfig` (content selector, link pattern, list address, skip JSON-LD), so a site-specific source is usually a configuration line over the generic source. The applicant-tracking-system client is shared by collection and by the employer search.
 - `Detail` is called only when the listing has no text and the posting is new, or known without text and not requested in the last 7 days, and never while its domain is blocked; `Catalog.Known` tells which. The audit proposed requesting every known vacancy every 7 days to detect changes; that is not done, because a vacancy with text is never requested again.
 - `Posting` carries the structured fields a source states (salary, employment type and the like) as a compact `source_fields` value, which the reader uses before asking a model.
 - Sources are read in parallel, one after another within one requested host (boards sharing a Greenhouse, Lever or Ashby API form one group). Each source's result is written to `source_run`.
@@ -218,7 +218,7 @@ These are targets the coordinator checks at acceptance of every change (see `PRO
 | Model calls for a change of profile or My data | 0 for Fits you and the counter; Shortlist checks become outdated and run again only when their vacancy is opened |
 | Shortlist check | at most 1 per shortlisted vacancy on entering Shortlist, and 1 per opening after its inputs changed |
 | Preparation of one form | 0 to 1 to classify labels, 1 to 2 to draft (one retry of an empty reply); Write and Paste 1 each |
-| Network per collection run | 1 request per source, plus 1 per vacancy without text in the listing that is new, or known without text and not requested in the last 7 days |
+| Network per collection run | 1 request per source (2 for Hacker News), plus 1 per vacancy without text in the listing that is new, or known without text and not requested in the last 7 days |
 | List API | under 50 ms at the 95th percentile for 1,200 rows; vacancy view under 30 ms; decision under 20 ms |
 
 Estimated size by capability (backend, then frontend, in lines): collection 3,500 and 400 (fetching, the listing model and its normalisation, the catalogue, sources, collection runs, `industry`, and data lines such as heading lists and site configurations); assessment 3,100 and 700; inbox 1,200 and 1,500; profiles 2,700 and 2,350; application 2,800 and 800; foundation 2,700 and 700 (settings pages). That is about 16,000 and 6,450, so the backend has no reserve left: a capability that needs more takes it from another by the owner's decision. The frontend estimate is about 450 lines over its budget; the profile editors are where it must be recovered, with one generic section editor instead of one editor per section.

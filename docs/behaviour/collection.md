@@ -11,9 +11,12 @@ Collection visits the enabled sources. Each source is recognised by its address:
 | Kind of source | How it is read | Requests per run |
 |---|---|---|
 | Greenhouse, Lever, Ashby boards | the board's public JSON API, which includes descriptions | 1 |
-| RSS or Atom feeds that carry descriptions (We Work Remotely) | the feed | 1 |
+| RSS or Atom feeds that carry descriptions (We Work Remotely, Cryptocurrency Jobs) | the feed | 1 |
 | Remote3 | its feed for the list, then the page of each new vacancy | 1 + new vacancies |
 | web3.career, whose own structured data is broken | links on the listing page, then the page of each new vacancy | 1 + new vacancies |
+| Framework Ventures (a Getro board) | the jobs page at its list address | 1 + new vacancies without a description |
+| a16z Frontier | a script variable on the listing page holding an array of companies and their jobs | 1 + new vacancies without a description |
+| Hacker News "Who is hiring?" | two Algolia API requests: the newest "Who is hiring?" story, then its top-level comments as postings | 2 |
 | Any other site | JSON-LD `JobPosting` on the listing page; if the answer is XML, RSS or Atom; otherwise links that look like vacancies and Getro `__NEXT_DATA__` | 1 + new vacancies without a description |
 
 Only the first listing page is read; there is no pagination. Sites behind a login are not collected.

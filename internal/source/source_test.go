@@ -193,6 +193,61 @@ func TestFeed_Atom_maps_all_fields(t *testing.T) {
 	}
 }
 
+// --- Feed title splitting ---
+
+func TestFeed_title_split(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		xml     string
+		title   string
+		company string
+	}{
+		{
+			name:    "RSS Role at Company split at last at",
+			xml:     `<rss version="2.0"><channel><item><title>Engineer at Acme</title><link>http://x.example.com/1</link></item></channel></rss>`,
+			title:   "Engineer",
+			company: "Acme",
+		},
+		{
+			name:    "RSS multiple at uses last",
+			xml:     `<rss version="2.0"><channel><item><title>Senior at Acme at Work</title><link>http://x.example.com/2</link></item></channel></rss>`,
+			title:   "Senior at Acme",
+			company: "Work",
+		},
+		{
+			name:    "RSS no at left whole",
+			xml:     `<rss version="2.0"><channel><item><title>Senior Engineer</title><link>http://x.example.com/3</link></item></channel></rss>`,
+			title:   "Senior Engineer",
+			company: "",
+		},
+		{
+			name:    "Atom Role at Company split",
+			xml:     `<feed xmlns="http://www.w3.org/2005/Atom"><entry><title>Designer at Studio</title><link href="http://x.example.com/4"/><published>2024-01-01T00:00:00Z</published></entry></feed>`,
+			title:   "Designer",
+			company: "Studio",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			addr := "http://x.example.com/feed"
+			m := fetchtest.NewMap()
+			m.Set(addr, fetchtest.MapEntry{Response: fetch.Response{URL: addr, Status: 200, ContentType: "application/rss+xml", Body: []byte(tc.xml)}})
+			ps, err := source.For(mustParseURL(t, addr)).List(context.Background(), m, source.SiteConfig{URL: addr})
+			if err != nil {
+				t.Fatalf("List: %v", err)
+			}
+			if len(ps) != 1 {
+				t.Fatalf("got %d postings, want 1", len(ps))
+			}
+			if ps[0].Title != tc.title {
+				t.Errorf("title = %q, want %q", ps[0].Title, tc.title)
+			}
+			if ps[0].Company != tc.company {
+				t.Errorf("company = %q, want %q", ps[0].Company, tc.company)
+			}
+		})
+	}
+}
+
 // --- Greenhouse ---
 
 func TestGreenhouse_maps_all_fields(t *testing.T) {
@@ -450,6 +505,48 @@ func TestAshby_company_falls_back_to_board_name(t *testing.T) {
 	// No source name → guessed.
 	if !postings[0].CompanyGuessed {
 		t.Error("CompanyGuessed should be true without source name")
+	}
+}
+
+// --- Hacker News ---
+
+func TestHN_list(t *testing.T) {
+	searchURL := "https://hn.algolia.com/api/v1/search_by_date?tags=story,author_whoishiring&hitsPerPage=5"
+	storyURL := "https://hn.algolia.com/api/v1/items/42"
+	// Search hits: "wants to be hired" first, "who is hiring" second; must pick second.
+	searchBody := `{"hits":[{"objectID":"99","title":"Ask HN: Who wants to be hired? (Jan 2026)"},{"objectID":"42","title":"Ask HN: Who is hiring? (Jan 2026)"}]}`
+	// Comments: one valid (with a link and a bare domain before the title), one no-pipe (skipped), one deleted (skipped), one no title (skipped).
+	storyBody := `{"id":42,"children":[
+		{"id":101,"text":"Acme Corp | <a href=\"https:&#x2F;&#x2F;acme.example.com\">https:&#x2F;&#x2F;acme.example.com</a> | acme.example | Engineer &amp; Lead | Berlin<p>More text","created_at":"2026-01-01T00:00:00Z","children":[]},
+		{"id":102,"text":"No pipes here","created_at":"2026-01-02T00:00:00Z","children":[]},
+		{"id":103,"text":"","created_at":"2026-01-03T00:00:00Z","children":[]},
+		{"id":104,"text":"Zeta Inc | Remote | Contract","created_at":"2026-01-04T00:00:00Z","children":[]}
+	]}`
+	m := fetchtest.NewMap()
+	m.Set(searchURL, fetchtest.MapEntry{Response: fetch.Response{URL: searchURL, Status: 200, Body: []byte(searchBody)}})
+	m.Set(storyURL, fetchtest.MapEntry{Response: fetch.Response{URL: storyURL, Status: 200, Body: []byte(storyBody)}})
+	cfg := source.SiteConfig{URL: "https://news.ycombinator.com/"}
+	ps, err := source.For(mustParseURL(t, cfg.URL)).List(context.Background(), m, cfg)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(ps) != 1 {
+		t.Fatalf("got %d postings, want 1 (no-pipe, deleted and no-title skipped)", len(ps))
+	}
+	if ps[0].Company != "Acme Corp" {
+		t.Errorf("company = %q", ps[0].Company)
+	}
+	if ps[0].Title != "Engineer & Lead" {
+		t.Errorf("title = %q", ps[0].Title)
+	}
+	if ps[0].Location != "Berlin" {
+		t.Errorf("location = %q, want Berlin", ps[0].Location)
+	}
+	if reqs := m.Requests(); len(reqs) != 2 {
+		t.Errorf("requests = %v, want exactly 2", reqs)
+	}
+	if !strings.Contains(ps[0].URL, "101") {
+		t.Errorf("URL = %q, want comment id 101", ps[0].URL)
 	}
 }
 

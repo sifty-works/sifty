@@ -23,8 +23,8 @@ func (s *genericSource) Match(_ *url.URL) bool { return true }
 func (s *genericSource) List(ctx context.Context, f fetch.Fetcher, cfg SiteConfig) ([]listing.Posting, error) {
 	cfg = mergeConfig(cfg)
 	fetchURL := cfg.URL
-	if cfg.FeedURL != "" {
-		fetchURL = cfg.FeedURL
+	if cfg.ListURL != "" {
+		fetchURL = cfg.ListURL
 	}
 	resp, err := f.Get(ctx, fetchURL, fetch.Opt{})
 	if err != nil {
@@ -37,6 +37,11 @@ func (s *genericSource) List(ctx context.Context, f fetch.Fetcher, cfg SiteConfi
 	if isXMLContent(resp.ContentType, resp.Body) {
 		if ps, err := parseFeedXML(resp.Body, base); err != ErrNothingRecognised {
 			return ps, err
+		}
+	}
+	if cfg.ScriptVar != "" {
+		if ps := a16zPostings(resp.Body, base, cfg.ScriptVar); len(ps) > 0 {
+			return ps, nil
 		}
 	}
 	if !cfg.SkipJSONLD {
@@ -133,11 +138,9 @@ func mergeDetail(p, m listing.Posting) listing.Posting {
 
 func isXMLContent(ct string, body []byte) bool {
 	ct = strings.ToLower(ct)
-	if strings.Contains(ct, "xml") || strings.Contains(ct, "rss") || strings.Contains(ct, "atom") {
-		return true
-	}
 	b := bytes.TrimSpace(bytes.TrimPrefix(body, []byte{0xEF, 0xBB, 0xBF}))
-	return bytes.HasPrefix(b, []byte("<?xml")) || bytes.HasPrefix(b, []byte("<rss")) || bytes.HasPrefix(b, []byte("<feed"))
+	return strings.Contains(ct, "xml") || strings.Contains(ct, "rss") || strings.Contains(ct, "atom") ||
+		bytes.HasPrefix(b, []byte("<?xml")) || bytes.HasPrefix(b, []byte("<rss")) || bytes.HasPrefix(b, []byte("<feed"))
 }
 
 // ── JSON-LD ───────────────────────────────────────────────────────────────────
@@ -307,29 +310,28 @@ type ndJob struct {
 	} `json:"organization"`
 }
 
-// extractNextData returns the text content of <script id="__NEXT_DATA__">.
-func extractNextData(body []byte) string {
+// findScript returns the text content of the first <script> whose markup contains marker.
+func findScript(body []byte, marker string) string {
 	s := string(body)
-	i := strings.Index(s, `id="__NEXT_DATA__"`)
+	i := strings.Index(s, marker)
 	if i < 0 {
 		return ""
 	}
-	j := strings.IndexByte(s[i:], '>')
-	if j < 0 {
+	start := strings.LastIndex(s[:i+1], "<script")
+	if start < 0 {
 		return ""
 	}
-	k := strings.Index(s[i+j:], "</script>")
-	if k < 0 {
+	s = s[start:]
+	j := strings.IndexByte(s, '>')
+	k := strings.Index(s, "</script>")
+	if j < 0 || k < j {
 		return ""
 	}
-	return strings.TrimSpace(s[i+j+1 : i+j+k])
+	return strings.TrimSpace(s[j+1 : k])
 }
 
 func getroPostings(body []byte, base string) []listing.Posting {
-	raw := extractNextData(body)
-	if raw == "" {
-		return nil
-	}
+	raw := findScript(body, `id="__NEXT_DATA__"`)
 	var nd struct {
 		Props struct {
 			PageProps struct {
@@ -341,7 +343,7 @@ func getroPostings(body []byte, base string) []listing.Posting {
 			} `json:"pageProps"`
 		} `json:"props"`
 	}
-	if json.Unmarshal([]byte(raw), &nd) != nil {
+	if raw == "" || json.Unmarshal([]byte(raw), &nd) != nil {
 		return nil
 	}
 	var out []listing.Posting
@@ -499,6 +501,44 @@ func extractBodyText(body []byte, attrs []Attr) string {
 		}
 	}
 	return ""
+}
+
+// ── a16z ─────────────────────────────────────────────────────────────────────
+
+type a16zCompany struct {
+	Jobs []struct {
+		Title, URL, CompanyName, CreatedAt string
+		Locations                          []string
+		Remote                             bool
+	}
+}
+
+// a16zPostings reads the script array varName: companies, each with its jobs.
+func a16zPostings(body []byte, base, varName string) []listing.Posting {
+	content := findScript(body, varName)
+	_, rest, ok := strings.Cut(content, varName)
+	at := strings.IndexByte(rest, '[')
+	var companies []a16zCompany
+	if !ok || at < 0 || json.NewDecoder(strings.NewReader(rest[at:])).Decode(&companies) != nil {
+		return nil
+	}
+	var out []listing.Posting
+	for _, c := range companies {
+		for _, j := range c.Jobs {
+			loc := strings.Join(j.Locations, ", ")
+			if j.Remote {
+				loc = strings.TrimLeft(loc+", Remote", ", ")
+			}
+			p := listing.Posting{URL: resolveURL(j.URL, base), Title: j.Title, Company: j.CompanyName, Location: loc}
+			if t, ok := parseDate(j.CreatedAt); ok {
+				p.Published, p.PublishedBasis = t, "createdAt"
+			}
+			if p, ok := finalise(p, base); ok {
+				out = append(out, p)
+			}
+		}
+	}
+	return out
 }
 
 // ── HTML utilities ────────────────────────────────────────────────────────────

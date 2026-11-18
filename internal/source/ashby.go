@@ -43,11 +43,7 @@ func (s *ashbySource) List(ctx context.Context, f fetch.Fetcher, cfg SiteConfig)
 		}
 		loc := trim(job.Location)
 		if job.IsRemote && !strings.Contains(strings.ToLower(loc), "remote") {
-			if loc != "" {
-				loc += ", Remote"
-			} else {
-				loc = "Remote"
-			}
+			loc = strings.TrimLeft(loc+", Remote", ", ")
 		}
 		applyURL := trim(job.ApplyURL)
 		if applyURL == "" {

@@ -163,13 +163,17 @@ type atomCategory struct {
 	Label string `xml:"label,attr"`
 }
 
-// splitCompanyTitle splits "Company: Title" at the first ": " when company is empty.
+// splitCompanyTitle splits "Company: Title" at the first ": " or "Role at Company"
+// at the last " at " when company is empty.
 func splitCompanyTitle(title, company string) (string, string) {
 	if company != "" {
 		return title, company
 	}
 	if idx := strings.Index(title, ": "); idx >= 0 {
 		return title[idx+2:], title[:idx]
+	}
+	if idx := strings.LastIndex(title, " at "); idx >= 0 {
+		return title[:idx], title[idx+4:]
 	}
 	return title, ""
 }
