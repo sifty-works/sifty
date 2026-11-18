@@ -108,7 +108,7 @@ Then the dialog "Did you submit your application?" asks for the outcome: Not yet
 
 - It is not offered in Inbox: "Dismiss roles in Inbox; permanent Delete is available outside Inbox".
 - It is refused while a collection run is in progress ("Collection is running; try again when it ends.") or while a model call for this vacancy is running ("A model is working on this role; try again when it ends.").
-- The dialog reads "This permanently deletes this role… Automatic collection will not restore it." with "Keep role" and "Permanently delete".
+- The dialog heading is "Delete &lt;title&gt;?" followed by the company name, then "This permanently deletes this role… Automatic collection will not restore it." and "Keep role" / "Permanently delete".
 - It removes the vacancy's decisions, drafts and pending work.
 
 ## Keyboard
