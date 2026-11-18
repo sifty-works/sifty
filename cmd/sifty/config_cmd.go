@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/sifty-works/sifty/internal/config"
+	"github.com/sifty-works/sifty-server/internal/config"
 )
 
 // cmdConfigDefaults prints the full settings file with every default value.

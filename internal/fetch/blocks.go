@@ -3,7 +3,7 @@ package fetch
 import (
 	"time"
 
-	"github.com/sifty-works/sifty/internal/db"
+	"github.com/sifty-works/sifty-server/internal/db"
 )
 
 // DomainBlocks is a persistent block store backed by the SQLite database.

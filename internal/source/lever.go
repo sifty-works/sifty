@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sifty-works/sifty/internal/fetch"
-	"github.com/sifty-works/sifty/internal/listing"
+	"github.com/sifty-works/sifty-server/internal/fetch"
+	"github.com/sifty-works/sifty-server/internal/listing"
 )
 
 type leverSource struct{}

@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sifty-works/sifty/internal/apperr"
-	"github.com/sifty-works/sifty/internal/config"
+	"github.com/sifty-works/sifty-server/internal/apperr"
+	"github.com/sifty-works/sifty-server/internal/config"
 )
 
 func TestOpenInvalidFileReturnsError(t *testing.T) {

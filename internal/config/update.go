@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sifty-works/sifty/internal/apperr"
+	"github.com/sifty-works/sifty-server/internal/apperr"
 	"gopkg.in/yaml.v3"
 )
 

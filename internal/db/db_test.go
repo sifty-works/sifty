@@ -9,7 +9,7 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/sifty-works/sifty/internal/db"
+	"github.com/sifty-works/sifty-server/internal/db"
 )
 
 // fixtureFS builds an in-memory FS with the given SQL migration files.

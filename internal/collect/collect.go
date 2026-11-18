@@ -13,16 +13,16 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sifty-works/sifty/internal/apperr"
-	"github.com/sifty-works/sifty/internal/catalog"
-	"github.com/sifty-works/sifty/internal/config"
-	"github.com/sifty-works/sifty/internal/db"
-	"github.com/sifty-works/sifty/internal/fetch"
-	"github.com/sifty-works/sifty/internal/inbox"
-	"github.com/sifty-works/sifty/internal/listing"
-	"github.com/sifty-works/sifty/internal/runner"
-	"github.com/sifty-works/sifty/internal/server"
-	"github.com/sifty-works/sifty/internal/source"
+	"github.com/sifty-works/sifty-server/internal/apperr"
+	"github.com/sifty-works/sifty-server/internal/catalog"
+	"github.com/sifty-works/sifty-server/internal/config"
+	"github.com/sifty-works/sifty-server/internal/db"
+	"github.com/sifty-works/sifty-server/internal/fetch"
+	"github.com/sifty-works/sifty-server/internal/inbox"
+	"github.com/sifty-works/sifty-server/internal/listing"
+	"github.com/sifty-works/sifty-server/internal/runner"
+	"github.com/sifty-works/sifty-server/internal/server"
+	"github.com/sifty-works/sifty-server/internal/source"
 )
 
 // Collector orchestrates collection runs and the sources management API.

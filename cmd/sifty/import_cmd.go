@@ -6,7 +6,7 @@ import (
 	"io"
 	"path/filepath"
 
-	"github.com/sifty-works/sifty/internal/importv1"
+	"github.com/sifty-works/sifty-server/internal/importv1"
 	"golang.org/x/net/context"
 )
 

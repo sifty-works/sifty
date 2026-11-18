@@ -11,11 +11,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sifty-works/sifty/internal/catalog"
-	"github.com/sifty-works/sifty/internal/config"
-	"github.com/sifty-works/sifty/internal/db"
-	"github.com/sifty-works/sifty/internal/importv1"
-	"github.com/sifty-works/sifty/internal/listing"
+	"github.com/sifty-works/sifty-server/internal/catalog"
+	"github.com/sifty-works/sifty-server/internal/config"
+	"github.com/sifty-works/sifty-server/internal/db"
+	"github.com/sifty-works/sifty-server/internal/importv1"
+	"github.com/sifty-works/sifty-server/internal/listing"
 	_ "modernc.org/sqlite"
 )
 

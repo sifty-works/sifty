@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sifty-works/sifty/internal/config"
+	"github.com/sifty-works/sifty-server/internal/config"
 )
 
 // --- helpers -----------------------------------------------------------------

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sifty-works/sifty/internal/listing"
+	"github.com/sifty-works/sifty-server/internal/listing"
 )
 
 // --- Normalize HTML ---

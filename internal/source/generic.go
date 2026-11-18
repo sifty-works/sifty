@@ -11,8 +11,8 @@ import (
 
 	xhtml "golang.org/x/net/html"
 
-	"github.com/sifty-works/sifty/internal/fetch"
-	"github.com/sifty-works/sifty/internal/listing"
+	"github.com/sifty-works/sifty-server/internal/fetch"
+	"github.com/sifty-works/sifty-server/internal/listing"
 )
 
 // genericSource is the fallback Source: XML feed, JSON-LD, Getro, links.

@@ -11,7 +11,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/sifty-works/sifty/internal/apperr"
+	"github.com/sifty-works/sifty-server/internal/apperr"
 )
 
 // RouteInfo records the types registered for one API route.

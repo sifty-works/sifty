@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sifty-works/sifty/internal/fetch"
-	"github.com/sifty-works/sifty/internal/fetch/fetchtest"
-	"github.com/sifty-works/sifty/internal/listing"
-	"github.com/sifty-works/sifty/internal/source"
+	"github.com/sifty-works/sifty-server/internal/fetch"
+	"github.com/sifty-works/sifty-server/internal/fetch/fetchtest"
+	"github.com/sifty-works/sifty-server/internal/listing"
+	"github.com/sifty-works/sifty-server/internal/source"
 )
 
 // TestFor_routing checks that For returns the source that requests exactly one URL.

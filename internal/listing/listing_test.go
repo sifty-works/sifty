@@ -5,7 +5,7 @@ import (
 	"encoding/hex"
 	"testing"
 
-	"github.com/sifty-works/sifty/internal/listing"
+	"github.com/sifty-works/sifty-server/internal/listing"
 )
 
 // --- Canonical ---

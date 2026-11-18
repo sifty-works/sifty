@@ -10,8 +10,8 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/sifty-works/sifty/internal/apperr"
-	"github.com/sifty-works/sifty/internal/server"
+	"github.com/sifty-works/sifty-server/internal/apperr"
+	"github.com/sifty-works/sifty-server/internal/server"
 )
 
 func newTestServer(t *testing.T, routes func(*http.ServeMux)) *httptest.Server {

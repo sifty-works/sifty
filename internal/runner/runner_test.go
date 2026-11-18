@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sifty-works/sifty/internal/db"
-	"github.com/sifty-works/sifty/internal/runner"
+	"github.com/sifty-works/sifty-server/internal/db"
+	"github.com/sifty-works/sifty-server/internal/runner"
 )
 
 var base = time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)

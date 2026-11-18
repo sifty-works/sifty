@@ -14,9 +14,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sifty-works/sifty/internal/db"
-	"github.com/sifty-works/sifty/internal/fetch"
-	"github.com/sifty-works/sifty/internal/fetch/fetchtest"
+	"github.com/sifty-works/sifty-server/internal/db"
+	"github.com/sifty-works/sifty-server/internal/fetch"
+	"github.com/sifty-works/sifty-server/internal/fetch/fetchtest"
 )
 
 // --- helpers ---

@@ -29,17 +29,13 @@ printf "%-40s %10s %10s\n" "-------" "------" "------"
 
 be=$(files '*.go' | grep -v '_test\.go$' | count)
 be_test=$(files '*_test.go' | count)
-fe=$(files 'web/src/*.ts' 'web/src/*.tsx' | grep -v '\.test\.' | grep -v '\.gen\.ts$' | count)
-fe_test=$(files 'web/src/*.test.ts' 'web/src/*.test.tsx' | count)
 
 row() { printf "%-40s %10s %10s %s\n" "$1" "$2" "$3" "$4"; }
 mark() { if [ "$1" -gt "$2" ]; then fail=1; echo "OVER"; fi; }
 
 row "Backend code (lines)" "$be" "16000" "$(mark "$be" 16000)"
 row "Backend tests (lines)" "$be_test" "≤ code" "$(mark "$be_test" "$be")"
-row "Frontend code (lines)" "$fe" "6000" "$(mark "$fe" 6000)"
-row "Frontend tests (lines)" "$fe_test" "≤ code" "$(mark "$fe_test" "$fe")"
-[ "$be" -gt 16000 ] || [ "$be_test" -gt "$be" ] || [ "$fe" -gt 6000 ] || [ "$fe_test" -gt "$fe" ] && fail=1
+[ "$be" -gt 16000 ] || [ "$be_test" -gt "$be" ] && fail=1
 
 # Per package, for information: packages whose tests are longer than their code.
 for dir in $(files '*_test.go' | xargs -n1 dirname | sort -u); do

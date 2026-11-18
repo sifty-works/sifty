@@ -1,4 +1,4 @@
-module github.com/sifty-works/sifty
+module github.com/sifty-works/sifty-server
 
 go 1.26.5
 

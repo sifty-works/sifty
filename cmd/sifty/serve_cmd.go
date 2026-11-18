@@ -13,16 +13,17 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/sifty-works/sifty/internal/catalog"
-	"github.com/sifty-works/sifty/internal/collect"
-	"github.com/sifty-works/sifty/internal/config"
-	"github.com/sifty-works/sifty/internal/db"
-	"github.com/sifty-works/sifty/internal/fetch"
-	"github.com/sifty-works/sifty/internal/fetch/fetchtest"
-	"github.com/sifty-works/sifty/internal/inbox"
-	"github.com/sifty-works/sifty/internal/runner"
-	"github.com/sifty-works/sifty/internal/server"
-	"github.com/sifty-works/sifty/web"
+	siftyapi "github.com/sifty-works/sifty-server/api"
+	"github.com/sifty-works/sifty-server/internal/catalog"
+	"github.com/sifty-works/sifty-server/internal/collect"
+	"github.com/sifty-works/sifty-server/internal/config"
+	"github.com/sifty-works/sifty-server/internal/db"
+	"github.com/sifty-works/sifty-server/internal/fetch"
+	"github.com/sifty-works/sifty-server/internal/fetch/fetchtest"
+	"github.com/sifty-works/sifty-server/internal/inbox"
+	"github.com/sifty-works/sifty-server/internal/runner"
+	"github.com/sifty-works/sifty-server/internal/server"
+	"github.com/sifty-works/sifty-server/web"
 )
 
 const (
@@ -144,13 +145,14 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	}
 
 	handler := server.New(server.Options{
-		Version: version,
-		Port:    port,
-		Offline: offline,
-		Debug:   cfg.Debug,
-		Logger:  logger,
-		Static:  web.StaticFS(),
-		Status:  col.StatusFunc(),
+		Version:   version,
+		APISha256: siftyapi.Sha256(),
+		Port:      port,
+		Offline:   offline,
+		Debug:     cfg.Debug,
+		Logger:    logger,
+		Static:    web.StaticFS(),
+		Status:    col.StatusFunc(),
 	}, func(mux *http.ServeMux) {
 		inbox.RegisterRoutes(mux, database, time.Now, logger, collectActive, sourceNames)
 		col.RegisterRoutes(mux)

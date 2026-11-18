@@ -3,26 +3,71 @@ VERSION  := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev
 LDFLAGS  := -X main.version=$(VERSION)
 GO_BUILD := go build -ldflags "$(LDFLAGS)"
 
-.PHONY: build dev dev-reset check budget clean
+.PHONY: build dev check budget clean web release
 
-build:
-	@if [ ! -d web/node_modules ]; then npm --prefix web ci; fi
-	npm --prefix web run build
+# web: download the pinned web client archive, verify its SHA-256, and unpack
+# into web/dist. Skipped when web/dist already holds the pinned version.
+web:
+	@set -euo pipefail; \
+	version=$$(grep '^version=' web/release.txt | cut -d= -f2); \
+	url=$$(grep '^url=' web/release.txt | cut -d= -f2); \
+	want=$$(grep '^sha256=' web/release.txt | cut -d= -f2); \
+	marker="web/dist/.version"; \
+	if [ -f "$$marker" ] && [ "$$(cat $$marker)" = "$$want" ]; then \
+	  echo "web/dist already holds web client $$version"; \
+	  exit 0; \
+	fi; \
+	echo "Downloading web client $$version from $$url"; \
+	archive=$$(mktemp /tmp/sifty-web-XXXXXX.tar.gz); \
+	curl -fsSL "$$url" -o "$$archive"; \
+	got=$$(shasum -a 256 "$$archive" | awk '{print $$1}'); \
+	if [ "$$got" != "$$want" ]; then \
+	  rm -f "$$archive"; \
+	  echo "SHA-256 mismatch: got $$got, want $$want" >&2; \
+	  exit 1; \
+	fi; \
+	rm -rf web/dist; \
+	mkdir -p web/dist; \
+	tar -xzf "$$archive" -C web/dist --strip-components=0; \
+	rm -f "$$archive"; \
+	echo "$$want" > "$$marker"; \
+	echo "Unpacked web client $$version into web/dist"
+
+build: web
 	mkdir -p bin
 	$(GO_BUILD) -o $(BINARY) ./cmd/sifty
 
-dev: build
-	@if [ ! -d .dev/data ] && [ -n "$$SIFTY_V1_DIR" ]; then \
+dev:
+	@if [ ! -d .dev/data ] && [ -n "$${SIFTY_V1_DIR:-}" ]; then \
 	  $(BINARY) import-v1 --from "$$SIFTY_V1_DIR" --data-dir .dev/data; \
 	fi
-	$(BINARY) serve --offline $$([ -n "$$SIFTY_REPLAY_DIR" ] && echo "--replay $$SIFTY_REPLAY_DIR") --data-dir .dev/data --port 7374 & \
-	sifty_pid=$$!; \
-	trap "kill $$sifty_pid 2>/dev/null" INT TERM EXIT; \
-	npm --prefix web run dev; \
-	kill $$sifty_pid 2>/dev/null; true
+	@echo "Starting server on http://127.0.0.1:7300"
+	@echo "To run the web client: npm run dev  (in a sifty-web checkout)"
+	$(BINARY) serve --offline $$([ -n "$${SIFTY_REPLAY_DIR:-}" ] && echo "--replay $$SIFTY_REPLAY_DIR") --data-dir .dev/data --port 7300
 
 dev-reset:
 	rm -rf .dev/data
+
+# release: verify the pinned web client matches the current API description,
+# then build the release binary. Refuses when web/dist/api.sha256 differs from
+# the SHA-256 of api/openapi.yaml.
+release: web
+	@set -euo pipefail; \
+	api_sha=$$(shasum -a 256 api/openapi.yaml | awk '{print $$1}'); \
+	if [ ! -f web/dist/api.sha256 ]; then \
+	  echo "web/dist/api.sha256 not found; run make web first" >&2; \
+	  exit 1; \
+	fi; \
+	pinned=$$(cat web/dist/api.sha256); \
+	if [ "$$pinned" != "$$api_sha" ]; then \
+	  echo "Release refused: web/dist/api.sha256 ($$pinned) does not match" >&2; \
+	  echo "api/openapi.yaml SHA-256 ($$api_sha)." >&2; \
+	  echo "Publish a new web client built against the current API description." >&2; \
+	  exit 1; \
+	fi
+	mkdir -p bin
+	$(GO_BUILD) -o $(BINARY) ./cmd/sifty
+	@echo "Release binary built: $(BINARY) version $(VERSION)"
 
 check: build
 	@echo "--- gofmt ---"
@@ -43,17 +88,6 @@ check: build
 	   rm -f "$$tmp"; exit 1; \
 	 fi; \
 	 rm -f "$$tmp"
-	@echo "--- openapi-typescript ---"
-	@tmp=$$(mktemp); \
-	 npm --prefix web exec -- openapi-typescript api/openapi.yaml -o "$$tmp" --quiet 2>/dev/null || \
-	   npm --prefix web exec -- openapi-typescript api/openapi.yaml -o "$$tmp" 2>&1; \
-	 if ! diff -q web/src/api/schema.gen.ts "$$tmp" > /dev/null 2>&1; then \
-	   echo "web/src/api/schema.gen.ts is stale; run 'npm --prefix web run gen-api' to regenerate"; \
-	   rm -f "$$tmp"; exit 1; \
-	 fi; \
-	 rm -f "$$tmp"
-	@echo "--- npm check ---"
-	npm --prefix web run check
 
 budget:
 	@bash scripts/budget.sh

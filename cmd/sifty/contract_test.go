@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sifty-works/sifty/internal/server"
+	"github.com/sifty-works/sifty-server/internal/server"
 )
 
 // expectedRoutes lists every API route that must be in the registry.
@@ -15,6 +15,7 @@ import (
 // or was never registered through it.
 var expectedRoutes = []string{
 	"GET /api/status",
+	"GET /api/version",
 	"GET /api/vacancies",
 	"GET /api/vacancies/{id}",
 	"POST /api/vacancies/{id}/decision",

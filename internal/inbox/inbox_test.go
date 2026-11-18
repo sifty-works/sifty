@@ -14,11 +14,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sifty-works/sifty/internal/catalog"
-	"github.com/sifty-works/sifty/internal/db"
-	"github.com/sifty-works/sifty/internal/inbox"
-	"github.com/sifty-works/sifty/internal/listing"
-	"github.com/sifty-works/sifty/internal/server"
+	"github.com/sifty-works/sifty-server/internal/catalog"
+	"github.com/sifty-works/sifty-server/internal/db"
+	"github.com/sifty-works/sifty-server/internal/inbox"
+	"github.com/sifty-works/sifty-server/internal/listing"
+	"github.com/sifty-works/sifty-server/internal/server"
 )
 
 var testNow = time.Date(2026, 11, 17, 12, 0, 0, 0, time.UTC)

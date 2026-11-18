@@ -20,7 +20,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/sifty-works/sifty/internal/apperr"
+	"github.com/sifty-works/sifty-server/internal/apperr"
 )
 
 // CollectProgress describes a running collection job.
@@ -63,6 +63,12 @@ type StatusResp struct {
 	Attention  *Attention       `json:"attention"`
 }
 
+// VersionResp is the response body for GET /api/version.
+type VersionResp struct {
+	Version string `json:"version"`
+	API     string `json:"api"`
+}
+
 const (
 	maxBodyBytes  = 1 << 20 // 1 MB
 	slowThreshold = 500 * time.Millisecond
@@ -73,13 +79,14 @@ var counter atomic.Uint64
 
 // Options holds the runtime parameters the server needs.
 type Options struct {
-	Version string
-	Port    int
-	Offline bool
-	Debug   bool
-	Logger  *slog.Logger
-	Static  fs.FS              // web/dist subtree; nil when the frontend was not built
-	Status  func() StatusExtra // collection status merged into GET /api/status; nil is allowed
+	Version   string
+	APISha256 string // hex SHA-256 of the embedded api/openapi.yaml
+	Port      int
+	Offline   bool
+	Debug     bool
+	Logger    *slog.Logger
+	Static    fs.FS              // web/dist subtree; nil when the frontend was not built
+	Status    func() StatusExtra // collection status merged into GET /api/status; nil is allowed
 }
 
 // New builds and returns the HTTP handler for the application.
@@ -98,6 +105,11 @@ func New(opts Options, routes func(*http.ServeMux)) http.Handler {
 			resp.Attention = extra.Attention
 		}
 		return resp, nil
+	})
+
+	// Version endpoint: build version and SHA-256 of the embedded API description.
+	Handle(mux, "GET /api/version", opts.Logger, func(r *http.Request, _ struct{}) (VersionResp, error) {
+		return VersionResp{Version: opts.Version, API: opts.APISha256}, nil
 	})
 
 	// Register capability routes.

@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sifty-works/sifty/internal/db"
+	"github.com/sifty-works/sifty-server/internal/db"
 )
 
 // Job states.

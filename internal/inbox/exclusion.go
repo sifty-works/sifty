@@ -6,9 +6,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sifty-works/sifty/internal/apperr"
-	"github.com/sifty-works/sifty/internal/db"
-	"github.com/sifty-works/sifty/internal/listing"
+	"github.com/sifty-works/sifty-server/internal/apperr"
+	"github.com/sifty-works/sifty-server/internal/db"
+	"github.com/sifty-works/sifty-server/internal/listing"
 )
 
 // notExcluded is a SQL predicate that holds when a vacancy row is not hidden

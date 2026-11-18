@@ -16,14 +16,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sifty-works/sifty/internal/catalog"
-	"github.com/sifty-works/sifty/internal/collect"
-	"github.com/sifty-works/sifty/internal/config"
-	"github.com/sifty-works/sifty/internal/db"
-	"github.com/sifty-works/sifty/internal/fetch"
-	"github.com/sifty-works/sifty/internal/fetch/fetchtest"
-	"github.com/sifty-works/sifty/internal/runner"
-	"github.com/sifty-works/sifty/internal/server"
+	"github.com/sifty-works/sifty-server/internal/catalog"
+	"github.com/sifty-works/sifty-server/internal/collect"
+	"github.com/sifty-works/sifty-server/internal/config"
+	"github.com/sifty-works/sifty-server/internal/db"
+	"github.com/sifty-works/sifty-server/internal/fetch"
+	"github.com/sifty-works/sifty-server/internal/fetch/fetchtest"
+	"github.com/sifty-works/sifty-server/internal/runner"
+	"github.com/sifty-works/sifty-server/internal/server"
 )
 
 var base = time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)

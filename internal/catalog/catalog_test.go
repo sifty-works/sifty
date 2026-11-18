@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sifty-works/sifty/internal/catalog"
-	"github.com/sifty-works/sifty/internal/db"
-	"github.com/sifty-works/sifty/internal/listing"
+	"github.com/sifty-works/sifty-server/internal/catalog"
+	"github.com/sifty-works/sifty-server/internal/db"
+	"github.com/sifty-works/sifty-server/internal/listing"
 )
 
 // openTestDB opens a temporary database with the embedded catalog migrations.

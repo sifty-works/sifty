@@ -16,7 +16,8 @@ These rules come from what made the previous application grow to several times t
 
 ## Process and layers
 
-- One process, written in Go, with SQLite (pure Go driver) and a TypeScript frontend embedded in the binary. A second server on the same data folder is refused by a lock file `<data>/sifty.lock`.
+- Two repositories: **sifty-server** (this repository, Go, `github.com/sifty-works/sifty-server`) holds the server binary; **sifty-web** (`github.com/sifty-works/sifty-web`) holds the TypeScript frontend. A versioned web release archive is pinned in `web/release.txt`; `make web` downloads, verifies its SHA-256 and unpacks it into `web/dist`; the Go embedding package (`web/`) embeds that tree into the binary. A build without `web/dist` serves the API alone with a placeholder page.
+- One process, written in Go, with SQLite (pure Go driver) and the web client embedded in the binary. A second server on the same data folder is refused by a lock file `<data>/sifty.lock`.
 - The server listens on `127.0.0.1` only, checks Host and Origin, requires JSON for every request that changes something, and limits a body to 1 MB except document uploads. Requests of 500 ms or more, other than model calls, are logged.
 - Each capability has three layers: **handler** (parses and checks input, calls the service, writes JSON) → **service** (domain rules) → **repo** (SQL only, typed rows and typed errors). A foundation package `db` opens the database, runs migrations and makes backups; no other package reaches the raw connection.
 - **Errors are typed:** `Invalid` → 422, `NotFound` → 404, `Conflict` → 409, `Busy` → 423, anything else and panics → 500 with "Internal error, see log #id" and a log entry. A Go error text never reaches the user. The store returns codes; texts for the user live in the service or the client.
@@ -171,15 +172,20 @@ type Response struct { Text string; InTokens, OutTokens int }
 
 ## Build and commands
 
-- `make build`: frontend build, then `go build` with the frontend embedded; one binary. The browser script for form reading is embedded and written to the user's cache on first use; form reading needs Node.js and Playwright on the machine. DOCX text is read in Go.
-- `make dev`: the frontend dev server proxying to `sifty serve --offline` on a copy of the data. `--offline` forbids every network request and model call. `SIFTY_REPLAY_DIR=<folder>` adds `--replay <folder>`, which serves requests from recorded responses in that folder instead of making real HTTP calls; unrecorded addresses are logged. Until switch-over, the copy is a fresh `import-v1` of a copy of the old database.
-- `make check`, `make budget`, `make release`, `make rollback`: see `PROCESS.md`.
+- `make web`: downloads the pinned web client archive, verifies its SHA-256 (refuses and deletes on mismatch), and unpacks it into `web/dist`; skipped when `web/dist` already holds the pinned version. `make build` = `make web` + `go build`.
+- `make dev`: starts `sifty serve --offline` on a copy of the data (port 7300) and prints how to run the web client (`npm run dev` in a sifty-web checkout). `--offline` forbids every network request and model call. `SIFTY_REPLAY_DIR=<folder>` adds `--replay <folder>`, which serves requests from recorded responses instead of making real HTTP calls.
+- `make release`: runs `make web`, then refuses when `web/dist/api.sha256` (the SHA-256 of the description the web client was built against) differs from the SHA-256 of `api/openapi.yaml`, then builds the release binary.
+- `make check`, `make budget`, `make rollback`: see `PROCESS.md`. Neither runs npm.
 - Commands: `serve` (`--offline`, `--replay <folder>`, `--port`, `--debug`, `--data-dir`), `backup` (database copy and the user's files in one archive), `import-v1`, `config defaults`, `version`.
 
-## Frontend
+## Web client
 
-- `api/schema.gen.ts`: TypeScript types generated from `api/openapi.yaml` by `openapi-typescript`; kept up to date by `make check`. `api/client.ts`: one typed function per endpoint, using the generated types as its type aliases. `state/`: the list cache by profile, stage and query; decisions of the session (decided rows kept on screen until reload; the decision answer replaces the row; decision p95 under 20 ms); filters, query and sort remembered in the browser. `views/`: shell, tabs, list, row, filters, vacancy view, fit band, ask and offer cards, listing, Shortlist check, dialogs, profile pages, settings pages. `keyboard.ts`: keys by physical position.
+The web client lives in `github.com/sifty-works/sifty-web`. Its source is in that repository; this repository embeds a released archive.
+
+- `api/schema.gen.ts` (in sifty-web): TypeScript types generated from `api/openapi.yaml` by `openapi-typescript`; kept up to date by `npm run check` in sifty-web. `api/client.ts`: one typed function per endpoint, using the generated types as its type aliases. `state/`: the list cache by profile, stage and query; decisions of the session (decided rows kept on screen until reload; the decision answer replaces the row; decision p95 under 20 ms); filters, query and sort remembered in the browser. `views/`: shell, tabs, list, row, filters, vacancy view, fit band, ask and offer cards, listing, Shortlist check, dialogs, profile pages, settings pages. `keyboard.ts`: keys by physical position.
 - Views do not call the API directly and compute no verdict or threshold.
+- To develop the client against a local server: run `make dev` in sifty-server (starts server on port 7300), then `npm run dev` in a sifty-web checkout (Vite proxies `/api` to port 7300).
+- To release a new web client: `npm run release -- <version>` in sifty-web builds the archive and writes `dist/api.sha256`; update `web/release.txt` in sifty-server with the new version, URL and SHA-256; `make release` in sifty-server verifies the description match before building.
 
 ## Endpoints
 
@@ -194,7 +200,7 @@ type Response struct { Text string; InTokens, OutTokens int }
 | Documents | `POST/DELETE /api/documents`, `POST /api/documents/{id}/analyze`, `POST /api/documents/{id}/refresh`; `POST /api/proposals/{id}/accept`, `/reject` |
 | Questions & Answers | `GET/POST/PATCH/DELETE /api/qa` |
 | Application | `GET /api/vacancies/{id}/application`; `PATCH …/application/fields/{field}`; `POST …/application/{write,paste,questions,retry}`; `POST /api/vacancies/{id}/locate`; `POST /api/vacancies/{id}/shortlist-check/retry` |
-| Settings and status | `GET/PUT /api/settings`, `GET/PUT /api/settings/file`; `POST /api/providers/{name}/check`; `GET /api/jobs`; `GET /api/status` (or event stream) |
+| Settings and status | `GET/PUT /api/settings`, `GET/PUT /api/settings/file`; `POST /api/providers/{name}/check`; `GET /api/jobs`; `GET /api/status` (or event stream); `GET /api/version` |
 
 ## Import of the old application
 
@@ -223,4 +229,4 @@ These are targets the coordinator checks at acceptance of every change (see `PRO
 | Network per collection run | 1 request per source (2 for Hacker News), plus 1 per vacancy without text in the listing that is new, or known without text and not requested in the last 7 days |
 | List API | under 50 ms at the 95th percentile for 1,200 rows; vacancy view under 30 ms; decision under 20 ms |
 
-Estimated size by capability (backend, then frontend, in lines): collection 3,650 and 400 (fetching, the listing model and its normalisation, the catalogue, sources, collection runs, `industry`, and data lines such as heading lists and site configurations); assessment 3,100 and 700; inbox 1,050 and 1,500; profiles 2,700 and 2,350; application 2,800 and 800; foundation 2,700 and 700 (settings pages). That is about 16,000 and 6,450, so the backend has no reserve left: a capability that needs more takes it from another by the owner's decision. The frontend estimate is about 450 lines over its budget; the profile editors are where it must be recovered, with one generic section editor instead of one editor per section.
+Estimated size by capability (backend, then frontend, in lines): collection 3,650 and 400 (fetching, the listing model and its normalisation, the catalogue, sources, collection runs, `industry`, and data lines such as heading lists and site configurations); assessment 3,100 and 700; inbox 1,050 and 1,500; profiles 2,700 and 2,350; application 2,800 and 800; foundation 2,700 and 700 (settings pages). That is about 16,000 and 6,450, so the backend has no reserve left: a capability that needs more takes it from another by the owner's decision. The frontend estimate is about 450 lines over its budget; the profile editors are where it must be recovered, with one generic section editor instead of one editor per section. The frontend budget is checked in sifty-web by its `scripts/budget.sh`.

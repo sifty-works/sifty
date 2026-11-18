@@ -14,10 +14,9 @@ These are the rules for every coding agent working in this repository. `docs/ARC
 - Read `docs/ARCHITECTURE.md` and the behaviour document of an area before changing that area.
 - Write code, comments, documents and commit messages in English.
 - Keep out of this repository everything from the work repository (card names, card text, the owner's words, the journal) and all personal data (names, e-mail addresses, paths into a home folder, real vacancies, profiles or documents). Do not mention cards, reviews, rule numbers or section numbers in code, comments, test names or commit messages.
-- Use invented data in tests, fixtures and examples.
-- Run the application only through `make dev`, or through `sifty serve --offline` on a fixture data folder.
+- Use invented data in tests, fixtures and examples. Do not change git configuration.
+- Run the server only through `make dev`, or through `sifty serve --offline` on a fixture data folder. The web client lives in `github.com/sifty-works/sifty-web`; `docs/ARCHITECTURE.md` describes how a web release is pinned and how to develop against the server.
 - Write commit messages as `type(scope): what changed`, for example `fix(inbox): keep the selected row after a decision`.
-- Do not change git configuration.
 
 ## Code
 

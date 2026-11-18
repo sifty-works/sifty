@@ -5,7 +5,7 @@ import (
 	"encoding/xml"
 	"strings"
 
-	"github.com/sifty-works/sifty/internal/listing"
+	"github.com/sifty-works/sifty-server/internal/listing"
 )
 
 // parseFeedXML parses RSS or Atom XML and returns postings.

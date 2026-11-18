@@ -17,8 +17,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sifty-works/sifty/internal/db"
-	"github.com/sifty-works/sifty/internal/listing"
+	"github.com/sifty-works/sifty-server/internal/db"
+	"github.com/sifty-works/sifty-server/internal/listing"
 )
 
 // Outcome describes the result of an Upsert call.

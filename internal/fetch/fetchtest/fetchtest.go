@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"sync"
 
-	"github.com/sifty-works/sifty/internal/fetch"
+	"github.com/sifty-works/sifty-server/internal/fetch"
 )
 
 // MapEntry is one entry in a Map fetcher.

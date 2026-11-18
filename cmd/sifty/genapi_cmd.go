@@ -10,9 +10,9 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/sifty-works/sifty/internal/collect"
-	"github.com/sifty-works/sifty/internal/inbox"
-	"github.com/sifty-works/sifty/internal/server"
+	"github.com/sifty-works/sifty-server/internal/collect"
+	"github.com/sifty-works/sifty-server/internal/inbox"
+	"github.com/sifty-works/sifty-server/internal/server"
 	"gopkg.in/yaml.v3"
 )
 

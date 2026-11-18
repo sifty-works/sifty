@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/sifty-works/sifty/internal/apperr"
-	"github.com/sifty-works/sifty/internal/db"
+	"github.com/sifty-works/sifty-server/internal/apperr"
+	"github.com/sifty-works/sifty-server/internal/db"
 )
 
 // repoRow is the raw data loaded from a list query.
