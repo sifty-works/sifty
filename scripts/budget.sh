@@ -29,7 +29,7 @@ printf "%-40s %10s %10s\n" "-------" "------" "------"
 
 be=$(files '*.go' | grep -v '_test\.go$' | count)
 be_test=$(files '*_test.go' | count)
-fe=$(files 'web/src/*.ts' 'web/src/*.tsx' | grep -v '\.test\.' | count)
+fe=$(files 'web/src/*.ts' 'web/src/*.tsx' | grep -v '\.test\.' | grep -v '\.gen\.ts$' | count)
 fe_test=$(files 'web/src/*.test.ts' 'web/src/*.test.tsx' | count)
 
 row() { printf "%-40s %10s %10s %s\n" "$1" "$2" "$3" "$4"; }

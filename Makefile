@@ -43,6 +43,15 @@ check: build
 	   rm -f "$$tmp"; exit 1; \
 	 fi; \
 	 rm -f "$$tmp"
+	@echo "--- openapi-typescript ---"
+	@tmp=$$(mktemp); \
+	 npm --prefix web exec -- openapi-typescript api/openapi.yaml -o "$$tmp" --quiet 2>/dev/null || \
+	   npm --prefix web exec -- openapi-typescript api/openapi.yaml -o "$$tmp" 2>&1; \
+	 if ! diff -q web/src/api/schema.gen.ts "$$tmp" > /dev/null 2>&1; then \
+	   echo "web/src/api/schema.gen.ts is stale; run 'npm --prefix web run gen-api' to regenerate"; \
+	   rm -f "$$tmp"; exit 1; \
+	 fi; \
+	 rm -f "$$tmp"
 	@echo "--- npm check ---"
 	npm --prefix web run check
 

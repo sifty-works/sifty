@@ -417,6 +417,16 @@ func validApplyURL(raw string) bool {
 	return (u.Scheme == "http" || u.Scheme == "https") && u.User == nil
 }
 
+// outcomeButtons are the choices in the apply-outcome dialog, used by both the
+// apply and confirm actions in the shortlist stage.
+var outcomeButtons = []Outcome{
+	{Key: "not-yet", Label: "Not yet"},
+	{Key: "stale", Label: "No, vacancy is stale", To: StageDismissed, Reason: "vacancy is stale"},
+	{Key: "closed", Label: "No, vacancy is closed", To: StageDismissed, Reason: "vacancy is closed"},
+	{Key: "unsuitable", Label: "No, not suitable", To: StageDismissed, Reason: "not suitable"},
+	{Key: "applied", Label: "Yes, applied", To: StageApplied, Confirmed: true},
+}
+
 // stageActions returns the actions available in stage, in the order the page
 // shows them. Labels carry no keyboard hints; to is the decision target stage;
 // confirm names the dialog the client must show before proceeding.
@@ -436,13 +446,7 @@ func stageActions(stage, vacURL, applyURL, company string) []Action {
 			{Key: "inbox", Label: "Move to Inbox", To: StageInbox},
 			apply,
 			{Key: "confirm", Label: "Confirm application…", To: StageApplied, Confirm: ConfirmOutcome,
-				Outcomes: []Outcome{
-					{Key: "not-yet", Label: "Not yet"},
-					{Key: "stale", Label: "No, vacancy is stale", To: StageDismissed, Reason: "vacancy is stale"},
-					{Key: "closed", Label: "No, vacancy is closed", To: StageDismissed, Reason: "vacancy is closed"},
-					{Key: "unsuitable", Label: "No, not suitable", To: StageDismissed, Reason: "not suitable"},
-					{Key: "applied", Label: "Yes, applied", To: StageApplied, Confirmed: true},
-				}},
+				Outcomes: outcomeButtons},
 			{Key: "delete", Label: "Delete role…", Confirm: ConfirmDelete},
 		}
 	case "applied":
@@ -462,15 +466,19 @@ func stageActions(stage, vacURL, applyURL, company string) []Action {
 // buildApplyAction builds the apply Action for the shortlist stage.
 // It carries a URL when a valid http(s) address without credentials is found,
 // otherwise a message. Labels carry no keyboard hints.
+// Confirm and Outcomes are set so the client shows the outcome dialog after opening the URL.
 func buildApplyAction(vacURL, applyURL string) Action {
 	if validApplyURL(applyURL) {
-		return Action{Key: "apply", Label: "Apply", URL: applyURL}
+		return Action{Key: "apply", Label: "Apply", URL: applyURL, Confirm: ConfirmOutcome, Outcomes: outcomeButtons}
 	}
 	if validApplyURL(vacURL) {
-		return Action{Key: "apply", Label: "Apply", URL: vacURL}
+		return Action{Key: "apply", Label: "Apply", URL: vacURL, Confirm: ConfirmOutcome, Outcomes: outcomeButtons}
 	}
 	return Action{Key: "apply", Label: "Apply",
-		Message: "No valid employer or original listing URL is available. The role stays in Shortlist."}
+		Message:  "No valid employer or original listing URL is available. The role stays in Shortlist.",
+		Confirm:  ConfirmOutcome,
+		Outcomes: outcomeButtons,
+	}
 }
 
 // vacancyView loads and assembles the vacancy page response for a resolved

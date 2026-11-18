@@ -4,6 +4,7 @@ Notable changes of Sifty, newest first. Versions follow `MAJOR.MINOR.PATCH`.
 
 ## Unreleased
 
+- The web client takes its types from the generated interface description and follows the server's actions: the target stage of each decision and the answers of the outcome dialog come from the server.
 - The interface between the server and its clients is described in one generated file, `api/openapi.yaml` (OpenAPI 3.1), checked on every build; the vacancy page gives its sources as names with addresses, each action its target stage, dialog and outcome answers, and starting a collection answers with the status instead of a redirect.
 - The application looks as before: the black header with the stage tabs, the logo and Settings; the graphite list beside the light vacancy page with its white cards; the primary actions with their key caps, the Apply control with Confirm and Delete below it; the outcome and Delete dialogs; Settings grouped as before, with Source sites shown as cards with switches. Fonts ship with the application.
 - Select (Y), Dismiss (N), Move to Inbox, Undo and Restore on the vacancy page; decided Inbox roles stay on screen until reload; Apply (A) opens the employer's page and asks whether the application was submitted; Delete asks before removing a role for good.
