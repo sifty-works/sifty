@@ -109,9 +109,6 @@ func mergeDetail(p, m listing.Posting) listing.Posting {
 		p.Text = listing.Normalize(m.Text, listing.HTML)
 		p.TextKind, p.TextState = listing.HTML, listing.TextFull
 	}
-	if p.Company == "Unknown" {
-		p.Company = ""
-	}
 	for _, kv := range [][2]*string{{&p.Company, &m.Company}, {&p.Location, &m.Location}} {
 		if *kv[0] == "" {
 			*kv[0] = *kv[1]

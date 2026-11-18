@@ -118,9 +118,6 @@ func (c *Catalog) Upsert(ctx context.Context, p listing.Posting, src string) (in
 	}
 
 	company := p.Company
-	if company == "" {
-		company = "Unknown"
-	}
 	identity := listing.Identity(company, p.Title)
 
 	now := c.now().UTC()
@@ -232,8 +229,8 @@ func (c *Catalog) Upsert(ctx context.Context, p listing.Posting, src string) (in
 
 	upd.title = p.Title // always from posting
 	// A guessed company (derived from the board's address) does not replace a
-	// stored company that is already named; it may replace Unknown.
-	if company != "Unknown" && company != "" && (!p.CompanyGuessed || ex.company == "Unknown") {
+	// stored company that is already named; it may replace an empty company.
+	if company != "" && (!p.CompanyGuessed || ex.company == "") {
 		upd.company = company
 		upd.identity = listing.Identity(company, p.Title)
 	} else {
@@ -409,11 +406,11 @@ func findMatches(ctx context.Context, tx *sql.Tx, canonURL, atsApply, canonApply
 
 	// Matches (b) and (c) in one query, filtered in Go.
 	// (b): same concrete ATS apply address.
-	// (c): same identity, company not Unknown, different host, no conflicting apply URL.
+	// (c): same identity, company not empty, different host, no conflicting apply URL.
 	newHost := urlHost(canonURL)
 	rows, err := tx.QueryContext(ctx, `
 		SELECT id, url, apply_url FROM vacancy
-		WHERE (? != '' AND apply_url = ?) OR (identity = ? AND company != 'Unknown')`,
+		WHERE (? != '' AND apply_url = ?) OR (identity = ? AND company != '')`,
 		atsApply, atsApply, identity)
 	if err != nil {
 		return nil, fmt.Errorf("match by apply/identity: %w", err)
@@ -430,11 +427,11 @@ func findMatches(ctx context.Context, tx *sql.Tx, canonURL, atsApply, canonApply
 			ids = appendUnique(ids, rid)
 			continue
 		}
-		// Match (c): different host, company not Unknown, apply addresses do not
+		// Match (c): different host, company not empty, apply addresses do not
 		// conflict. Two apply addresses conflict only when they name different
 		// concrete vacancies on the same applicant tracking system; addresses on
 		// different systems (e.g. Ashby and Greenhouse) do not conflict.
-		if company == "Unknown" {
+		if company == "" {
 			continue
 		}
 		if urlHost(rURL) == newHost {
@@ -607,9 +604,6 @@ func (c *Catalog) Known(ctx context.Context, p listing.Posting) (Known, error) {
 		}
 	}
 	company := p.Company
-	if company == "" {
-		company = "Unknown"
-	}
 	identity := listing.Identity(company, p.Title)
 
 	tx, err := c.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})

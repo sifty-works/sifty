@@ -204,7 +204,7 @@ func (c *Collector) run(ctx context.Context, j *runner.Job) error {
 						}
 						// Skip Detail but still upsert if the posting matches an exclusion.
 						excluded := false
-						if excl, exclErr := inbox.Excluded(ctx, c.db, p.Title, p.Company); exclErr != nil {
+						if excl, exclErr := inbox.Excluded(ctx, c.db, p.Title, p.Company, p.ApplyURL); exclErr != nil {
 							c.log.Warn("collect: exclusion check", "error", exclErr)
 						} else {
 							excluded = excl
@@ -225,7 +225,7 @@ func (c *Collector) run(ctx context.Context, j *runner.Job) error {
 									p.Requested = true
 								}
 								// Check exclusion again on fields revealed by the vacancy's own page.
-								if excl, exclErr := inbox.Excluded(ctx, c.db, p.Title, p.Company); exclErr != nil {
+								if excl, exclErr := inbox.Excluded(ctx, c.db, p.Title, p.Company, p.ApplyURL); exclErr != nil {
 									c.log.Warn("collect: exclusion check after detail", "error", exclErr)
 								} else {
 									excluded = excl

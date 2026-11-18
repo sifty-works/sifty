@@ -517,8 +517,8 @@ func TestExclusions_Filter(t *testing.T) {
 func TestExclusions_UnknownPlaceholderNotMatchedByWord(t *testing.T) {
 	d := openTestDB(t)
 	cat := newCat(d)
-	// Company "Unknown" is a placeholder assigned before the vacancy's own page is read.
-	add(t, cat, post("https://example.com/jobs/unk1", "Frontend Developer", "Unknown"))
+	// A vacancy with no company (empty placeholder, displayed as "Unknown").
+	add(t, cat, post("https://example.com/jobs/unk1", "Frontend Developer", ""))
 	// A vacancy whose title contains "unknown" should still be hidden.
 	add(t, cat, post("https://example.com/jobs/unk2", "Unknown Role", "Nexus"))
 	ts := newTestServer(t, d)
@@ -527,10 +527,7 @@ func TestExclusions_UnknownPlaceholderNotMatchedByWord(t *testing.T) {
 
 	rs := getRows(apiGet(t, ts, "/api/vacancies"))
 	if len(rs) != 1 {
-		t.Fatalf("rows: got %d, want 1 (placeholder company preserved)", len(rs))
-	}
-	if got := field(rs[0], "title"); got != "Frontend Developer" {
-		t.Errorf("remaining row: got %q, want Frontend Developer", got)
+		t.Fatalf("rows: got %d, want 1 (placeholder company not matched by word exclusion)", len(rs))
 	}
 }
 

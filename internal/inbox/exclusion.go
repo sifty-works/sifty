@@ -2,7 +2,6 @@ package inbox
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"strings"
 	"time"
@@ -14,11 +13,11 @@ import (
 
 // notExcluded is a SQL predicate that holds when a vacancy row is not hidden
 // by any all-profile exclusion. Used in list and count queries.
-// Word exclusions match the company only when it is not the 'Unknown' placeholder
-// (assigned before a vacancy's own page is read).
+// Word exclusions do not match a vacancy whose company column is empty
+// (the placeholder used before a vacancy's own page is read).
 const notExcluded = `NOT EXISTS (
 	SELECT 1 FROM exclusion e WHERE e.profile_id=0 AND (
-		(e.kind='word' AND (instr(lower(title),e.norm)>0 OR (company!='Unknown' AND instr(lower(company),e.norm)>0)))
+		(e.kind='word' AND (instr(lower(title),e.norm)>0 OR (company!='' AND instr(lower(company),e.norm)>0)))
 		OR (e.kind='company' AND (
 			substr(identity,1,instr(identity,'|')-1)=e.norm
 			OR (apply_url!='' AND instr(apply_url,'.greenhouse.io/'||lower(e.value)||'/jobs/')>0)
@@ -39,26 +38,20 @@ func normFor(kind, value string) string {
 	return strings.ToLower(strings.TrimSpace(value))
 }
 
-// Excluded reports whether a vacancy with the given title and company matches
-// any all-profile exclusion. Called by collection before and after Detail.
-// Word exclusions do not match the 'Unknown' placeholder company.
-func Excluded(ctx context.Context, database *db.DB, title, company string) (bool, error) {
-	companyForWord := strings.ToLower(company)
-	if company == "Unknown" {
-		companyForWord = ""
-	}
+// Excluded reports whether a vacancy with the given title, company and apply
+// address matches any all-profile exclusion. Called by collection before and
+// after Detail. Uses the same notExcluded predicate as the inbox list.
+func Excluded(ctx context.Context, database *db.DB, title, company, applyURL string) (bool, error) {
+	identity := listing.Identity(company, title)
 	var n int
-	err := database.QueryRowContext(ctx, `SELECT 1 FROM exclusion WHERE profile_id=0 AND (
-		(kind='word' AND (instr(?,norm)>0 OR instr(?,norm)>0))
-		OR (kind='company' AND norm=?)
-	) LIMIT 1`,
-		strings.ToLower(title), companyForWord,
-		strings.TrimSuffix(listing.Identity(company, ""), "|"),
+	err := database.QueryRowContext(ctx,
+		`SELECT count(*) FROM (SELECT ? AS title, ? AS company, ? AS identity, ? AS apply_url) WHERE NOT `+notExcluded,
+		title, company, identity, applyURL,
 	).Scan(&n)
-	if err == sql.ErrNoRows {
-		return false, nil
+	if err != nil {
+		return false, fmt.Errorf("inbox: excluded: %w", err)
 	}
-	return err == nil, err
+	return n > 0, nil
 }
 
 func queryExclusions(ctx context.Context, database *db.DB) ([]exclRow, error) {
@@ -115,15 +108,27 @@ func previewCount(ctx context.Context, database *db.DB, kind, value string) (int
 		return 0, nil
 	}
 	norm := normFor(kind, value)
-	var n int
-	err := database.QueryRowContext(ctx, `SELECT count(*) FROM vacancy WHERE
-		((? ='word' AND (instr(lower(title),?)>0 OR (company!='Unknown' AND instr(lower(company),?)>0)))
-		OR (? ='company' AND (substr(identity,1,instr(identity,'|')-1)=?
-			OR (apply_url!='' AND instr(apply_url,'.greenhouse.io/'||lower(?)||'/jobs/')>0))))
-		AND `+notExcluded,
-		kind, norm, norm, kind, norm, value,
-	).Scan(&n)
-	return n, err
+
+	tx, err := database.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("inbox: preview: begin tx: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	var before int
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM vacancy WHERE `+notExcluded).Scan(&before); err != nil {
+		return 0, fmt.Errorf("inbox: preview: count before: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT OR IGNORE INTO exclusion (kind,value,norm,profile_id,created) VALUES (?,?,?,0,'preview')`,
+		kind, value, norm); err != nil {
+		return 0, fmt.Errorf("inbox: preview: insert: %w", err)
+	}
+	var after int
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM vacancy WHERE `+notExcluded).Scan(&after); err != nil {
+		return 0, fmt.Errorf("inbox: preview: count after: %w", err)
+	}
+	return before - after, nil
 }
 
 func exclResponse(rows []exclRow) map[string]any {

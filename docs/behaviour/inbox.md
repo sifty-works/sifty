@@ -28,7 +28,7 @@ What the user gets: for the chosen profile, the vacancies that fit its search, i
 There is one list of exclusions, managed in Settings.
 
 - An exclusion is a **word** or a **company**, and it applies to **all profiles** or to **one profile**.
-- A word matches as a case-insensitive substring of the title or the company. A company matches the exact company name after normalisation. Word exclusions do not match the placeholder company "Unknown" that is used before a vacancy's own page has been read.
+- A word matches as a case-insensitive substring of the title or the company. A company matches the exact company name after normalisation. Word exclusions do not match a vacancy with no company (displayed as "Unknown" before its own page has been read). A company exclusion also matches a vacancy whose apply address points to that company's Greenhouse board.
 - A matching vacancy is hidden everywhere: in every list, in counters and in search. An exclusion that applies to all profiles also stops the vacancy's assessment and the fetching of its page (see `collection.md`).
 - While a word is typed, the form shows "Would hide N roles".
 - "Block company" on a vacancy adds a company exclusion for all profiles.

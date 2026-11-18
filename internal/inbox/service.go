@@ -39,9 +39,13 @@ func list(ctx context.Context, r *repo, now func() time.Time, q string) (rows []
 	t := now()
 	rows = make([]Row, len(raw))
 	for i, rr := range raw {
+		company := rr.company
+		if company == "" {
+			company = "Unknown"
+		}
 		rows[i] = Row{
 			ID:        rr.id,
-			Company:   rr.company,
+			Company:   company,
 			Title:     rr.title,
 			Location:  locationText(rr.location),
 			Published: publicationLine(rr.publishedAt, rr.publishedBasis, t),

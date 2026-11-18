@@ -420,8 +420,8 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 		}
 		md := mergedData[j.id]
 		company := j.company
-		if company == "" {
-			company = "Unknown"
+		if strings.EqualFold(company, "Unknown") {
+			company = "" // the old placeholder for a missing company
 		}
 		identity := listing.Identity(company, j.title)
 

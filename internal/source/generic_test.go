@@ -409,7 +409,7 @@ func TestDetail_content_selector(t *testing.T) {
 		SkipJSONLD: true,
 		Content:    []source.Attr{{Attr: "class", Substr: "text-dark-grey-text"}},
 	}
-	p := listing.Posting{URL: pageURL, Title: "Solidity Dev", Company: "Unknown"}
+	p := listing.Posting{URL: pageURL, Title: "Solidity Dev", Company: ""}
 	result, err := source.Detail(context.Background(), m, p, cfg)
 	if err != nil {
 		t.Fatalf("Detail: %v", err)

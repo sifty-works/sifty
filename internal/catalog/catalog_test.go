@@ -78,8 +78,8 @@ func TestUpsert_NewVacancy(t *testing.T) {
 	if err := d.QueryRow(`SELECT company FROM vacancy WHERE id = ?`, id2).Scan(&company); err != nil {
 		t.Fatalf("company query: %v", err)
 	}
-	if company != "Unknown" {
-		t.Errorf("company: got %q, want %q", company, "Unknown")
+	if company != "" {
+		t.Errorf("company: got %q, want %q (stored as empty when unknown)", company, "")
 	}
 }
 
@@ -118,13 +118,13 @@ func TestUpsert_MatchedByAddress(t *testing.T) {
 		t.Errorf("version: got %d, want 2", version)
 	}
 
-	// Field updates: title and merged source_fields; Unknown company does not replace.
+	// Field updates: title and merged source_fields; empty company does not replace.
 	p2 := posting("https://example.com/jobs/14", "Old Title", "Acme")
 	p2.Fields = map[string]string{"salary": "100k", "type": "full-time"}
 	id2, _, _ := cat.Upsert(context.Background(), p2, "src")
 	p2b := p2
 	p2b.Title = "New Title"
-	p2b.Company = "" // becomes Unknown; original company should stay
+	p2b.Company = "" // empty (no company known); original named company should stay
 	p2b.Fields = map[string]string{"salary": "120k", "remote": "yes"}
 	cat.Upsert(context.Background(), p2b, "src") //nolint:errcheck
 	var title, company, fields string
@@ -134,7 +134,7 @@ func TestUpsert_MatchedByAddress(t *testing.T) {
 		t.Errorf("title: got %q, want New Title", title)
 	}
 	if company != "Acme" {
-		t.Errorf("company: got %q, want Acme (Unknown should not replace)", company)
+		t.Errorf("company: got %q, want Acme (empty company should not replace named)", company)
 	}
 	if !strings.Contains(fields, `"salary":"120k"`) || !strings.Contains(fields, `"type":"full-time"`) || !strings.Contains(fields, `"remote":"yes"`) {
 		t.Errorf("fields merged incorrectly: %s", fields)
@@ -665,7 +665,8 @@ func TestUpsert_CrossATSApplyRules(t *testing.T) {
 // --- Guessed company rules ---
 
 // TestUpsert_GuessedCompanyRules checks that a guessed company does not replace
-// a stored named company but does replace Unknown, and that new vacancies keep it.
+// a stored named company but does replace an empty company, and that new
+// vacancies keep it.
 func TestUpsert_GuessedCompanyRules(t *testing.T) {
 	// A guessed company must not replace a stored company that is already named.
 	t.Run("guessed company does not replace named", func(t *testing.T) {
@@ -683,8 +684,8 @@ func TestUpsert_GuessedCompanyRules(t *testing.T) {
 		}
 	})
 
-	// A guessed company may replace Unknown.
-	t.Run("guessed company replaces Unknown", func(t *testing.T) {
+	// A guessed company may replace an empty company.
+	t.Run("guessed company replaces empty company", func(t *testing.T) {
 		d := openTestDB(t)
 		cat := catalog.New(d, fixedNow())
 		p1 := posting("https://acme.com/jobs/analyst", "Data Analyst", "")
@@ -695,7 +696,7 @@ func TestUpsert_GuessedCompanyRules(t *testing.T) {
 		var company string
 		d.QueryRow(`SELECT company FROM vacancy WHERE id = ?`, id1).Scan(&company) //nolint:errcheck
 		if company != "acme-board" {
-			t.Errorf("company: got %q, want acme-board (guessed should replace Unknown)", company)
+			t.Errorf("company: got %q, want acme-board (guessed should replace empty company)", company)
 		}
 	})
 

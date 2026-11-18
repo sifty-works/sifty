@@ -4,6 +4,7 @@ Notable changes of Sifty, newest first. Versions follow `MAJOR.MINOR.PATCH`.
 
 ## Unreleased
 
+- Collection also skips the page of a vacancy on the Greenhouse board of a blocked company, as the lists already hid it.
 - A source whose site does not answer shows "Site not answering"; "Timed out" is kept for a request that ran out of time.
 - Settings → Exclusions: words and companies that hide vacancies everywhere, with "Would hide N roles" while typing; "Block company" on an Inbox row. Collection skips the page of an excluded vacancy, and removing an exclusion shows its vacancies at once. The import brings the old stop words and blocked companies.
 - A new vacancy found without a description gets its text, company and location from its own page; a page that could not be read is tried again after 7 days, and a site that blocks reading marks the vacancy "Blocked by site".

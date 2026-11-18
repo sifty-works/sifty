@@ -478,14 +478,14 @@ func TestImport_PublicationRules(t *testing.T) {
 	}
 }
 
-func TestImport_EmptyCompanyBecomesUnknown(t *testing.T) {
+func TestImport_EmptyCompanyStoredEmpty(t *testing.T) {
 	fromDir := makeOldDir(t, "")
 	oldDB := openOldDB(t, fromDir)
 
 	_, err := oldDB.Exec(`
 		INSERT INTO jobs (id, identity, title, company, original_url,
 		  description, description_status, first_seen, last_seen)
-		VALUES (1, '|engineer', 'Engineer', '', 'https://example.com/jobs/1',
+		VALUES (1, 'unknown|engineer', 'Engineer', 'Unknown', 'https://example.com/jobs/1',
 		  't', 'available', '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z')`)
 	if err != nil {
 		t.Fatalf("insert: %v", err)
@@ -497,8 +497,8 @@ func TestImport_EmptyCompanyBecomesUnknown(t *testing.T) {
 
 	var company string
 	newDB.QueryRow(`SELECT company FROM vacancy WHERE id=1`).Scan(&company) //nolint:errcheck
-	if company != "Unknown" {
-		t.Errorf("company: got %q, want Unknown", company)
+	if company != "" {
+		t.Errorf("company: got %q, want %q (the old placeholder is stored as empty)", company, "")
 	}
 }
 
