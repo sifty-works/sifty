@@ -66,40 +66,59 @@ func TestFilter_Collected_30days(t *testing.T) {
 	}
 }
 
-// --- HideExpired filter ---
+// --- Expiry condition ---
 
-// TestFilter_HideExpired removes vacancies past their expiry date and keeps
-// those with a future expiry or no expiry set.
-func TestFilter_HideExpired(t *testing.T) {
+// TestExpiry_StageCondition checks that expired vacancies are automatically
+// excluded from Inbox, Shortlist and Dismissed rows and their counts while
+// Applied is unaffected; industry counts follow the same rule.
+func TestExpiry_StageCondition(t *testing.T) {
 	d := openTestDB(t)
 	setProfileData(t, d, nil, []string{"engineer"}, nil)
 	cat := newCat(d)
-
-	pastExp := listing.Posting{
-		URL: "https://example.com/jobs/e1", Title: "Expired Engineer", Company: "Co",
-		Text: "job", TextKind: listing.Plain, TextState: listing.TextFull,
-		Expires: testNow.AddDate(0, 0, -1), // yesterday
-	}
-	futureExp := listing.Posting{
-		URL: "https://example.com/jobs/e2", Title: "Future Engineer", Company: "Co",
-		Text: "job", TextKind: listing.Plain, TextState: listing.TextFull,
-		Expires: testNow.AddDate(0, 0, 10), // 10 days from now
-	}
-	noExp := post("https://example.com/jobs/e3", "Open Engineer", "Co")
-
-	add(t, cat, pastExp)
-	idFuture := add(t, cat, futureExp)
-	idOpen := add(t, cat, noExp)
-
+	ns := testNow.UTC().Format(time.RFC3339)
+	pExpSL := post("https://example.com/jobs/ec1", "Expired Engineer", "Co")
+	pExpSL.Expires = testNow.AddDate(0, 0, -1)
+	expSL := add(t, cat, pExpSL)
+	setVacancyIndustries(t, d, expSL, []string{"Ops"})
+	d.Exec(`INSERT INTO decision (profile,vacancy,stage,reason,decided_at) VALUES (1,?,?,?,?)`, expSL, "shortlist", "", ns) //nolint:errcheck
+	pExpAP := post("https://example.com/jobs/ec2", "Applied Expired Engineer", "Co")
+	pExpAP.Expires = testNow.AddDate(0, 0, -2)
+	expAP := add(t, cat, pExpAP)
+	setVacancyIndustries(t, d, expAP, []string{"Ops"})
+	d.Exec(`INSERT INTO decision (profile,vacancy,stage,reason,decided_at) VALUES (1,?,?,?,?)`, expAP, "applied", "", ns) //nolint:errcheck
+	pFuture := post("https://example.com/jobs/ec3", "Future Engineer", "Co")
+	pFuture.Expires = testNow.AddDate(0, 0, 10)
+	add(t, cat, pFuture)
+	openDM := add(t, cat, post("https://example.com/jobs/ec4", "Live Engineer", "Co"))
+	d.Exec(`INSERT INTO decision (profile,vacancy,stage,reason,decided_at) VALUES (1,?,?,?,?)`, openDM, "dismissed", "", ns) //nolint:errcheck
 	ts := newTestServer(t, d)
-	rs := getRows(apiGet(t, ts, "/api/vacancies?hideExpired=true"))
-	got := map[float64]bool{rowID(rs[0]): true, rowID(rs[1]): true}
-	if len(rs) != 2 || !got[float64(idFuture)] || !got[float64(idOpen)] {
-		t.Errorf("hideExpired: got %d rows ids %v, want 2 (future+open)", len(rs), got)
+	ib := apiGet(t, ts, "/api/vacancies?stage=inbox")
+	if n, s, ap, dm := countOf(ib, "inbox"), countOf(ib, "shortlist"), countOf(ib, "applied"), countOf(ib, "dismissed"); n != 1 || s != 0 || ap != 1 || dm != 1 {
+		t.Errorf("counts inbox/shortlist/applied/dismissed: %.0f/%.0f/%.0f/%.0f, want 1/0/1/1", n, s, ap, dm)
 	}
-	// Without filter: all three appear.
-	if len(getRows(apiGet(t, ts, "/api/vacancies"))) != 3 {
-		t.Errorf("no filter: want 3 rows")
+	sl := apiGet(t, ts, "/api/vacancies?stage=shortlist")
+	ap := apiGet(t, ts, "/api/vacancies?stage=applied")
+	apRS := getRows(ap)
+	if len(apRS) != 1 || rowID(apRS[0]) != float64(expAP) {
+		t.Errorf("applied rows: %d, want 1", len(apRS))
+	}
+	if exp, _ := apRS[0].(map[string]any)["expired"].(bool); !exp {
+		t.Errorf("applied row: expired should be true")
+	}
+	icOf := func(body map[string]any, name string) int {
+		for _, v := range body["industryCounts"].([]any) {
+			if m, _ := v.(map[string]any); m["name"] == name {
+				c, _ := m["count"].(float64)
+				return int(c)
+			}
+		}
+		return 0
+	}
+	if ic := icOf(sl, "Ops"); ic != 0 {
+		t.Errorf("shortlist Ops industry count: %d, want 0", ic)
+	}
+	if ic := icOf(ap, "Ops"); ic != 1 {
+		t.Errorf("applied Ops industry count: %d, want 1", ic)
 	}
 }
 
@@ -462,24 +481,6 @@ func TestFilter_SourceCounts_Basic(t *testing.T) {
 	}
 	if scm["feed-beta"] != 2 {
 		t.Errorf("sourceCounts feed-beta: got %d, want 2", scm["feed-beta"])
-	}
-}
-
-// TestFilter_HideExpired_EmptyText checks that "No matching roles. Adjust your
-// filters." is returned when hideExpired leaves no rows.
-func TestFilter_HideExpired_EmptyText(t *testing.T) {
-	d := openTestDB(t)
-	setProfileData(t, d, nil, []string{"engineer"}, nil)
-	cat := newCat(d)
-	add(t, cat, listing.Posting{
-		URL: "https://example.com/jobs/het1", Title: "Engineer", Company: "Co",
-		Text: "job", TextKind: listing.Plain, TextState: listing.TextFull,
-		Expires: testNow.AddDate(0, 0, -1),
-	})
-	ts := newTestServer(t, d)
-	body := apiGet(t, ts, "/api/vacancies?hideExpired=true")
-	if empty, _ := body["empty"].(string); empty != "No matching roles. Adjust your filters." {
-		t.Errorf("empty text: got %q", empty)
 	}
 }
 

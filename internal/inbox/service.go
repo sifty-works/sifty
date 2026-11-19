@@ -18,12 +18,11 @@ import (
 
 // Filters carries the user-supplied filter parameters for the vacancy list.
 type Filters struct {
-	Collected   int // 0 = any, 7 = last 7 days, 30 = last 30 days by first_seen
-	HideExpired bool
-	Remote      bool
-	Leadership  bool
-	Sources     []string // source keys; empty means all sources
-	Unread      bool
+	Collected  int // 0 = any, 7 = last 7 days, 30 = last 30 days by first_seen
+	Remote     bool
+	Leadership bool
+	Sources    []string // source keys; empty means all sources
+	Unread     bool
 }
 
 // Stage is the inbox stage of a vacancy row.
@@ -121,9 +120,9 @@ func buildCounts(cm map[string]int) Counts {
 
 // loadCounts returns the per-stage vacancy counts for a profile,
 // applying the profile's search visibility to the inbox count.
-func loadCounts(ctx context.Context, database *db.DB, profileID int64, vocabNames []string) (Counts, error) {
+func loadCounts(ctx context.Context, database *db.DB, now time.Time, profileID int64, vocabNames []string) (Counts, error) {
 	vis := profileVisibility(ctx, database, profileID, vocabNames)
-	cm, err := stageCounts(ctx, database, profileID, vis)
+	cm, err := stageCounts(ctx, database, now, profileID, vis)
 	if err != nil {
 		return Counts{}, err
 	}
@@ -141,7 +140,7 @@ func rowAndCounts(ctx context.Context, database *db.DB, now func() time.Time, pr
 	if len(raws) == 0 {
 		return Row{}, Counts{}, apperr.NotFound{Message: "Role not found."}
 	}
-	cm, err := stageCounts(ctx, database, profileID, vis)
+	cm, err := stageCounts(ctx, database, now(), profileID, vis)
 	if err != nil {
 		return Row{}, Counts{}, err
 	}
@@ -154,11 +153,11 @@ func rowAndCounts(ctx context.Context, database *db.DB, now func() time.Time, pr
 // total is the stage count before the query and f are applied.
 func list(ctx context.Context, database *db.DB, now func() time.Time, profileID int64, stage, q string, vocabNames []string, industries []string, f Filters) ([]Row, Counts, []IndustryCount, []SourceCount, int, error) {
 	vis := profileVisibility(ctx, database, profileID, vocabNames)
-	cm, err := stageCounts(ctx, database, profileID, vis)
+	t := now()
+	cm, err := stageCounts(ctx, database, t, profileID, vis)
 	if err != nil {
 		return nil, Counts{}, nil, nil, 0, err
 	}
-	t := now()
 	indCounts, err := industryCounts(ctx, database, t, profileID, stage, q, vis, f)
 	if err != nil {
 		return nil, Counts{}, nil, nil, 0, err

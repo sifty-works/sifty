@@ -149,6 +149,11 @@ type SourceCount struct {
 	Count int    `json:"count"`
 }
 
+// notExpiredSQL is a SQL predicate that holds when a vacancy has no expiry date
+// or its expiry date has not yet passed. The single ? argument is the current
+// time in RFC3339 format. Applied to Inbox, Shortlist and Dismissed but not Applied.
+const notExpiredSQL = `(v.expires_at='' OR v.expires_at>?)`
+
 // remoteSQL is a SQL predicate that holds when the vacancy location contains
 // "remote", "anywhere", or "telecommute" as whole words after lightweight
 // normalisation (lowercase, hyphens and middle-dots replaced with spaces).
@@ -194,11 +199,6 @@ func filterClauses(now time.Time, f Filters, skipSources bool) ([]string, []any)
 		cutoff := now.AddDate(0, 0, -f.Collected).UTC().Format(time.RFC3339)
 		parts = append(parts, "v.first_seen>=?")
 		args = append(args, cutoff)
-	}
-
-	if f.HideExpired {
-		parts = append(parts, "(v.expires_at='' OR v.expires_at>?)")
-		args = append(args, now.UTC().Format(time.RFC3339))
 	}
 
 	if f.Remote {
@@ -273,6 +273,12 @@ func industryCounts(ctx context.Context, database *db.DB, now time.Time, profile
 		where += ` AND ` + p
 	}
 	args = append(args, fArgs...)
+
+	// Exclude expired vacancies from all stages except Applied.
+	if stage != "applied" {
+		where += ` AND ` + notExpiredSQL
+		args = append(args, now.UTC().Format(time.RFC3339))
+	}
 
 	rows, err := database.QueryContext(ctx, `
 		SELECT j.value, COUNT(*)
@@ -360,6 +366,12 @@ func sourceCounts(ctx context.Context, database *db.DB, now time.Time, profileID
 	}
 	args = append(args, fArgs...)
 
+	// Exclude expired vacancies from all stages except Applied.
+	if stage != "applied" {
+		where += ` AND ` + notExpiredSQL
+		args = append(args, now.UTC().Format(time.RFC3339))
+	}
+
 	rows, err := database.QueryContext(ctx, `
 		SELECT vs.source, COUNT(DISTINCT v.id)
 		FROM vacancy v
@@ -386,19 +398,22 @@ func sourceCounts(ctx context.Context, database *db.DB, now time.Time, profileID
 }
 
 // stageCounts returns the vacancy count per stage for a profile.
-// Decided stages (shortlist, applied, dismissed) apply per-profile exclusions.
-// The inbox count also applies the profile's visibility filter.
-func stageCounts(ctx context.Context, database *db.DB, profileID int64, vis candidate.Filter) (map[string]int, error) {
+// Decided stages (shortlist, applied, dismissed) apply per-profile exclusions;
+// expired vacancies are excluded from shortlist and dismissed but not from applied.
+// The inbox count also applies the profile's visibility filter and the expiry condition.
+func stageCounts(ctx context.Context, database *db.DB, now time.Time, profileID int64, vis candidate.Filter) (map[string]int, error) {
 	out := map[string]int{}
+	nowStr := now.UTC().Format(time.RFC3339)
 
-	// Count decided stages: apply per-profile exclusions only.
+	// Count decided stages: apply per-profile exclusions and exclude expired
+	// vacancies from shortlist and dismissed (Applied is always shown).
 	decidedRows, err := database.QueryContext(ctx, `
 		SELECT d.stage, COUNT(*)
 		FROM vacancy v
 		JOIN decision d ON d.vacancy=v.id AND d.profile=?
-		WHERE `+notExcludedFor+`
+		WHERE `+notExcludedFor+` AND (d.stage='applied' OR `+notExpiredSQL+`)
 		GROUP BY d.stage`,
-		profileID, profileID)
+		profileID, profileID, nowStr)
 	if err != nil {
 		return nil, fmt.Errorf("inbox: counts decided: %w", err)
 	}
@@ -415,14 +430,16 @@ func stageCounts(ctx context.Context, database *db.DB, profileID int64, vis cand
 		return nil, fmt.Errorf("inbox: counts decided: %w", err)
 	}
 
-	// Count inbox: vacancies without a decision for this profile that fit the search.
+	// Count inbox: vacancies without a decision for this profile that fit the
+	// search and have not expired.
 	inboxArgs := append([]any{profileID, profileID}, vis.Args...)
+	inboxArgs = append(inboxArgs, nowStr)
 	var inboxCount int
 	if err := database.QueryRowContext(ctx, `
 		SELECT COUNT(*)
 		FROM vacancy v
 		LEFT JOIN decision d ON d.vacancy=v.id AND d.profile=?
-		WHERE d.vacancy IS NULL AND `+notExcludedFor+` AND (`+vis.SQL+`)`,
+		WHERE d.vacancy IS NULL AND `+notExcludedFor+` AND (`+vis.SQL+`) AND `+notExpiredSQL,
 		inboxArgs...).Scan(&inboxCount); err != nil {
 		return nil, fmt.Errorf("inbox: counts inbox: %w", err)
 	}
@@ -504,14 +521,21 @@ func listRows(ctx context.Context, database *db.DB, now time.Time, profileID, va
 		}
 	}
 
-	// Apply user filters (collected, hideExpired, remote, leadership, sources,
-	// unread) for list requests only; single-vacancy fetches ignore them.
+	// Apply user filters (collected, remote, leadership, sources, unread) for
+	// list requests only; single-vacancy fetches ignore them.
 	if vacancyID == 0 {
 		fParts, fArgs := filterClauses(now, f, false)
 		for _, p := range fParts {
 			where += ` AND ` + p
 		}
 		args = append(args, fArgs...)
+	}
+
+	// Exclude expired vacancies from all stages except Applied; never applied to
+	// single-vacancy fetches so the vacancy page always shows the row.
+	if vacancyID == 0 && stage != "applied" {
+		where += ` AND ` + notExpiredSQL
+		args = append(args, now.UTC().Format(time.RFC3339))
 	}
 
 	sqlRows, err := database.QueryContext(ctx,

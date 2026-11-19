@@ -15,6 +15,7 @@ What the user gets: for the chosen profile, the vacancies that fit its search, i
 
 ## Which vacancies a profile sees
 
+- **Expired vacancies** (past their `expires_at` date) are left out of Inbox, Shortlist and Dismissed and their counters. Applied is not affected: a vacancy the user applied to is shown even if its listing has since expired.
 - **Inbox** shows the vacancies with no decision in this profile that fit its search:
   - **Target roles and keywords.** When the profile has both, a vacancy fits when a target role is in its title and a keyword is in its title, tags or text. When it has only one of the two, only that one applies. A profile with neither sees an empty Inbox. Terms match whole words and phrases, ignoring case and punctuation.
   - **All of these.** Every term listed under "All of these" must be in the vacancy's title, tags or text. Terms match whole words and phrases, ignoring case and punctuation.
@@ -40,7 +41,7 @@ There is one list of exclusions, managed in Settings.
 **A row shows:**
 
 - the industries as badges, then the company;
-- ◷ "Listing expired" when the vacancy is past its expiry date; ✓ "Shortlisted" for a vacancy shortlisted from Inbox in this session; Fits you and the requirements counter (see `assessment.md`);
+- in Applied, ◷ "Listing expired" when the vacancy is past its expiry date; ✓ "Shortlisted" for a vacancy shortlisted from Inbox in this session; Fits you and the requirements counter (see `assessment.md`);
 - the title;
 - the location in short form: "Remote · …", "Worldwide", "EU · N countries", or "Location unstated", with the full text on hover when shortened;
 - in Applied, "· Applied <date>"; in the other lists, "Applied <date> from <profile>" when the user applied to this vacancy from any profile (a deleted profile is named by its last name);
@@ -65,7 +66,7 @@ There is one list of exclusions, managed in Settings.
 - **Search** ("Search company, role, tech", key `/`) finds a case-insensitive substring in the title, company, tags and text; in the text, punctuation counts as a space. A vacancy whose text was removed is found by its title, company and tags only. A query shorter than 3 characters matches title, company and tags only.
 - **Filters**, in a panel with a count of active filters:
   - Fits you: Strong 75+, Partial 55–74, Weak, Not scored; a dimmed result counts as Not scored;
-  - Collected: any time, 7 days or 30 days, by first-seen date; "Hide expired";
+  - Collected: any time, 7 days or 30 days, by first-seen date;
   - Role: Remote (remote, anywhere or telecommute in the location); Leadership title (CTO, Head, Director, Manager, Lead, not "lead generation");
   - Industries: one checkbox per industry with its count;
   - Sources: one checkbox per source with its count;
