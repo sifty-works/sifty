@@ -155,6 +155,7 @@ func loadMeData(ctx context.Context, database *db.DB) (MeData, error) {
 
 // saveMeData writes the Me record to the database.
 func saveMeData(ctx context.Context, database *db.DB, me MeData) error {
+	NormalizeMeData(&me)
 	data, err := json.Marshal(me)
 	if err != nil {
 		return fmt.Errorf("candidate: encode me: %w", err)
@@ -222,6 +223,7 @@ func loadProfileRow(ctx context.Context, database *db.DB, id int64) (ProfileData
 
 // saveProfileRow writes one profile row.
 func saveProfileRow(ctx context.Context, database *db.DB, id int64, pd ProfileData) error {
+	NormalizeProfileData(&pd)
 	data, err := json.Marshal(pd)
 	if err != nil {
 		return fmt.Errorf("candidate: encode profile %d: %w", id, err)

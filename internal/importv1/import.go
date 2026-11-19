@@ -4,13 +4,16 @@ package importv1
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -96,6 +99,178 @@ type importReport struct {
 
 	ReadMarksBefore  int // vacancies with a non-empty seen_at in old DB
 	ReadMarksWritten int
+
+	MeWritten bool
+
+	ActiveProfileSet bool
+
+	PhotoCopied  bool
+	PhotoSkipped string // non-empty when present but skipped, with reason
+
+	QARead    int
+	QAWritten int
+
+	// Legacy folding: one line per folded or dropped legacy value.
+	LegacyFolded  []string // "profile N (<label>): appended to Other requirements"
+	LegacyDropped []string // "profile N (<label>): dropped (structured value present)"
+}
+
+// --- old user / QA / settings row types ---
+
+// oldUser holds the single users row from the old database.
+type oldUser struct {
+	id   string
+	data string // JSON
+}
+
+// oldQA holds one row from profile_qa.
+type oldQA struct {
+	id        string
+	question  string
+	answer    string
+	createdAt string
+	updatedAt string
+}
+
+// oldUserData is the JSON structure of the users.data column.
+type oldUserData struct {
+	Identity struct {
+		DisplayName string `json:"displayName"`
+		LegalName   string `json:"legalName"`
+		Headline    string `json:"headline"`
+		Email       string `json:"email"`
+		LinkedIn    string `json:"linkedin"`
+		GitHub      string `json:"github"`
+		Twitter     string `json:"twitter"`
+	} `json:"identity"`
+	Demographics struct {
+		Gender    string   `json:"gender"`
+		Race      []string `json:"race"`
+		Ethnicity string   `json:"ethnicity"`
+	} `json:"demographics"`
+	Skills []struct {
+		ID         string `json:"id"`
+		Key        string `json:"key"`
+		Name       string `json:"name"`
+		Level      string `json:"level"`
+		Provenance struct {
+			Kind string `json:"kind"`
+		} `json:"provenance"`
+	} `json:"skills"`
+	AbsentSkills []struct {
+		Key  string `json:"key"`
+		Name string `json:"name"`
+	} `json:"absentSkills"`
+	ConfirmedFacts []struct {
+		Key  string `json:"key"`
+		Text string `json:"text"`
+		Have bool   `json:"have"`
+	} `json:"confirmedFacts"`
+	Experience []struct {
+		ID      string   `json:"id"`
+		Company string   `json:"company"`
+		Title   string   `json:"title"`
+		Start   string   `json:"start"`
+		End     string   `json:"end"`
+		Summary string   `json:"summary"`
+		Skills  []string `json:"skills"`
+	} `json:"experience"`
+	Languages []struct {
+		Name  string `json:"name"`
+		Level string `json:"level"`
+	} `json:"languages"`
+	Availability struct {
+		NoticeValue  json.Number `json:"noticeValue"`
+		NoticeUnit   string      `json:"noticeUnit"`
+		NoticePeriod string      `json:"noticePeriod"` // free-text, old format
+		StartDate    string      `json:"startDate"`
+		NoticeSet    bool        `json:"noticeSet"`
+	} `json:"availability"`
+	Geography struct {
+		Current         string        `json:"current"`
+		Eligibility     []string      `json:"eligibility"`
+		Relocation      []interface{} `json:"relocation"`
+		Sponsorship     string        `json:"sponsorship"`
+		CurrentLocation *struct {
+			Country string `json:"country"`
+			City    string `json:"city"`
+		} `json:"currentLocation"`
+		WorkAuthorizations []struct {
+			Country string `json:"country"`
+			Status  string `json:"status"`
+		} `json:"workAuthorizations"`
+		CurrentLocationSet    bool `json:"currentLocationSet"`
+		WorkAuthorizationsSet bool `json:"workAuthorizationsSet"`
+	} `json:"geography"`
+	OtherRequirements struct {
+		Text string `json:"text"`
+	} `json:"otherRequirements"`
+	Dealbreakers      []interface{} `json:"dealbreakers"`
+	LegacyPreferences *struct {
+		Engagement struct {
+			AllowFullTime bool     `json:"allow_full_time"`
+			Preferred     []string `json:"preferred"`
+		} `json:"engagement"`
+		WorkArrangement struct {
+			AllowHybrid bool     `json:"allow_hybrid"`
+			AllowOnsite bool     `json:"allow_onsite"`
+			Preferred   []string `json:"preferred"`
+		} `json:"work_arrangement"`
+	} `json:"legacyPreferences"`
+	LegacyContextVersion string   `json:"legacyContextVersion"`
+	TargetRoles          []string `json:"targetRoles"`
+	TargetIndustries     []string `json:"targetIndustries"`
+}
+
+// oldProfileData is the JSON structure of the user_profiles.data column.
+type oldProfileData struct {
+	TargetIndustries []string `json:"targetIndustries"`
+	Compensation     *struct {
+		CashMin    *float64 `json:"cashMin"`
+		CashTarget *float64 `json:"cashTarget"`
+		Currency   string   `json:"currency"`
+		GrossNet   string   `json:"grossNet"`
+		Period     string   `json:"period"`
+		DayRates   *struct {
+			Min      *float64 `json:"min"`
+			Target   *float64 `json:"target"`
+			Currency string   `json:"currency"`
+		} `json:"dayRates"`
+		EquityOnTop *bool `json:"equityOnTop"`
+	} `json:"compensation"`
+	Engagement struct {
+		Types []string `json:"types"`
+	} `json:"engagement"`
+	Hours *struct {
+		Mode   string   `json:"mode"`
+		Weekly *float64 `json:"weekly"`
+	} `json:"hours"`
+	WorkModes struct {
+		Modes  []string      `json:"modes"`
+		Limits []interface{} `json:"limits"`
+	} `json:"workModes"`
+	Geography struct {
+		Current               string        `json:"current"`
+		Desired               []interface{} `json:"desired"`
+		Eligibility           []interface{} `json:"eligibility"`
+		Relocation            []string      `json:"relocation"`
+		WillingToRelocate     *bool         `json:"willingToRelocate"`
+		Sponsorship           string        `json:"sponsorship"`
+		CurrentLocation       interface{}   `json:"currentLocation"`
+		PreferredLocations    []interface{} `json:"preferredLocations"`
+		WorkAuthorizations    []interface{} `json:"workAuthorizations"`
+		TimezoneIDs           []string      `json:"timezoneIds"`
+		CurrentLocationSet    bool          `json:"currentLocationSet"`
+		PreferredLocationsSet bool          `json:"preferredLocationsSet"`
+	} `json:"geography"`
+	Availability struct {
+		NoticePeriod string `json:"noticePeriod"`
+		StartDate    string `json:"startDate"`
+	} `json:"availability"`
+	OtherRequirements struct {
+		Text string `json:"text"`
+	} `json:"otherRequirements"`
+	Dealbreakers []interface{} `json:"dealbreakers"`
 }
 
 // --- old schema row types ---
@@ -125,6 +300,7 @@ type oldJob struct {
 type oldProfile struct {
 	id         string
 	name       string // the name column of the old user_profiles table
+	headline   string // the headline column of the old user_profiles table
 	data       string // JSON: search fields and other profile data
 	createdAt  string
 	archivedAt sql.NullString // non-NULL means archived
@@ -253,6 +429,11 @@ func runImport(ctx context.Context, fromDir, dbPath, settingsPath, dataDir strin
 	}
 	report.NonImportedKeys = nonImportedKeys
 
+	// Photo must be copied after the transaction because it uses the filesystem.
+	if photoErr := importPhoto(fromDir, dataDir, report); photoErr != nil {
+		report.PhotoSkipped = "error reading photo: " + photoErr.Error()
+	}
+
 	// Write report.
 	reportText := formatReport(report)
 	fmt.Fprint(out, reportText)
@@ -313,6 +494,19 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 	if err != nil {
 		return nil, fmt.Errorf("reading profiles: %w", err)
 	}
+
+	userData, err := readUser(ctx, copyDB)
+	if err != nil {
+		return nil, fmt.Errorf("reading users: %w", err)
+	}
+
+	qaRows, err := readQA(ctx, copyDB)
+	if err != nil {
+		return nil, fmt.Errorf("reading profile_qa: %w", err)
+	}
+	report.QARead = len(qaRows)
+
+	oldActiveProfileID := readActiveProfileID(ctx, copyDB)
 
 	stages, err := readProfileStages(ctx, copyDB)
 	if err != nil {
@@ -778,8 +972,40 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 		keywords    []string
 		allOf       []string
 		except      []string // words to become per-profile word exclusions
+		profileData candidate.ProfileData
 	}
 	var profilesByNewID []profileEntry
+
+	// Determine whether any profile has a non-empty headline (to decide user headline fallback).
+	anyProfileHeadline := false
+	for _, p := range profiles {
+		if p.archivedAt.Valid && p.archivedAt.String != "" {
+			continue
+		}
+		if strings.TrimSpace(p.headline) != "" {
+			anyProfileHeadline = true
+			break
+		}
+	}
+
+	// userHeadline is used as fallback for the first profile when no profile has a headline.
+	// hasStructuredNotice is true when users.data has a valid noticeValue + noticeUnit;
+	// it determines whether profiles' free-text noticePeriod is dropped or folded.
+	userHeadline := ""
+	hasStructuredNotice := false
+	if userData != nil {
+		var ud oldUserData
+		if json.Unmarshal([]byte(userData.data), &ud) == nil {
+			userHeadline = strings.TrimSpace(ud.Identity.Headline)
+			if ud.Availability.NoticeSet {
+				if nv := ud.Availability.NoticeValue.String(); nv != "" && nv != "0" && nv != "<nil>" {
+					if f, fErr := strconv.ParseFloat(nv, 64); fErr == nil && f > 0 {
+						hasStructuredNotice = ud.Availability.NoticeUnit != ""
+					}
+				}
+			}
+		}
+	}
 
 	for _, p := range profiles {
 		if p.archivedAt.Valid && p.archivedAt.String != "" {
@@ -792,9 +1018,29 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 		}
 		roles, keywords, allOf, except := parseOldProfileData(p.data)
 		profileIDMap[p.id] = newID
+
+		// Parse the full old profile data for the extended fields.
+		pd, legacyFolded, legacyDropped := convertOldProfileData(p.data, newID, hasStructuredNotice)
+		pd.Name = name
+		pd.TargetRoles = roles
+		pd.Keywords = keywords
+		pd.AllOf = allOf
+
+		// Headline: use profile's own; fall back to user headline for the first profile
+		// when no profile at all has a headline.
+		headline := strings.TrimSpace(p.headline)
+		if headline == "" && newID == 1 && !anyProfileHeadline {
+			headline = userHeadline
+		}
+		pd.Headline = headline
+
+		report.LegacyFolded = append(report.LegacyFolded, legacyFolded...)
+		report.LegacyDropped = append(report.LegacyDropped, legacyDropped...)
+
 		profilesByNewID = append(profilesByNewID, profileEntry{
 			newID: newID, name: name,
 			targetRoles: roles, keywords: keywords, allOf: allOf, except: except,
+			profileData: pd,
 		})
 		report.ProfilesWritten++
 	}
@@ -804,13 +1050,10 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 		if _, err := tx.ExecContext(ctx, `DELETE FROM profile`); err != nil {
 			return nil, fmt.Errorf("deleting default profile: %w", err)
 		}
-		for _, pp := range profilesByNewID {
-			newData, _ := json.Marshal(candidate.ProfileData{
-				Name:        pp.name,
-				TargetRoles: pp.targetRoles,
-				Keywords:    pp.keywords,
-				AllOf:       pp.allOf,
-			})
+		for i := range profilesByNewID {
+			pp := &profilesByNewID[i]
+			candidate.NormalizeProfileData(&pp.profileData)
+			newData, _ := json.Marshal(pp.profileData)
 			if _, err := tx.ExecContext(ctx,
 				`INSERT INTO profile (id, data) VALUES (?,?)`,
 				pp.newID, string(newData),
@@ -1054,6 +1297,70 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 		report.LastRunWritten = true
 	}
 
+	// --- Me data ---
+	if userData != nil {
+		var ud oldUserData
+		if json.Unmarshal([]byte(userData.data), &ud) == nil {
+			me, myLegacyFolded, myLegacyDropped := convertOldUserData(ud)
+			report.LegacyFolded = append(report.LegacyFolded, myLegacyFolded...)
+			report.LegacyDropped = append(report.LegacyDropped, myLegacyDropped...)
+			// Apply My data legacy text to the first profile's OtherRequirements.
+			if len(profilesByNewID) > 0 && len(myLegacyFolded) > 0 {
+				first := &profilesByNewID[0]
+				for _, fe := range myDataFoldEntries(myLegacyFolded) {
+					line := fe.label + " (previous version): " + fe.text
+					first.profileData.OtherRequirements = appendLegacy(first.profileData.OtherRequirements, line)
+				}
+				// Re-marshal first profile.
+				newData, _ := json.Marshal(first.profileData)
+				if _, err := tx.ExecContext(ctx, `UPDATE profile SET data=? WHERE id=?`, string(newData), first.newID); err != nil {
+					return nil, fmt.Errorf("updating first profile with legacy text: %w", err)
+				}
+			}
+			candidate.NormalizeMeData(&me)
+			meJSON, _ := json.Marshal(me)
+			if _, err := tx.ExecContext(ctx, `INSERT OR REPLACE INTO me (id, data) VALUES (1, ?)`, string(meJSON)); err != nil {
+				return nil, fmt.Errorf("inserting me: %w", err)
+			}
+			report.MeWritten = true
+		}
+	}
+
+	// --- Active profile ---
+	if oldActiveProfileID != "" {
+		if newID, ok := profileIDMap[oldActiveProfileID]; ok {
+			if _, err := tx.ExecContext(ctx,
+				`INSERT OR REPLACE INTO settings (key, value) VALUES ('active_profile', ?)`,
+				strconv.FormatInt(newID, 10)); err != nil {
+				return nil, fmt.Errorf("setting active profile: %w", err)
+			}
+			report.ActiveProfileSet = true
+		}
+	}
+
+	// --- Q&A ---
+	for _, q := range qaRows {
+		question := strings.TrimSpace(q.question)
+		if question == "" {
+			continue
+		}
+		createdAt := normDateUTC(q.createdAt)
+		if createdAt == "" {
+			createdAt = time.Now().UTC().Format(time.RFC3339)
+		}
+		updatedAt := normDateUTC(q.updatedAt)
+		if updatedAt == "" {
+			updatedAt = createdAt
+		}
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO qa (question, answer, created_at, updated_at) VALUES (?,?,?,?)`,
+			question, strings.TrimSpace(q.answer), createdAt, updatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("inserting qa: %w", err)
+		}
+		report.QAWritten++
+	}
+
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("committing transaction: %w", err)
 	}
@@ -1113,6 +1420,66 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 	report.SourcesWritten = len(newSources)
 
 	return report, nil
+}
+
+// importPhoto copies the old profile photo into the new data folder when it
+// meets the type and size requirements.
+func importPhoto(fromDir, dataDir string, report *importReport) error {
+	avatarMeta, err := os.ReadFile(filepath.Join(fromDir, "profile-avatar.json"))
+	if os.IsNotExist(err) {
+		return nil // no photo
+	}
+	if err != nil {
+		return err
+	}
+	var meta struct {
+		StoragePath string `json:"storagePath"`
+		ContentType string `json:"contentType"`
+		ByteSize    int64  `json:"byteSize"`
+	}
+	if err := json.Unmarshal(avatarMeta, &meta); err != nil {
+		report.PhotoSkipped = "could not parse profile-avatar.json"
+		return nil
+	}
+	if meta.StoragePath == "" {
+		return nil
+	}
+	const maxSize = 2 << 20 // 2 MiB
+	if meta.ByteSize > maxSize {
+		report.PhotoSkipped = fmt.Sprintf("photo too large (%d bytes, limit 2 MiB)", meta.ByteSize)
+		return nil
+	}
+	srcPath := filepath.Join(fromDir, meta.StoragePath)
+	data, err := os.ReadFile(srcPath)
+	if os.IsNotExist(err) {
+		report.PhotoSkipped = "photo file not found at " + meta.StoragePath
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if int64(len(data)) > maxSize {
+		report.PhotoSkipped = fmt.Sprintf("photo too large (%d bytes, limit 2 MiB)", len(data))
+		return nil
+	}
+	// Check real type from bytes.
+	ct := http.DetectContentType(data)
+	if ct != "image/png" && ct != "image/jpeg" && ct != "image/webp" {
+		report.PhotoSkipped = fmt.Sprintf("photo type %q is not png, jpeg or webp", ct)
+		return nil
+	}
+	filesDir := filepath.Join(dataDir, "files")
+	if err := os.MkdirAll(filesDir, 0700); err != nil {
+		return err
+	}
+	destPath := filepath.Join(filesDir, "me_photo")
+	if err := os.WriteFile(destPath, data, 0600); err != nil {
+		return err
+	}
+	sum := sha256.Sum256(data)
+	report.PhotoCopied = true
+	_ = sum // sha256 available for report if needed
+	return nil
 }
 
 // --- helpers ---
@@ -1367,7 +1734,7 @@ func readJobs(ctx context.Context, db *sql.DB) ([]oldJob, error) {
 
 func readProfiles(ctx context.Context, db *sql.DB) ([]oldProfile, error) {
 	rows, err := db.QueryContext(ctx,
-		`SELECT id, name, data, created_at, archived_at FROM user_profiles ORDER BY created_at ASC, id ASC`)
+		`SELECT id, name, headline, data, created_at, archived_at FROM user_profiles ORDER BY created_at ASC, id ASC`)
 	if err != nil {
 		return nil, err
 	}
@@ -1375,12 +1742,48 @@ func readProfiles(ctx context.Context, db *sql.DB) ([]oldProfile, error) {
 	var out []oldProfile
 	for rows.Next() {
 		var p oldProfile
-		if err := rows.Scan(&p.id, &p.name, &p.data, &p.createdAt, &p.archivedAt); err != nil {
+		if err := rows.Scan(&p.id, &p.name, &p.headline, &p.data, &p.createdAt, &p.archivedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, p)
 	}
 	return out, rows.Err()
+}
+
+func readUser(ctx context.Context, db *sql.DB) (*oldUser, error) {
+	var u oldUser
+	err := db.QueryRowContext(ctx, `SELECT id, data FROM users LIMIT 1`).Scan(&u.id, &u.data)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &u, nil
+}
+
+func readQA(ctx context.Context, db *sql.DB) ([]oldQA, error) {
+	rows, err := db.QueryContext(ctx,
+		`SELECT id, question, answer, created_at, updated_at FROM profile_qa ORDER BY created_at ASC, id ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []oldQA
+	for rows.Next() {
+		var q oldQA
+		if err := rows.Scan(&q.id, &q.question, &q.answer, &q.createdAt, &q.updatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, q)
+	}
+	return out, rows.Err()
+}
+
+func readActiveProfileID(ctx context.Context, db *sql.DB) string {
+	var v string
+	db.QueryRowContext(ctx, `SELECT value FROM app_settings WHERE key='active_profile_id'`).Scan(&v) //nolint:errcheck
+	return v
 }
 
 func readProfileStages(ctx context.Context, db *sql.DB) ([]oldStage, error) {
@@ -1601,6 +2004,460 @@ func buildProfileSearchLine(newID int64, name string, roles, keywords, allOf, ex
 	return header + ": " + strings.Join(parts, "; ")
 }
 
+// --- data conversion helpers ---
+
+// mapSkillLevel converts old skill level strings to new ones.
+// Production→Expert, Familiar→Proficient, Learning→Beginner.
+// New values (Expert/Proficient/Beginner) pass through unchanged.
+func mapSkillLevel(old string) string {
+	switch old {
+	case "Production":
+		return "Expert"
+	case "Familiar":
+		return "Proficient"
+	case "Learning":
+		return "Beginner"
+	}
+	return old // already new, or unknown
+}
+
+// convertOldUserData converts an oldUserData to a candidate.MeData.
+// It also returns legacy folded/dropped lines for the first profile.
+func convertOldUserData(ud oldUserData) (candidate.MeData, []string, []string) {
+	var me candidate.MeData
+	var folded, dropped []string
+
+	me.DisplayName = strings.TrimSpace(ud.Identity.DisplayName)
+	me.LegalName = strings.TrimSpace(ud.Identity.LegalName)
+	me.Email = strings.TrimSpace(ud.Identity.Email)
+	me.LinkedIn = strings.TrimSpace(ud.Identity.LinkedIn)
+	me.GitHub = strings.TrimSpace(ud.Identity.GitHub)
+	me.X = strings.TrimSpace(ud.Identity.Twitter)
+
+	for _, s := range ud.Skills {
+		name := strings.TrimSpace(s.Name)
+		if name == "" {
+			name = strings.TrimSpace(s.Key)
+		}
+		if name == "" {
+			continue
+		}
+		sk := candidate.Skill{
+			Name:   name,
+			Level:  mapSkillLevel(s.Level),
+			Source: strings.TrimSpace(s.Provenance.Kind),
+		}
+		me.Skills = append(me.Skills, sk)
+	}
+
+	for _, a := range ud.AbsentSkills {
+		name := strings.TrimSpace(a.Name)
+		if name == "" {
+			name = strings.TrimSpace(a.Key)
+		}
+		if name == "" {
+			continue
+		}
+		me.AbsentSkills = append(me.AbsentSkills, candidate.AbsentSkill{Name: name})
+	}
+
+	for _, f := range ud.ConfirmedFacts {
+		text := strings.TrimSpace(f.Text)
+		if text == "" && f.Key == "" {
+			continue
+		}
+		if text == "" {
+			text = strings.TrimSpace(f.Key)
+		}
+		me.ConfirmedFacts = append(me.ConfirmedFacts, candidate.ConfirmedFact{
+			Text: text,
+			Have: f.Have,
+		})
+	}
+
+	for _, e := range ud.Experience {
+		exp := candidate.Experience{
+			Company: strings.TrimSpace(e.Company),
+			Title:   strings.TrimSpace(e.Title),
+			Start:   strings.TrimSpace(e.Start),
+			Skills:  filterEmpty(e.Skills),
+		}
+		end := strings.TrimSpace(e.End)
+		if end == "" {
+			exp.Current = true
+		} else {
+			exp.End = end
+		}
+		summary := strings.TrimSpace(e.Summary)
+		if summary != "" {
+			exp.Summary = htmlToMarkdown(summary)
+		}
+		me.Experience = append(me.Experience, exp)
+	}
+
+	for _, l := range ud.Languages {
+		name := strings.TrimSpace(l.Name)
+		if name == "" {
+			continue
+		}
+		me.Languages = append(me.Languages, candidate.Language{
+			Name:  name,
+			Level: l.Level,
+		})
+	}
+
+	// Availability.
+	if ud.Availability.NoticeSet {
+		av := &candidate.Availability{}
+		if nv := ud.Availability.NoticeValue.String(); nv != "" && nv != "0" && nv != "<nil>" {
+			if f, err := strconv.ParseFloat(nv, 64); err == nil && f > 0 {
+				iv := int(f)
+				av.NoticeValue = &iv
+				av.NoticeUnit = ud.Availability.NoticeUnit
+			}
+		}
+		av.StartDate = strings.TrimSpace(ud.Availability.StartDate)
+		me.Availability = av
+	}
+
+	// Current location.
+	if ud.Geography.CurrentLocationSet && ud.Geography.CurrentLocation != nil {
+		me.CurrentLocation = &candidate.Location{
+			Country: strings.TrimSpace(ud.Geography.CurrentLocation.Country),
+			City:    strings.TrimSpace(ud.Geography.CurrentLocation.City),
+		}
+	}
+
+	// Work authorizations.
+	if ud.Geography.WorkAuthorizationsSet {
+		for _, wa := range ud.Geography.WorkAuthorizations {
+			country := strings.TrimSpace(wa.Country)
+			if country == "" {
+				continue
+			}
+			me.WorkAuthorizations = append(me.WorkAuthorizations, candidate.WorkAuthorization{
+				Country: country,
+				Status:  wa.Status,
+			})
+		}
+	}
+
+	// Demographics.
+	g := strings.TrimSpace(ud.Demographics.Gender)
+	e2 := strings.TrimSpace(ud.Demographics.Ethnicity)
+	races := filterEmpty(ud.Demographics.Race)
+	if g != "" || e2 != "" || len(races) > 0 {
+		me.Demographics = &candidate.Demographics{
+			Gender:    g,
+			Race:      races,
+			Ethnicity: e2,
+		}
+	}
+
+	// Legacy text from My data goes to the first profile as legacy lines.
+	var toFold []foldEntry // items to append to first profile's OtherRequirements
+
+	// Legacy users.data availability.noticePeriod (free text).
+	if noticeFreeText := strings.TrimSpace(ud.Availability.NoticePeriod); noticeFreeText != "" {
+		if me.Availability != nil && me.Availability.NoticeValue != nil {
+			dropped = append(dropped, "My data (notice period): dropped (structured value present)")
+		} else {
+			toFold = append(toFold, foldEntry{"notice period", noticeFreeText})
+		}
+	}
+
+	current := strings.TrimSpace(ud.Geography.Current)
+	if current != "" {
+		if me.CurrentLocation != nil {
+			dropped = append(dropped, "My data (geography current): dropped (structured value present)")
+		} else {
+			toFold = append(toFold, foldEntry{"geography current", current})
+		}
+	}
+	sponsorship := strings.TrimSpace(ud.Geography.Sponsorship)
+	if sponsorship != "" {
+		toFold = append(toFold, foldEntry{"sponsorship", sponsorship})
+	}
+	if len(ud.Geography.Eligibility) > 0 {
+		if me.WorkAuthorizations != nil {
+			dropped = append(dropped, "My data (eligibility): dropped (structured value present)")
+		} else {
+			toFold = append(toFold, foldEntry{"eligibility", strings.Join(filterEmpty(ud.Geography.Eligibility), ", ")})
+		}
+	}
+	if ud.LegacyPreferences != nil {
+		if len(ud.LegacyPreferences.WorkArrangement.Preferred) > 0 {
+			toFold = append(toFold, foldEntry{"work arrangement", strings.Join(filterEmpty(ud.LegacyPreferences.WorkArrangement.Preferred), ", ")})
+		}
+		if len(ud.LegacyPreferences.Engagement.Preferred) > 0 {
+			toFold = append(toFold, foldEntry{"engagement preferred", strings.Join(filterEmpty(ud.LegacyPreferences.Engagement.Preferred), ", ")})
+		}
+	}
+	otherText := strings.TrimSpace(ud.OtherRequirements.Text)
+	if otherText != "" {
+		toFold = append(toFold, foldEntry{"other requirements", otherText})
+	}
+	var dbItems []string
+	for _, d := range ud.Dealbreakers {
+		if s, ok := d.(string); ok && strings.TrimSpace(s) != "" {
+			dbItems = append(dbItems, strings.TrimSpace(s))
+		}
+	}
+	if len(dbItems) > 0 {
+		toFold = append(toFold, foldEntry{"dealbreakers", strings.Join(dbItems, "; ")})
+	}
+
+	// User-level target roles and target industries: not imported (they belong to profiles).
+	if roles := filterEmpty(ud.TargetRoles); len(roles) > 0 {
+		dropped = append(dropped, "My data (targetRoles): not imported ("+strings.Join(roles, ", ")+")")
+	}
+	if industries := filterEmpty(ud.TargetIndustries); len(industries) > 0 {
+		dropped = append(dropped, "My data (targetIndustries): not imported ("+strings.Join(industries, ", ")+")")
+	}
+
+	// Build folded report lines. The actual text is applied to the first profile by the caller.
+	for _, fe := range toFold {
+		folded = append(folded, fmt.Sprintf("My data (%s): %s", fe.label, fe.text))
+	}
+
+	return me, folded, dropped
+}
+
+// myDataFoldEntries returns foldEntry items from My-data legacy report lines.
+// Lines are of the form "My data (label): text".
+func myDataFoldEntries(foldedLines []string) []foldEntry {
+	var out []foldEntry
+	for _, line := range foldedLines {
+		const prefix = "My data ("
+		if !strings.HasPrefix(line, prefix) {
+			continue
+		}
+		rest := line[len(prefix):]
+		paren := strings.Index(rest, "): ")
+		if paren < 0 {
+			continue
+		}
+		label := rest[:paren]
+		text := rest[paren+3:]
+		out = append(out, foldEntry{label, text})
+	}
+	return out
+}
+
+// convertOldProfileData converts old profile data JSON to a candidate.ProfileData
+// plus legacy folded/dropped lines. The newID is used only for log labels.
+// hasStructuredNotice is true when users.data has a valid noticeValue + noticeUnit;
+// when true, the profile's free-text noticePeriod is dropped instead of folded.
+func convertOldProfileData(data string, newID int64, hasStructuredNotice bool) (candidate.ProfileData, []string, []string) {
+	var pd candidate.ProfileData
+	var dropped []string
+	var toFold []foldEntry // legacy items to append to Other requirements
+	var opd oldProfileData
+	if err := json.Unmarshal([]byte(data), &opd); err != nil {
+		return pd, nil, dropped
+	}
+
+	pd.TargetIndustries = filterEmpty(opd.TargetIndustries)
+
+	// Compensation.
+	if opd.Compensation != nil {
+		c := opd.Compensation
+		comp := &candidate.Compensation{
+			CashMin:     c.CashMin,
+			CashTarget:  c.CashTarget,
+			Currency:    strings.TrimSpace(c.Currency),
+			GrossNet:    strings.TrimSpace(c.GrossNet),
+			Period:      strings.TrimSpace(c.Period),
+			EquityOnTop: c.EquityOnTop,
+		}
+		if c.DayRates != nil {
+			comp.DayRates = &candidate.DayRates{
+				Min:      c.DayRates.Min,
+				Target:   c.DayRates.Target,
+				Currency: strings.TrimSpace(c.DayRates.Currency),
+			}
+		}
+		pd.Compensation = comp
+	}
+
+	// Engagement.
+	for _, t := range opd.Engagement.Types {
+		t = strings.TrimSpace(t)
+		if t != "" {
+			pd.Engagement = append(pd.Engagement, t)
+		}
+	}
+
+	// Hours.
+	if opd.Hours != nil {
+		pd.Hours = &candidate.Hours{
+			Mode:   strings.TrimSpace(opd.Hours.Mode),
+			Weekly: opd.Hours.Weekly,
+		}
+	}
+
+	// Work modes: map "office" → "onsite".
+	for _, m := range opd.WorkModes.Modes {
+		m = strings.TrimSpace(m)
+		if m == "" {
+			continue
+		}
+		if m == "office" {
+			m = "onsite"
+		}
+		pd.WorkModes = append(pd.WorkModes, m)
+	}
+
+	// Legacy work-mode limits.
+	var limitItems []string
+	for _, l := range opd.WorkModes.Limits {
+		if s, ok := l.(string); ok && strings.TrimSpace(s) != "" {
+			limitItems = append(limitItems, strings.TrimSpace(s))
+		}
+	}
+	if len(limitItems) > 0 {
+		if len(pd.WorkModes) > 0 {
+			dropped = append(dropped, fmt.Sprintf("profile %d (work-mode limits): dropped (structured value present)", newID))
+		} else {
+			toFold = append(toFold, foldEntry{"work-mode limits", strings.Join(limitItems, "; ")})
+		}
+	}
+
+	// Geography: preferred locations.
+	if opd.Geography.PreferredLocationsSet {
+		for _, loc := range opd.Geography.PreferredLocations {
+			switch v := loc.(type) {
+			case map[string]interface{}:
+				country, _ := v["country"].(string)
+				city, _ := v["city"].(string)
+				country = strings.TrimSpace(country)
+				if country != "" {
+					pd.PreferredLocations = append(pd.PreferredLocations, candidate.Location{
+						Country: country,
+						City:    strings.TrimSpace(city),
+					})
+				}
+			case string:
+				s := strings.TrimSpace(v)
+				if s != "" {
+					pd.PreferredLocations = append(pd.PreferredLocations, candidate.Location{Country: s})
+				}
+			}
+		}
+	}
+
+	// Willing to relocate.
+	if opd.Geography.WillingToRelocate != nil {
+		if *opd.Geography.WillingToRelocate {
+			pd.Relocation = "yes"
+		} else {
+			pd.Relocation = "no"
+		}
+	}
+
+	// Legacy geography.current.
+	current := strings.TrimSpace(opd.Geography.Current)
+	if current != "" {
+		if len(pd.PreferredLocations) > 0 {
+			dropped = append(dropped, fmt.Sprintf("profile %d (geography current): dropped (structured value present)", newID))
+		} else {
+			toFold = append(toFold, foldEntry{"geography current", current})
+		}
+	}
+
+	// Legacy geography.desired.
+	var desiredItems []string
+	for _, d := range opd.Geography.Desired {
+		if s, ok := d.(string); ok && strings.TrimSpace(s) != "" {
+			desiredItems = append(desiredItems, strings.TrimSpace(s))
+		}
+	}
+	if len(desiredItems) > 0 {
+		if len(pd.PreferredLocations) > 0 {
+			dropped = append(dropped, fmt.Sprintf("profile %d (geography desired): dropped (structured value present)", newID))
+		} else {
+			toFold = append(toFold, foldEntry{"geography desired", strings.Join(desiredItems, ", ")})
+		}
+	}
+
+	// Legacy geography.eligibility.
+	var eligItems []string
+	for _, e := range opd.Geography.Eligibility {
+		if s, ok := e.(string); ok && strings.TrimSpace(s) != "" {
+			eligItems = append(eligItems, strings.TrimSpace(s))
+		}
+	}
+	if len(eligItems) > 0 {
+		toFold = append(toFold, foldEntry{"eligibility", strings.Join(eligItems, ", ")})
+	}
+
+	// Legacy geography.relocation (string list): always fold into Other requirements,
+	// even when willingToRelocate is set, to avoid losing real data.
+	if len(opd.Geography.Relocation) > 0 {
+		toFold = append(toFold, foldEntry{"relocation", strings.Join(filterEmpty(opd.Geography.Relocation), ", ")})
+	}
+
+	// Legacy geography.sponsorship.
+	sponsorship := strings.TrimSpace(opd.Geography.Sponsorship)
+	if sponsorship != "" {
+		toFold = append(toFold, foldEntry{"sponsorship", sponsorship})
+	}
+
+	// Legacy availability.noticePeriod (free text).
+	if noticeFreeText := strings.TrimSpace(opd.Availability.NoticePeriod); noticeFreeText != "" {
+		if hasStructuredNotice {
+			dropped = append(dropped, fmt.Sprintf("profile %d (notice period): dropped (structured value present)", newID))
+		} else {
+			toFold = append(toFold, foldEntry{"notice period", noticeFreeText})
+		}
+	}
+
+	// Time zones: use timezoneIds as-is.
+	pd.TimeZones = filterEmpty(opd.Geography.TimezoneIDs)
+
+	// Other requirements: structured value (rich text → Markdown).
+	otherText := strings.TrimSpace(opd.OtherRequirements.Text)
+	if otherText != "" {
+		pd.OtherRequirements = htmlToMarkdown(otherText)
+	}
+
+	// Dealbreakers → legacy fold.
+	var dbItems []string
+	for _, d := range opd.Dealbreakers {
+		if s, ok := d.(string); ok && strings.TrimSpace(s) != "" {
+			dbItems = append(dbItems, strings.TrimSpace(s))
+		}
+	}
+	if len(dbItems) > 0 {
+		toFold = append(toFold, foldEntry{"dealbreakers", strings.Join(dbItems, "; ")})
+	}
+
+	// Apply folded legacy items to OtherRequirements and build report lines.
+	var foldedLines []string
+	for _, fe := range toFold {
+		line := fe.label + " (previous version): " + fe.text
+		pd.OtherRequirements = appendLegacy(pd.OtherRequirements, line)
+		foldedLines = append(foldedLines, fmt.Sprintf("profile %d (%s): %s", newID, fe.label, fe.text))
+	}
+
+	return pd, foldedLines, dropped
+}
+
+// foldEntry holds one legacy field label and its text for folding into Other requirements.
+type foldEntry struct {
+	label string
+	text  string
+}
+
+// appendLegacy appends a line to other requirements, separated by a blank line when needed.
+func appendLegacy(other, line string) string {
+	other = strings.TrimSpace(other)
+	if other == "" {
+		return line
+	}
+	return other + "\n\n" + line
+}
+
 // --- report formatting ---
 
 func formatReport(r *importReport) string {
@@ -1680,6 +2537,41 @@ func formatReport(r *importReport) string {
 
 	fmt.Fprintf(&sb, "Read marks: %d before, %d written\n",
 		r.ReadMarksBefore, r.ReadMarksWritten)
+
+	if r.MeWritten {
+		fmt.Fprintf(&sb, "My data: written\n")
+	} else {
+		fmt.Fprintf(&sb, "My data: not found\n")
+	}
+
+	if r.ActiveProfileSet {
+		fmt.Fprintf(&sb, "Active profile: set\n")
+	} else {
+		fmt.Fprintf(&sb, "Active profile: not set\n")
+	}
+
+	if r.PhotoCopied {
+		fmt.Fprintf(&sb, "Photo: copied\n")
+	} else if r.PhotoSkipped != "" {
+		fmt.Fprintf(&sb, "Photo: skipped (%s)\n", r.PhotoSkipped)
+	} else {
+		fmt.Fprintf(&sb, "Photo: none\n")
+	}
+
+	fmt.Fprintf(&sb, "Questions & Answers: %d read, %d written\n", r.QARead, r.QAWritten)
+
+	if len(r.LegacyFolded) > 0 {
+		fmt.Fprintf(&sb, "Legacy values folded into Other requirements (%d):\n", len(r.LegacyFolded))
+		for _, line := range r.LegacyFolded {
+			fmt.Fprintf(&sb, "  folded: %s\n", line)
+		}
+	}
+	if len(r.LegacyDropped) > 0 {
+		fmt.Fprintf(&sb, "Legacy values dropped (%d):\n", len(r.LegacyDropped))
+		for _, line := range r.LegacyDropped {
+			fmt.Fprintf(&sb, "  dropped: %s\n", line)
+		}
+	}
 
 	return sb.String()
 }

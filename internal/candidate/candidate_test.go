@@ -813,6 +813,61 @@ func TestInheritancePatchingInheritedValueUnchangedKeepsItInherited(t *testing.T
 	}
 }
 
+func TestPatchAllNullCompensationOnNonFirstProfileIsInherited(t *testing.T) {
+	d := openTestDB(t)
+	ts := newServer(t, d)
+
+	// Set real compensation on profile 1.
+	_, code := send(t, ts, http.MethodPatch, "/api/profiles/1", map[string]any{
+		"compensation": map[string]any{
+			"cashMin": 50000, "cashTarget": 70000,
+			"currency": "USD", "period": "year",
+		},
+	})
+	if code != http.StatusOK {
+		t.Fatalf("PATCH profile 1 compensation: status %d", code)
+	}
+
+	// Create profile 2.
+	body, code := send(t, ts, http.MethodPost, "/api/profiles", map[string]any{"name": "Alt"})
+	if code != http.StatusOK {
+		t.Fatalf("POST profiles: status %d", code)
+	}
+	id2 := int64(body["id"].(float64))
+
+	// PATCH profile 2 with an all-null compensation: cashMin, cashTarget and equityOnTop are all null.
+	_, code = send(t, ts, http.MethodPatch, fmt.Sprintf("/api/profiles/%d", id2), map[string]any{
+		"compensation": map[string]any{
+			"cashMin": nil, "cashTarget": nil, "equityOnTop": nil,
+		},
+	})
+	if code != http.StatusOK {
+		t.Fatalf("PATCH profile 2 all-null compensation: status %d", code)
+	}
+
+	// GET profile 2: normalization removes the empty compensation so it stays inherited.
+	got, code := get(t, ts, fmt.Sprintf("/api/profiles/%d", id2))
+	if code != http.StatusOK {
+		t.Fatalf("GET profile 2: status %d", code)
+	}
+	inheritedRaw, hasInherited := got["inherited"]
+	if !hasInherited || inheritedRaw == nil {
+		t.Fatal("profile 2 inherited: nil — empty compensation should have been removed and compensation stays inherited")
+	}
+	inherited, ok := inheritedRaw.(map[string]any)
+	if !ok {
+		t.Fatalf("profile 2 inherited: unexpected type %T", inheritedRaw)
+	}
+	if _, ok := inherited["compensation"]; !ok {
+		t.Errorf("profile 2 compensation should be inherited after all-null patch; inherited=%v", inherited)
+	}
+	// own must not store the empty compensation.
+	own, _ := got["own"].(map[string]any)
+	if own["compensation"] != nil {
+		t.Errorf("own compensation should be absent after all-null patch, got %v", own["compensation"])
+	}
+}
+
 func TestTargetRolesAreNotInherited(t *testing.T) {
 	d := openTestDB(t)
 	ts := newServer(t, d)

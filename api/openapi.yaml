@@ -1025,6 +1025,8 @@ components:
                     type: string
                 name:
                     type: string
+                source:
+                    type: string
             required:
                 - name
             type: object

@@ -88,7 +88,8 @@ CREATE TABLE user_profiles(
   data        TEXT    NOT NULL,
   created_at  TEXT    NOT NULL,
   updated_at  TEXT    NOT NULL,
-  archived_at TEXT
+  archived_at TEXT,
+  headline    TEXT    NOT NULL DEFAULT ''
 );
 CREATE TABLE profile_job_stages(
   id             INTEGER PRIMARY KEY,
@@ -106,6 +107,25 @@ CREATE TABLE profile_workflow_history(
   created    TEXT    NOT NULL,
   from_stage TEXT    NOT NULL,
   to_stage   TEXT    NOT NULL
+);
+CREATE TABLE users(
+  id         TEXT    PRIMARY KEY,
+  revision   INTEGER NOT NULL,
+  data       TEXT    NOT NULL,
+  created_at TEXT    NOT NULL,
+  updated_at TEXT    NOT NULL
+);
+CREATE TABLE profile_qa(
+  id         TEXT NOT NULL PRIMARY KEY,
+  user_id    TEXT NOT NULL REFERENCES users(id),
+  question   TEXT NOT NULL,
+  answer     TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE TABLE app_settings(
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL
 );
 `
 

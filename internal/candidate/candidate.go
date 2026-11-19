@@ -186,6 +186,90 @@ func Visibility(p Profile) Filter {
 	return Filter{SQL: strings.Join(clauses, " AND "), Args: args}
 }
 
+// NormalizeProfileData makes empty sections absent in pd.
+// A section with no value set is stored as nil so non-first profiles can inherit
+// it from the first profile.
+func NormalizeProfileData(pd *ProfileData) {
+	pd.Compensation = normalizeCompensation(pd.Compensation)
+	pd.Hours = normalizeHours(pd.Hours)
+}
+
+// NormalizeMeData makes empty sections absent in me.
+func NormalizeMeData(me *MeData) {
+	me.Availability = normalizeAvailability(me.Availability)
+	me.CurrentLocation = normalizeLocation(me.CurrentLocation)
+	me.Demographics = normalizeDemographics(me.Demographics)
+}
+
+// normalizeCompensation returns nil when c has no value set.
+func normalizeCompensation(c *Compensation) *Compensation {
+	if c == nil {
+		return nil
+	}
+	c.DayRates = normalizeDayRates(c.DayRates)
+	if c.CashMin == nil && c.CashTarget == nil && c.EquityOnTop == nil &&
+		c.DayRates == nil && c.Currency == "" && c.GrossNet == "" && c.Period == "" && c.Crypto == "" {
+		return nil
+	}
+	return c
+}
+
+// normalizeDayRates returns nil when dr has no value set.
+func normalizeDayRates(dr *DayRates) *DayRates {
+	if dr == nil {
+		return nil
+	}
+	if dr.Min == nil && dr.Target == nil && dr.Currency == "" {
+		return nil
+	}
+	return dr
+}
+
+// normalizeHours returns nil when h has no value set.
+func normalizeHours(h *Hours) *Hours {
+	if h == nil {
+		return nil
+	}
+	if h.Mode == "" && h.Weekly == nil && h.WeeklyMin == nil && h.WeeklyMax == nil {
+		return nil
+	}
+	return h
+}
+
+// normalizeAvailability returns nil when a has no value set.
+func normalizeAvailability(a *Availability) *Availability {
+	if a == nil {
+		return nil
+	}
+	if a.NoticeValue == nil && a.NoticeUnit == "" && a.StartDate == "" {
+		return nil
+	}
+	return a
+}
+
+// normalizeLocation returns nil when l has no meaningful value.
+func normalizeLocation(l *Location) *Location {
+	if l == nil {
+		return nil
+	}
+	if l.Country == "" && l.City == "" {
+		return nil
+	}
+	return l
+}
+
+// normalizeDemographics returns nil when d has no value set.
+func normalizeDemographics(d *Demographics) *Demographics {
+	if d == nil {
+		return nil
+	}
+	if d.Gender == "" && d.GenderDescription == "" && len(d.Race) == 0 && d.RaceDescription == "" &&
+		d.Ethnicity == "" && d.Disability == "" && d.VeteranStatus == "" && d.CriminalRecord == "" {
+		return nil
+	}
+	return d
+}
+
 // roleClause returns the SQL fragment and arguments for matching a target role
 // as a whole word in the vacancy title column of the full-text index.
 // The vacancy table must be aliased "v".

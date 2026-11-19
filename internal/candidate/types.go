@@ -24,8 +24,9 @@ type MeData struct {
 
 // Skill is one skill with its proficiency level.
 type Skill struct {
-	Name  string `json:"name"`
-	Level string `json:"level,omitempty"`
+	Name   string `json:"name"`
+	Level  string `json:"level,omitempty"`
+	Source string `json:"source,omitempty"` // where the skill came from (e.g. "manual", "document:N")
 }
 
 // AbsentSkill is one skill the user does not have.
