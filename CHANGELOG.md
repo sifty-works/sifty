@@ -4,6 +4,7 @@ Notable changes of Sifty, newest first. Versions follow `MAJOR.MINOR.PATCH`.
 
 ## Unreleased
 
+- The built-in web client is sifty-web 0.3.1: the filter panel no longer offers Hide expired.
 - Vacancies past their expiry date are left out of Inbox, Shortlist and Dismissed, their counts and search; Applied still shows them with "Listing expired". The `hideExpired` list parameter is gone.
 - The built-in web client is sifty-web 0.3.0: industries as badges in rows and on the vacancy page, Settings → Industries, and the Unread and Filters controls with Collected, Role, Industries and Sources.
 - Once a day, and at start, the server removes every vacancy whose expiry date passed more than a day ago and that has no application from any profile; collection keeps it away afterwards, as after "Delete role…". Vacancies with an application stay and show "Listing expired".
