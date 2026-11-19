@@ -4,31 +4,12 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+
+	"github.com/sifty-works/sifty-server/internal/places"
 )
 
-//go:embed reference.json
-var referenceJSON []byte
-
-// ReferenceCountry is one country entry in the reference data.
-type ReferenceCountry struct {
-	Code string `json:"code"`
-	Name string `json:"name"`
-}
-
-// ReferenceRegion is one region (e.g. EU) with its member countries.
-type ReferenceRegion struct {
-	Code      string   `json:"code"`
-	Name      string   `json:"name"`
-	Size      int      `json:"size"`
-	Aliases   []string `json:"aliases"`
-	Countries []string `json:"countries"`
-}
-
-// ReferenceTimeZoneBand is one UTC time-zone band.
-type ReferenceTimeZoneBand struct {
-	Code  string `json:"code"`
-	Label string `json:"label"`
-}
+//go:embed options.json
+var optionsJSON []byte
 
 // OptionItem is a value-label pair for select inputs.
 type OptionItem struct {
@@ -57,20 +38,21 @@ type ReferenceOptions struct {
 	WorkAuthorization []OptionItem `json:"workAuthorization"`
 }
 
-// ReferenceResp is the response for GET /api/reference.
+// ReferenceResp is the response for GET /api/reference: the places vocabulary
+// and the option sets of the editors.
 type ReferenceResp struct {
-	Countries     []ReferenceCountry      `json:"countries"`
-	Regions       []ReferenceRegion       `json:"regions"`
-	TimeZoneBands []ReferenceTimeZoneBand `json:"timeZoneBands"`
-	Options       ReferenceOptions        `json:"options"`
+	Countries     []places.ReferenceCountry      `json:"countries"`
+	Regions       []places.ReferenceRegion       `json:"regions"`
+	TimeZoneBands []places.ReferenceTimeZoneBand `json:"timeZoneBands"`
+	Options       ReferenceOptions               `json:"options"`
 }
 
 var referenceData = mustLoadReference()
 
 func mustLoadReference() ReferenceResp {
-	var r ReferenceResp
-	if err := json.Unmarshal(referenceJSON, &r); err != nil {
-		panic(fmt.Sprintf("candidate: load reference.json: %v", err))
+	r := ReferenceResp{Countries: places.Countries(), Regions: places.Regions(), TimeZoneBands: places.Bands()}
+	if err := json.Unmarshal(optionsJSON, &r); err != nil {
+		panic(fmt.Sprintf("candidate: load options.json: %v", err))
 	}
 	return r
 }

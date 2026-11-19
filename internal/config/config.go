@@ -7,6 +7,7 @@ package config
 import (
 	"bytes"
 	"fmt"
+	"math"
 	"net/url"
 	"os"
 	"strings"
@@ -107,6 +108,10 @@ type Config struct {
 	Debug      bool             `yaml:"debug"`
 	Collection CollectionConfig `yaml:"collection"`
 	Sources    []SourceConfig   `yaml:"sources"`
+	// Weights of the Fits you criteria; Rates value one unit of a currency in EUR.
+	// A key that is absent keeps its default.
+	Weights map[string]float64 `yaml:"weights"`
+	Rates   map[string]float64 `yaml:"rates"`
 }
 
 // Defaults returns a Config with every field set to its default value.
@@ -120,6 +125,9 @@ func Defaults() Config {
 			Interval: Duration(3 * time.Hour),
 		},
 		Sources: []SourceConfig{},
+		Weights: map[string]float64{"role": 0.25, "money": 0.20, "location": 0.075, "remote_restriction": 0.075,
+			"time_zone": 0.10, "work_mode": 0.04, "engagement": 0.03, "hours": 0.03},
+		Rates: map[string]float64{"EUR": 1, "USD": 0.92, "GBP": 1.17, "CAD": 0.68, "AUD": 0.60, "CHF": 1.08, "JPY": 0.0062},
 	}
 }
 
@@ -184,7 +192,7 @@ func parse(data []byte) (Config, error) {
 
 	// Check for unknown top-level keys.
 	knownTop := map[string]bool{
-		"port": true, "debug": true, "collection": true, "sources": true,
+		"port": true, "debug": true, "collection": true, "sources": true, "weights": true, "rates": true,
 	}
 	for i := 0; i+1 < len(root.Content); i += 2 {
 		k := root.Content[i].Value
@@ -254,6 +262,17 @@ func Validate(c Config) error {
 	maxInterval := Duration(168 * time.Hour)
 	if c.Collection.Interval < minInterval || c.Collection.Interval > maxInterval {
 		return fmt.Errorf("The interval must be between 15 minutes and 7 days.")
+	}
+	defaults := Defaults().Weights
+	for k, w := range c.Weights {
+		if _, ok := defaults[k]; !ok || w < 0 || math.IsInf(w, 0) || math.IsNaN(w) {
+			return fmt.Errorf("weights.%s: a weight of a known criterion is a number of 0 or more.", k)
+		}
+	}
+	for k, r := range c.Rates {
+		if len(k) != 3 || strings.ToUpper(k) != k || !(r > 0) || math.IsInf(r, 0) {
+			return fmt.Errorf("rates.%s: a rate is a currency code and a number above 0.", k)
+		}
 	}
 	seen := make(map[string]bool, len(c.Sources))
 	for _, s := range c.Sources {

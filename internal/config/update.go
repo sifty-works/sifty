@@ -3,9 +3,12 @@ package config
 import (
 	"bytes"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -41,6 +44,7 @@ func (s *Store) Update(fn func(c *Config) error) error {
 		newCfg.Sources = make([]SourceConfig, len(s.cfg.Sources))
 		copy(newCfg.Sources, s.cfg.Sources)
 	}
+	newCfg.Weights, newCfg.Rates = maps.Clone(s.cfg.Weights), maps.Clone(s.cfg.Rates)
 	if err := fn(&newCfg); err != nil {
 		if isAppErr(err) {
 			return err
@@ -70,6 +74,8 @@ func (s *Store) Update(fn func(c *Config) error) error {
 	}
 	if rootNode == nil {
 		rootNode = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+	} else if len(rootNode.Content) == 0 {
+		rootNode.Style = 0 // an empty "{}" grows in block style
 	}
 
 	// 4. Apply only the changed keys to the node tree.
@@ -124,6 +130,16 @@ func applyDiff(root *yaml.Node, old, new Config) {
 	}
 	if !sourcesEqual(old.Sources, new.Sources) {
 		updateSources(root, old.Sources, new.Sources)
+	}
+	for i, m := range [][2]map[string]float64{{old.Weights, new.Weights}, {old.Rates, new.Rates}} {
+		if !maps.Equal(m[0], m[1]) {
+			node := ensureMapping(root, []string{"weights", "rates"}[i])
+			for _, k := range slices.Sorted(maps.Keys(m[1])) {
+				if m[1][k] != m[0][k] {
+					setScalar(node, k, strconv.FormatFloat(m[1][k], 'g', -1, 64), "")
+				}
+			}
+		}
 	}
 }
 

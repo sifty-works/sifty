@@ -65,7 +65,7 @@ type RequirementChecker interface { /* reserved; connected only after it beats c
 - `VacancyReading` holds conditions (money, work modes, engagement, hours, locations, time zone) and requirements (text, level, alternatives, quote as offsets). Code reads `source_fields` and labels first; the model is asked only for the rest, and every value must cite an exact excerpt. A reading is keyed by vacancy, version and `reader_version`; a new `reader_version` queues rereading at low priority.
 - `Score` computes Fits you, the requirements counter, the four tiles and the requirement lines in one place. It takes about 0.01 ms per vacancy, so the breakdown is computed when a vacancy is opened. The list stores what it filters and sorts on: Fits you, the requirements score, the counts ✓, ✕ and ?, and the reading state.
 - `ShortlistChecker` gets `EvidenceText` (see Profiles); the digest of its inputs covers the vacancy version, the projections it used and the evidence text. A changed digest marks the check outdated; it runs again when the vacancy page is opened.
-- `places` is the one resolver of countries, regions, remote restrictions, onsite country and time-zone bands. There is no city table; cities are free text.
+- `places` is the one resolver of countries, regions, remote restrictions, onsite country and time-zone bands. Its vocabulary, the embedded `places.yaml`, holds the countries with the bands they span, the regions with their aliases and countries, the words of unrestricted remote work, the separators and qualifiers of composite labels, the six bands with their offsets and the time-zone abbreviations; Go code only looks them up. There is no city table; cities are free text.
 - `skills` is the one implementation of the skills vocabulary and of splitting requirement text into skills.
 
 ### Inbox and vacancy page
@@ -164,7 +164,7 @@ type Response struct { Text string; InTokens, OutTokens int }
 ## Configuration
 
 - One file, `<data>/sifty.yaml`, holds what the user configures: sources (keyed by their normalised address), the collection interval and switch, providers and their cost, the provider of each kind of work, paid bulk permission, the daily model limit, the web search provider, weights and rates. Every key is optional. Defaults are one Go function; `sifty config defaults` prints the full file, so no template is stored and no personal value is in the repository.
-- Vocabularies (regions, skills, sections, time zones, form phrasings, industries) are embedded data of their package, overridden by `<data>/vocab/<name>.yaml`.
+- Vocabularies (places, skills, sections, form phrasings, industries) are embedded data of their package, overridden by `<data>/vocab/<name>.yaml`.
 - What the application remembers about its use lives in the `settings` table, not in the file.
 - Secrets come only from the environment or `<data>/secrets.env`; saving a plain-text key in the file is refused.
 - One `Validate`. Saving is parse → validate → backup (the last ten are kept, enough to undo a day of edits without unbounded growth) → atomic write → swap in memory; a form edits the YAML node so comments stay; when a step fails nothing is written.
@@ -199,7 +199,7 @@ The web client lives in `github.com/sifty-works/sifty-web`. Its source is in tha
 | Profiles | `GET/PATCH /api/me`; `PUT/DELETE/GET /api/me/photo` (png, jpg or webp, at most 2 MiB, real type checked from bytes); `GET/POST/PATCH/DELETE /api/profiles`; `GET /api/profiles/{id}`; `PUT /api/active-profile`; `POST /api/me/skills` (+ and − from a vacancy) |
 | Documents | `POST/DELETE /api/documents`, `POST /api/documents/{id}/analyze`, `POST /api/documents/{id}/refresh`; `POST /api/proposals/{id}/accept`, `/reject` |
 | Questions & Answers | `GET/POST/PATCH/DELETE /api/qa` |
-| Reference | `GET /api/reference` (countries, regions, time-zone bands, option sets; shipped as embedded data) |
+| Reference | `GET /api/reference` (countries, regions and time-zone bands from the `places` vocabulary, and option sets; shipped as embedded data) |
 | Application | `GET /api/vacancies/{id}/application`; `PATCH …/application/fields/{field}`; `POST …/application/{write,paste,questions,retry}`; `POST /api/vacancies/{id}/locate`; `POST /api/vacancies/{id}/shortlist-check/retry` |
 | Settings and status | `GET/PUT /api/settings`, `GET/PUT /api/settings/file`; `POST /api/providers/{name}/check`; `GET /api/jobs`; `GET /api/status` (or event stream); `GET /api/version` |
 

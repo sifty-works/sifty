@@ -1,0 +1,391 @@
+# Places: the one vocabulary of countries, regions, remote restrictions and
+# time-zone bands. Countries, regions and bands are also what GET /api/reference
+# shows; aliases, restriction words and abbreviations are used only to read labels.
+
+# countries: ISO 3166-1 alpha-2 code, name, other spellings, and the time-zone
+# bands the country spans.
+countries:
+  - {code: AD, name: Andorra, bands: [europe_africa]}
+  - {code: AE, name: United Arab Emirates, bands: [mideast_south_asia]}
+  - {code: AF, name: Afghanistan, bands: [mideast_south_asia]}
+  - {code: AG, name: Antigua and Barbuda, bands: [americas_east]}
+  - {code: AL, name: Albania, bands: [europe_africa]}
+  - {code: AM, name: Armenia, bands: [mideast_south_asia]}
+  - {code: AO, name: Angola, bands: [europe_africa]}
+  - {code: AR, name: Argentina, bands: [americas_east]}
+  - {code: AT, name: Austria, bands: [europe_africa]}
+  - {code: AU, name: Australia, bands: [east_se_asia, oceania]}
+  - {code: AZ, name: Azerbaijan, bands: [mideast_south_asia]}
+  - {code: BA, name: Bosnia and Herzegovina, bands: [europe_africa]}
+  - {code: BB, name: Barbados, bands: [americas_east]}
+  - {code: BD, name: Bangladesh, bands: [mideast_south_asia]}
+  - {code: BE, name: Belgium, bands: [europe_africa]}
+  - {code: BF, name: Burkina Faso, bands: [europe_africa]}
+  - {code: BG, name: Bulgaria, bands: [europe_africa]}
+  - {code: BH, name: Bahrain, bands: [europe_africa, mideast_south_asia]}
+  - {code: BI, name: Burundi, bands: [europe_africa]}
+  - {code: BJ, name: Benin, bands: [europe_africa]}
+  - {code: BN, name: Brunei, bands: [east_se_asia]}
+  - {code: BO, name: Bolivia, bands: [americas_east]}
+  - {code: BR, name: Brazil, bands: [americas_east]}
+  - {code: BS, name: Bahamas, bands: [americas_east]}
+  - {code: BT, name: Bhutan, bands: [mideast_south_asia]}
+  - {code: BW, name: Botswana, bands: [europe_africa]}
+  - {code: BY, name: Belarus, bands: [europe_africa, mideast_south_asia]}
+  - {code: BZ, name: Belize, bands: [americas_west]}
+  - {code: CA, name: Canada, bands: [americas_west, americas_east]}
+  - {code: CD, name: DR Congo, bands: [europe_africa]}
+  - {code: CF, name: Central African Republic, bands: [europe_africa]}
+  - {code: CG, name: Republic of the Congo, bands: [europe_africa]}
+  - {code: CH, name: Switzerland, bands: [europe_africa]}
+  - {code: CI, name: Ivory Coast, bands: [europe_africa]}
+  - {code: CL, name: Chile, bands: [americas_east]}
+  - {code: CM, name: Cameroon, bands: [europe_africa]}
+  - {code: CN, name: China, bands: [east_se_asia]}
+  - {code: CO, name: Colombia, bands: [americas_east]}
+  - {code: CR, name: Costa Rica, bands: [americas_west]}
+  - {code: CU, name: Cuba, bands: [americas_east]}
+  - {code: CV, name: Cape Verde, bands: [europe_africa]}
+  - {code: CY, name: Cyprus, bands: [europe_africa]}
+  - {code: CZ, name: Czech Republic, bands: [europe_africa]}
+  - {code: DE, name: Germany, aliases: [Deutschland], bands: [europe_africa]}
+  - {code: DJ, name: Djibouti, bands: [europe_africa, mideast_south_asia]}
+  - {code: DK, name: Denmark, bands: [europe_africa]}
+  - {code: DM, name: Dominica, bands: [americas_east]}
+  - {code: DO, name: Dominican Republic, bands: [americas_east]}
+  - {code: DZ, name: Algeria, bands: [europe_africa]}
+  - {code: EC, name: Ecuador, bands: [americas_east]}
+  - {code: EE, name: Estonia, bands: [europe_africa]}
+  - {code: EG, name: Egypt, bands: [europe_africa]}
+  - {code: ER, name: Eritrea, bands: [europe_africa, mideast_south_asia]}
+  - {code: ES, name: Spain, bands: [europe_africa]}
+  - {code: ET, name: Ethiopia, bands: [europe_africa, mideast_south_asia]}
+  - {code: FI, name: Finland, bands: [europe_africa]}
+  - {code: FJ, name: Fiji, bands: [oceania]}
+  - {code: FM, name: Micronesia, bands: [oceania]}
+  - {code: FR, name: France, bands: [europe_africa]}
+  - {code: GA, name: Gabon, bands: [europe_africa]}
+  - {code: GB, name: United Kingdom, aliases: [UK, Great Britain], bands: [europe_africa]}
+  - {code: GD, name: Grenada, bands: [americas_east]}
+  - {code: GE, name: Georgia, bands: [mideast_south_asia]}
+  - {code: GF, name: French Guiana, bands: [americas_east]}
+  - {code: GH, name: Ghana, bands: [europe_africa]}
+  - {code: GM, name: Gambia, bands: [europe_africa]}
+  - {code: GN, name: Guinea, bands: [europe_africa]}
+  - {code: GQ, name: Equatorial Guinea, bands: [europe_africa]}
+  - {code: GR, name: Greece, bands: [europe_africa]}
+  - {code: GT, name: Guatemala, bands: [americas_west]}
+  - {code: GW, name: Guinea-Bissau, bands: [europe_africa]}
+  - {code: GY, name: Guyana, bands: [americas_east]}
+  - {code: HK, name: Hong Kong, bands: [east_se_asia]}
+  - {code: HN, name: Honduras, bands: [americas_west]}
+  - {code: HR, name: Croatia, bands: [europe_africa]}
+  - {code: HT, name: Haiti, bands: [americas_east]}
+  - {code: HU, name: Hungary, bands: [europe_africa]}
+  - {code: ID, name: Indonesia, bands: [east_se_asia]}
+  - {code: IE, name: Ireland, bands: [europe_africa]}
+  - {code: IL, name: Israel, aliases: [Tel Aviv-Yafo, Tel Aviv], bands: [europe_africa, mideast_south_asia]}
+  - {code: IN, name: India, bands: [mideast_south_asia]}
+  - {code: IQ, name: Iraq, bands: [europe_africa, mideast_south_asia]}
+  - {code: IR, name: Iran, bands: [mideast_south_asia]}
+  - {code: IS, name: Iceland, bands: [europe_africa]}
+  - {code: IT, name: Italy, bands: [europe_africa]}
+  - {code: JM, name: Jamaica, bands: [americas_east]}
+  - {code: JO, name: Jordan, bands: [europe_africa, mideast_south_asia]}
+  - {code: JP, name: Japan, bands: [east_se_asia]}
+  - {code: KE, name: Kenya, bands: [europe_africa, mideast_south_asia]}
+  - {code: KG, name: Kyrgyzstan, bands: [mideast_south_asia]}
+  - {code: KH, name: Cambodia, bands: [east_se_asia]}
+  - {code: KI, name: Kiribati, bands: [oceania]}
+  - {code: KM, name: Comoros, bands: [europe_africa, mideast_south_asia]}
+  - {code: KN, name: Saint Kitts and Nevis, bands: [americas_east]}
+  - {code: KP, name: North Korea, bands: [east_se_asia]}
+  - {code: KR, name: South Korea, bands: [east_se_asia]}
+  - {code: KW, name: Kuwait, bands: [europe_africa, mideast_south_asia]}
+  - {code: KZ, name: Kazakhstan, bands: [mideast_south_asia]}
+  - {code: LA, name: Laos, bands: [east_se_asia]}
+  - {code: LB, name: Lebanon, bands: [europe_africa, mideast_south_asia]}
+  - {code: LC, name: Saint Lucia, bands: [americas_east]}
+  - {code: LI, name: Liechtenstein, bands: [europe_africa]}
+  - {code: LK, name: Sri Lanka, bands: [mideast_south_asia]}
+  - {code: LR, name: Liberia, bands: [europe_africa]}
+  - {code: LS, name: Lesotho, bands: [europe_africa]}
+  - {code: LT, name: Lithuania, bands: [europe_africa]}
+  - {code: LU, name: Luxembourg, bands: [europe_africa]}
+  - {code: LV, name: Latvia, bands: [europe_africa]}
+  - {code: LY, name: Libya, bands: [europe_africa]}
+  - {code: MA, name: Morocco, bands: [europe_africa]}
+  - {code: MC, name: Monaco, bands: [europe_africa]}
+  - {code: MD, name: Moldova, bands: [europe_africa]}
+  - {code: ME, name: Montenegro, bands: [europe_africa]}
+  - {code: MG, name: Madagascar, bands: [europe_africa, mideast_south_asia]}
+  - {code: MH, name: Marshall Islands, bands: [oceania]}
+  - {code: MK, name: North Macedonia, bands: [europe_africa]}
+  - {code: ML, name: Mali, bands: [europe_africa]}
+  - {code: MM, name: Myanmar, bands: [east_se_asia]}
+  - {code: MN, name: Mongolia, bands: [east_se_asia]}
+  - {code: MR, name: Mauritania, bands: [europe_africa]}
+  - {code: MT, name: Malta, bands: [europe_africa]}
+  - {code: MU, name: Mauritius, bands: [mideast_south_asia]}
+  - {code: MV, name: Maldives, bands: [mideast_south_asia]}
+  - {code: MW, name: Malawi, bands: [europe_africa]}
+  - {code: MX, name: Mexico, bands: [americas_west]}
+  - {code: MY, name: Malaysia, aliases: [Kuala Lumpur], bands: [east_se_asia]}
+  - {code: MZ, name: Mozambique, bands: [europe_africa]}
+  - {code: NA, name: Namibia, bands: [europe_africa]}
+  - {code: NE, name: Niger, bands: [europe_africa]}
+  - {code: NG, name: Nigeria, bands: [europe_africa]}
+  - {code: NI, name: Nicaragua, bands: [americas_west]}
+  - {code: NL, name: Netherlands, aliases: [Holland, The Netherlands], bands: [europe_africa]}
+  - {code: "NO", name: Norway, bands: [europe_africa]}
+  - {code: NP, name: Nepal, bands: [mideast_south_asia]}
+  - {code: NR, name: Nauru, bands: [oceania]}
+  - {code: NZ, name: New Zealand, bands: [oceania]}
+  - {code: OM, name: Oman, bands: [mideast_south_asia]}
+  - {code: PA, name: Panama, bands: [americas_east]}
+  - {code: PE, name: Peru, bands: [americas_east]}
+  - {code: PG, name: Papua New Guinea, bands: [oceania]}
+  - {code: PH, name: Philippines, bands: [east_se_asia]}
+  - {code: PK, name: Pakistan, bands: [mideast_south_asia]}
+  - {code: PL, name: Poland, bands: [europe_africa]}
+  - {code: PR, name: Puerto Rico, bands: [americas_east]}
+  - {code: PT, name: Portugal, bands: [europe_africa]}
+  - {code: PW, name: Palau, bands: [east_se_asia]}
+  - {code: PY, name: Paraguay, bands: [americas_east]}
+  - {code: QA, name: Qatar, bands: [europe_africa, mideast_south_asia]}
+  - {code: RO, name: Romania, bands: [europe_africa]}
+  - {code: RS, name: Serbia, bands: [europe_africa]}
+  - {code: RU, name: Russia, bands: [europe_africa, mideast_south_asia, east_se_asia, oceania]}
+  - {code: RW, name: Rwanda, bands: [europe_africa]}
+  - {code: SA, name: Saudi Arabia, bands: [europe_africa, mideast_south_asia]}
+  - {code: SB, name: Solomon Islands, bands: [oceania]}
+  - {code: SC, name: Seychelles, bands: [mideast_south_asia]}
+  - {code: SD, name: Sudan, bands: [europe_africa, mideast_south_asia]}
+  - {code: SE, name: Sweden, bands: [europe_africa]}
+  - {code: SG, name: Singapore, bands: [east_se_asia]}
+  - {code: SI, name: Slovenia, bands: [europe_africa]}
+  - {code: SK, name: Slovakia, bands: [europe_africa]}
+  - {code: SL, name: Sierra Leone, bands: [europe_africa]}
+  - {code: SM, name: San Marino, bands: [europe_africa]}
+  - {code: SN, name: Senegal, bands: [europe_africa]}
+  - {code: SO, name: Somalia, bands: [europe_africa, mideast_south_asia]}
+  - {code: SR, name: Suriname, bands: [americas_east]}
+  - {code: SS, name: South Sudan, bands: [europe_africa, mideast_south_asia]}
+  - {code: ST, name: São Tomé and Príncipe, bands: [europe_africa]}
+  - {code: SV, name: El Salvador, bands: [americas_west]}
+  - {code: SY, name: Syria, bands: [europe_africa, mideast_south_asia]}
+  - {code: SZ, name: Eswatini, bands: [europe_africa]}
+  - {code: TD, name: Chad, bands: [europe_africa]}
+  - {code: TG, name: Togo, bands: [europe_africa]}
+  - {code: TH, name: Thailand, bands: [east_se_asia]}
+  - {code: TJ, name: Tajikistan, bands: [mideast_south_asia]}
+  - {code: TL, name: Timor-Leste, bands: [east_se_asia]}
+  - {code: TM, name: Turkmenistan, bands: [mideast_south_asia]}
+  - {code: TN, name: Tunisia, bands: [europe_africa]}
+  - {code: TO, name: Tonga, bands: [oceania]}
+  - {code: TR, name: Turkey, bands: [europe_africa, mideast_south_asia]}
+  - {code: TT, name: Trinidad and Tobago, bands: [americas_east]}
+  - {code: TV, name: Tuvalu, bands: [oceania]}
+  - {code: TW, name: Taiwan, bands: [east_se_asia]}
+  - {code: TZ, name: Tanzania, bands: [europe_africa, mideast_south_asia]}
+  - {code: UA, name: Ukraine, bands: [europe_africa]}
+  - {code: UG, name: Uganda, bands: [europe_africa, mideast_south_asia]}
+  - {code: US, name: United States, aliases: [United States of America, USA, U.S., U.S.A., Alabama, Alaska, Arizona, Arkansas, California, Colorado, Connecticut, Delaware, Florida, Georgia, Hawaii, Idaho, Illinois, Indiana, Iowa, Kansas, Kentucky, Louisiana, Maine, Maryland, Massachusetts, Michigan, Minnesota, Mississippi, Missouri, Montana, Nebraska, Nevada, New Hampshire, New Jersey, New Mexico, New York, North Carolina, North Dakota, Ohio, Oklahoma, Oregon, Pennsylvania, Rhode Island, South Carolina, South Dakota, Tennessee, Texas, Utah, Vermont, Virginia, Washington, West Virginia, Wisconsin, Wyoming, District of Columbia, DC], bands: [americas_west, americas_east]}
+  - {code: UY, name: Uruguay, bands: [americas_east]}
+  - {code: UZ, name: Uzbekistan, bands: [mideast_south_asia]}
+  - {code: VA, name: Vatican City, bands: [europe_africa]}
+  - {code: VC, name: Saint Vincent and the Grenadines, bands: [americas_east]}
+  - {code: VE, name: Venezuela, bands: [americas_east]}
+  - {code: VN, name: Vietnam, bands: [east_se_asia]}
+  - {code: VU, name: Vanuatu, bands: [oceania]}
+  - {code: WS, name: Samoa, bands: [oceania]}
+  - {code: YE, name: Yemen, bands: [europe_africa, mideast_south_asia]}
+  - {code: ZA, name: South Africa, bands: [europe_africa]}
+  - {code: ZM, name: Zambia, bands: [europe_africa]}
+  - {code: ZW, name: Zimbabwe, bands: [europe_africa]}
+
+# territories: codes and names the resolver reads that GET /api/reference does not list.
+territories:
+  - {code: AI, name: Anguilla, bands: [americas_east]}
+  - {code: AQ, name: Antarctica, bands: [europe_africa]}
+  - {code: AS, name: American Samoa, bands: [americas_west]}
+  - {code: AW, name: Aruba, bands: [americas_east]}
+  - {code: AX, name: Åland Islands, bands: [europe_africa]}
+  - {code: BL, name: Saint Barthélemy, bands: [americas_east]}
+  - {code: BM, name: Bermuda, bands: [americas_east]}
+  - {code: BQ, name: Caribbean Netherlands, bands: [americas_east]}
+  - {code: BV, name: Bouvet Island, bands: [europe_africa]}
+  - {code: CC, name: "Cocos (Keeling) Islands", bands: [east_se_asia]}
+  - {code: CK, name: Cook Islands, bands: [americas_west]}
+  - {code: CW, name: Curaçao, bands: [americas_east]}
+  - {code: CX, name: Christmas Island, bands: [east_se_asia]}
+  - {code: EH, name: Western Sahara, bands: [europe_africa]}
+  - {code: FK, name: Falkland Islands, bands: [americas_east]}
+  - {code: FO, name: Faroe Islands, bands: [europe_africa]}
+  - {code: GG, name: Guernsey, bands: [europe_africa]}
+  - {code: GI, name: Gibraltar, bands: [europe_africa]}
+  - {code: GL, name: Greenland, bands: [americas_east]}
+  - {code: GP, name: Guadeloupe, bands: [americas_east]}
+  - {code: GS, name: South Georgia and the South Sandwich Islands, bands: [americas_east]}
+  - {code: GU, name: Guam, bands: [oceania]}
+  - {code: HM, name: Heard Island and McDonald Islands, bands: [mideast_south_asia]}
+  - {code: IM, name: Isle of Man, bands: [europe_africa]}
+  - {code: IO, name: British Indian Ocean Territory, bands: [mideast_south_asia]}
+  - {code: JE, name: Jersey, bands: [europe_africa]}
+  - {code: KY, name: Cayman Islands, bands: [americas_east]}
+  - {code: MF, name: Saint Martin, bands: [americas_east]}
+  - {code: MO, name: Macau, bands: [east_se_asia]}
+  - {code: MP, name: Northern Mariana Islands, bands: [oceania]}
+  - {code: MQ, name: Martinique, bands: [americas_east]}
+  - {code: MS, name: Montserrat, bands: [americas_east]}
+  - {code: NC, name: New Caledonia, bands: [oceania]}
+  - {code: NF, name: Norfolk Island, bands: [oceania]}
+  - {code: NU, name: Niue, bands: [americas_west]}
+  - {code: PF, name: French Polynesia, bands: [americas_west]}
+  - {code: PM, name: Saint Pierre and Miquelon, bands: [americas_east]}
+  - {code: PN, name: Pitcairn Islands, bands: [americas_west]}
+  - {code: PS, name: Palestine, bands: [europe_africa, mideast_south_asia]}
+  - {code: RE, name: Réunion, bands: [mideast_south_asia]}
+  - {code: SH, name: Saint Helena, bands: [europe_africa]}
+  - {code: SJ, name: Svalbard and Jan Mayen, bands: [europe_africa]}
+  - {code: SX, name: Sint Maarten, bands: [americas_east]}
+  - {code: TC, name: Turks and Caicos Islands, bands: [americas_east]}
+  - {code: TF, name: French Southern Territories, bands: [mideast_south_asia]}
+  - {code: TK, name: Tokelau, bands: [oceania]}
+  - {code: UM, name: United States Minor Outlying Islands, bands: [americas_west]}
+  - {code: VG, name: British Virgin Islands, bands: [americas_east]}
+  - {code: VI, name: "U.S. Virgin Islands", bands: [americas_east]}
+  - {code: WF, name: Wallis and Futuna, bands: [oceania]}
+  - {code: YT, name: Mayotte, bands: [europe_africa, mideast_south_asia]}
+
+# regions: a name, its aliases and its member countries. A work authorization
+# for a region covers its countries.
+regions:
+  - code: north_america
+    name: North America
+    aliases: [NA, NOAM]
+    countries: [US, CA, MX]
+  - code: americas
+    name: Americas
+    aliases: [AMER, North and South America]
+    countries: [US, CA, MX, BR, AR, CL, CO, PE, VE, UY, PY, BO, EC, GY, SR, GF]
+  - code: LATAM
+    name: LATAM
+    aliases: [Latin America, LatAm]
+    countries: [MX, BR, AR, CL, CO, PE, VE, UY, PY, BO, EC, GY, SR, GF, CR, PA, GT, HN, SV, NI, DO, CU, PR, HT, JM]
+  - code: EU
+    name: EU
+    aliases: [European Union]
+    countries: [AT, BE, BG, HR, CY, CZ, DK, EE, FI, FR, DE, GR, HU, IE, IT, LV, LT, LU, MT, NL, PL, PT, RO, SK, SI, ES, SE]
+  - code: EEA
+    name: EEA
+    aliases: [European Economic Area]
+    countries: [AT, BE, BG, HR, CY, CZ, DK, EE, FI, FR, DE, GR, HU, IE, IS, IT, LV, LI, LT, LU, MT, NL, "NO", PL, PT, RO, SK, SI, ES, SE]
+  - code: europe
+    name: Europe
+    aliases: [EUR, EMEA]
+    countries: [AT, BE, BG, HR, CY, CZ, DK, EE, FI, FR, DE, GR, HU, IE, IS, IT, LV, LI, LT, LU, MT, NL, "NO", PL, PT, RO, SK, SI, ES, SE, GB, CH, UA, RS, BA, AL, ME, MK, MD, BY, GE, AM, AZ, TR]
+  - code: APAC
+    name: APAC
+    aliases: [Asia Pacific, Asia-Pacific]
+    countries: [AU, NZ, JP, KR, SG, HK, CN, IN, TW, ID, TH, MY, PH, VN, BD, PK, LK]
+
+# worldwide: words that name no restriction; a remote vacancy whose places are all
+# worldwide, or that names no place, is unrestricted remote.
+worldwide: [worldwide, anywhere, earth, global, international, remote, telecommute, telecommuting, telework, teleworking]
+
+# ignore: parts of a label that name no place.
+ignore: [hybrid, onsite, on-site, on site, office, in-office, in office, flexible, home, distributed, nationwide]
+
+# prefixes are stripped from the start of a part, qualifiers from its end, before lookup.
+prefixes: [remote within the, within the, remote]
+qualifiers: [" only", "-based", " based", " time zones", " time zone", " timezone"]
+
+# separators split a composite label; words split at word boundaries only.
+separators: ["/", ",", "&", ";", " - ", "·", and, or]
+
+# bands: the six UTC bands a profile chooses from, with the offsets they cover.
+bands:
+  - {code: americas_west, label: Americas West, min: -8, max: -6}
+  - {code: americas_east, label: Americas East, min: -5, max: -3}
+  - {code: europe_africa, label: "Europe & Africa", min: -1, max: 3}
+  - {code: mideast_south_asia, label: "Middle East & South Asia", min: 3, max: 6}
+  - {code: east_se_asia, label: "East & Southeast Asia", min: 7, max: 9}
+  - {code: oceania, label: Oceania, min: 10, max: 12}
+
+# abbreviations: time-zone abbreviations and their UTC offset in hours.
+abbreviations:
+  UTC: 0.0
+  GMT: 0.0
+  WET: 0.0
+  WEST: 1.0
+  BST: 1.0
+  CET: 1.0
+  CEST: 2.0
+  EET: 2.0
+  EEST: 3.0
+  MSK: 3.0
+  NST: -3.5
+  NDT: -2.5
+  AT: -4.0
+  AST: -4.0
+  ADT: -3.0
+  ET: -5.0
+  EST: -5.0
+  EDT: -4.0
+  CT: -6.0
+  CST: -6.0
+  CDT: -5.0
+  MT: -7.0
+  MST: -7.0
+  MDT: -6.0
+  PT: -8.0
+  PST: -8.0
+  PDT: -7.0
+  AKT: -9.0
+  AKST: -9.0
+  AKDT: -8.0
+  HST: -10.0
+  BRT: -3.0
+  BRST: -2.0
+  ART: -3.0
+  CLT: -4.0
+  CLST: -3.0
+  COT: -5.0
+  PET: -5.0
+  VET: -4.0
+  BOT: -4.0
+  UYT: -3.0
+  PYT: -4.0
+  GFT: -3.0
+  SRT: -3.0
+  WAT: 1.0
+  CAT: 2.0
+  EAT: 3.0
+  SAST: 2.0
+  GST: 4.0
+  IRST: 3.5
+  IST: 5.5
+  PKT: 5.0
+  NPT: 5.75
+  UZT: 5.0
+  KGT: 6.0
+  TJT: 5.0
+  TMT: 5.0
+  ALMT: 6.0
+  ICT: 7.0
+  WIB: 7.0
+  WITA: 8.0
+  WIT: 9.0
+  SGT: 8.0
+  HKT: 8.0
+  JST: 9.0
+  KST: 9.0
+  AEST: 10.0
+  AEDT: 11.0
+  ACST: 9.5
+  ACDT: 10.5
+  AWST: 8.0
+  NZST: 12.0
+  NZDT: 13.0
+  FJT: 12.0

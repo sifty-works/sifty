@@ -4,6 +4,7 @@ Notable changes of Sifty, newest first. Versions follow `MAJOR.MINOR.PATCH`.
 
 ## Unreleased
 
+- Fits you is computed by code: the criteria with their weights, the Location rules, the countries-and-regions resolver, buckets and the four tiles; the settings file takes `weights` and `rates`. `sifty import-v1` carries the previous weights and rates, compares Fits you of every vacancy with the previous version in its report and writes `fit-comparison.tsv`; it imports feed texts as full text and keeps the line structure of plain texts.
 - A source added while the server runs is named on the vacancy page at once. Start no longer rebuilds the full-text index or reassigns industries; a vacancy seen again unchanged keeps its full-text row; the status reads only each source's last three runs. The Markdown dependency is gone.
 - A profile's empty target industries are inherited from the first profile, the one with the lowest id, also after the profile created first was deleted.
 - web3.career vacancies carry their company, from the listing row and from their own page; a vacancy page with several JSON-LD items without addresses is matched by a unique title, and a page title "Role at Company" fills an empty company. `sifty import-v1` recovers a missing company from the address of We Work Remotely, Getro and web3.career vacancies.

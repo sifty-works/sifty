@@ -10,7 +10,7 @@ What the user gets from assessment: every vacancy in their lists carries one num
 
 ## Fits you
 
-Fits you is a number from 0 to 100 and the only number the user sees. It is a weighted average of the criteria below; a criterion that cannot be compared counts as 0.5. A profile with no goals gives no number.
+Fits you is a number from 0 to 100 and the only number the user sees. It is a weighted average of the criteria below, rounded; a criterion that cannot be compared counts as 0.5, and a criterion with weight 0 is left out of the number and the tiles. A profile with no goals gives no number: goals are target roles, a minimum compensation, engagement, hours, work modes, preferred locations and time zones; work authorizations alone are not goals. A vacancy whose full description is unavailable gives no number.
 
 | Criterion | Starting weight | How it is compared |
 |---|---|---|
@@ -19,19 +19,19 @@ Fits you is a number from 0 to 100 and the only number the user sees. It is a we
 | Location | 0.075 | see Location below |
 | Remote restriction | 0.075 | see Location below |
 | Time zone | 0.10 | 1 when the vacancy and the user share a band |
-| Work mode | 0.04 | remote, hybrid or onsite against the user's work modes |
+| Work mode | 0.04 | 1 when the vacancy offers one of the user's work modes |
 | Engagement | 0.03 | employment or contract against the user's goal |
-| Hours | 0.03 | full-time or part-time against the user's goal |
+| Hours | 0.03 | full-time or part-time against the user's goal, and for part-time the weekly hours when the user states them; ranges that do not overlap are a mismatch |
 | Onsite work authorization | set from data | see Location below |
 | Requirements | set from data | the requirements score below |
 
 Weights live in configuration. The weights of onsite work authorization and of requirements are chosen by measurement on hand-labelled vacancies before the first release.
 
-**Money.** The vacancy's range is converted to the user's currency by rates from configuration. A sum without a tax note is gross. A monthly sum is multiplied by 12, an hourly sum by 2080.
+**Money.** The vacancy's range is converted to the user's currency by rates from configuration. A sum without a tax note is gross. A sum without a period is yearly; a monthly sum is multiplied by 12, a daily sum by 260, an hourly sum by 2080. Money cannot be compared when the vacancy states no top of its range or no currency, when a currency has no rate, or when the vacancy's tax basis differs from the user's.
 
-**Location.** The Location criterion compares the vacancy's places with the profile's preferred locations; without preferred locations it cannot be compared. Unrestricted remote ("Anywhere", "Remote", telecommute) matches both location criteria. Restricted remote ("US only", "EU") is checked against the user's work authorizations, not against where the user lives: covered, not covered or unknown. Onsite and hybrid vacancies are checked the same way, by the vacancy's country, for the Onsite work authorization criterion; when the vacancy states that it sponsors a work visa, a missing authorization is not a mismatch. Only an authorization marked eligible covers a country. Composite labels are read with a vocabulary of countries and regions; a place the vocabulary does not know is unknown.
+**Location.** The Location criterion compares the vacancy's places with the profile's preferred locations; without preferred locations it cannot be compared. A vacancy matches when one of its places lies in a preferred country or region, and in the preferred city when both name a city; it is a mismatch when every place is known and none matches. A remote vacancy that names no place, or only worldwide ones ("Anywhere", "Remote", telecommute), is unrestricted remote and matches both location criteria. Restricted remote ("US only", "EU") is checked against the user's work authorizations, not against where the user lives: covered when an eligible authorization covers one of its countries, not covered when the user states authorizations for its countries and none is eligible, unknown when the user states none or a place is unknown. Remote restriction cannot be compared for a vacancy that is not remote. When remote work is restricted or its places are unknown and the user wants remote work, Work mode is left to Remote restriction and cannot be compared. Onsite and hybrid vacancies are checked the same way, by the vacancy's country, for the Onsite work authorization criterion; when the vacancy states that it sponsors a work visa, a missing authorization is not a mismatch. Only an authorization marked eligible covers a country. Composite labels ("Berlin, Germany", "Remote (US or Canada)") are read with a vocabulary of countries and regions; a part the vocabulary does not know is taken as a city, and a place that names no country or region is unknown.
 
-**Time zone.** The vacancy's bands come from a stated time zone, then from phrases in the text, then from the countries and regions of its locations.
+**Time zone.** The vacancy's bands come from a stated time zone (an offset such as UTC+2 or an abbreviation such as CET, widened by "± N hours"), then from time-zone phrases in the text, which come from the model's reading, then from the countries and regions of its locations.
 
 **Industries** do not enter Fits you. They decide which vacancies a profile's search shows (see `inbox.md`).
 
@@ -47,7 +47,7 @@ Weights live in configuration. The weights of onsite work authorization and of r
 
 ## Facts of a vacancy
 
-Structured fields the source states and labels are read by code first. A model fills only what code did not find. Every value the model gives must cite an exact excerpt of the vacancy text, or it is dropped. Engagement, work mode and hours are accepted from the model only when the excerpt is a phrase of the right kind.
+Structured fields the source states, the location, the tags and labelled lines ("Salary: …", "Location: …", "Time zone: …") are read by code first. A model fills only what code did not find. Every value the model gives must cite an exact excerpt of the vacancy text, or it is dropped. Engagement, work mode and hours are accepted from the model only when the excerpt is a phrase of the right kind.
 
 ## In the Inbox
 

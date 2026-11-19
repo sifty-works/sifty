@@ -264,3 +264,17 @@ func TestUpdateWritesIntervalInShortForm(t *testing.T) {
 		t.Errorf("90m should serialize as 1h30m; got:\n%s", data)
 	}
 }
+
+func TestUpdateWritesOnlyChangedWeights(t *testing.T) {
+	s, dir := openStore(t)
+	if err := s.Update(func(c *config.Config) error { c.Weights["money"] = 0.3; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(filepath.Join(dir, "sifty.yaml"))
+	if string(data) != "weights:\n  money: 0.3\n" {
+		t.Errorf("file = %q", data)
+	}
+	if config.Defaults().Weights["money"] != 0.20 {
+		t.Error("an update changed the defaults")
+	}
+}

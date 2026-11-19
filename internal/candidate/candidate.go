@@ -77,6 +77,20 @@ func Effective(p, base ProfileData) ProfileData {
 	return out
 }
 
+// GoalsView is what Fits you compares from an effective profile (see Effective).
+type GoalsView struct {
+	TargetRoles                      []string
+	Compensation                     *Compensation
+	Engagement, WorkModes, TimeZones []string
+	Hours                            *Hours
+	PreferredLocations               []Location
+}
+
+// Goals returns the goals of an effective profile.
+func Goals(p ProfileData) GoalsView {
+	return GoalsView{p.TargetRoles, p.Compensation, p.Engagement, p.WorkModes, p.TimeZones, p.Hours, p.PreferredLocations}
+}
+
 // InheritedFields returns the set of field names that p inherits from base.
 // A field is inherited when p's own value is empty and base has a non-empty value.
 func InheritedFields(p, base ProfileData) []string {

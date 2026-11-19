@@ -307,3 +307,18 @@ sources:
 		t.Error("sources[1].enabled: want false")
 	}
 }
+
+func TestWeightsAndRatesKeepDefaultsForAbsentKeys(t *testing.T) {
+	c, err := loadContent(t, "weights:\n  role: 0.5\nrates:\n  SEK: 0.09\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Weights["role"] != 0.5 || c.Weights["money"] != 0.20 || c.Rates["SEK"] != 0.09 || c.Rates["USD"] != 0.92 {
+		t.Errorf("weights %v rates %v", c.Weights, c.Rates)
+	}
+	for _, bad := range []string{"weights:\n  luck: 0.1\n", "weights:\n  role: -1\n", "rates:\n  USD: 0\n"} {
+		if _, err := loadContent(t, bad); err == nil {
+			t.Errorf("%q accepted", bad)
+		}
+	}
+}

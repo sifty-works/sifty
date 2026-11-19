@@ -116,6 +116,10 @@ type importReport struct {
 	// Legacy folding: one line per folded or dropped legacy value.
 	LegacyFolded  []string // "profile N (<label>): appended to Other requirements"
 	LegacyDropped []string // "profile N (<label>): dropped (structured value present)"
+
+	SettingsCarried []string         // settings of the previous version that differ from the defaults
+	Fit             fitComparison    // Fits you compared with the previous version
+	profileIDs      map[string]int64 // old profile id → new id
 }
 
 // --- old user / QA / settings row types ---
@@ -435,6 +439,13 @@ func runImport(ctx context.Context, fromDir, dbPath, settingsPath, dataDir strin
 		return err
 	}
 	report.NonImportedKeys = nonImportedKeys
+
+	if err := importRules(fromDir, store, report); err != nil {
+		return fmt.Errorf("writing weights and rates: %w", err)
+	}
+	if err := compareFit(ctx, copyDB, newDB, store.Get(), report, dataDir); err != nil {
+		return fmt.Errorf("comparing Fits you: %w", err)
+	}
 
 	// Photo must be copied after the transaction because it uses the filesystem.
 	if photoErr := importPhoto(fromDir, dataDir, report); photoErr != nil {
@@ -1020,6 +1031,7 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 
 	// profileIDMap maps old TEXT profile id → new INTEGER id.
 	profileIDMap := make(map[string]int64)
+	report.profileIDs = profileIDMap
 	type profileEntry struct {
 		newID            int64
 		name             string
@@ -1603,20 +1615,20 @@ func buildSourceSightingSet(sightings []oldSighting) map[string]bool {
 // encodeVacancy computes text state, body and hash for an old job row.
 func encodeVacancy(j *oldJob) (listing.TextState, []byte, string, error) {
 	// Determine text state.
+	// A text a feed gave counts as full, as collection counts it; a status
+	// that claims a text without one is not fetched.
 	var ts listing.TextState
-	if strings.HasPrefix(j.descriptionStatus, "blocked") {
+	hasText := (j.descriptionHTML.Valid && strings.TrimSpace(j.descriptionHTML.String) != "") ||
+		strings.TrimSpace(j.description) != ""
+	switch {
+	case strings.HasPrefix(j.descriptionStatus, "blocked"):
 		ts = listing.TextBlocked
-	} else if strings.HasPrefix(j.descriptionStatus, "available") {
+	case !hasText:
+		ts = listing.TextNotFetched
+	case strings.HasPrefix(j.descriptionStatus, "available") || strings.HasPrefix(j.descriptionStatus, "feed description"):
 		ts = listing.TextFull
-	} else {
-		// Check if there's any text.
-		hasText := (j.descriptionHTML.Valid && j.descriptionHTML.String != "") ||
-			j.description != ""
-		if !hasText {
-			ts = listing.TextNotFetched
-		} else {
-			ts = listing.TextSummary
-		}
+	default:
+		ts = listing.TextSummary
 	}
 
 	// Pick HTML or plain text; plain text is converted to HTML before normalising.
@@ -2829,6 +2841,13 @@ func formatReport(r *importReport) string {
 			fmt.Fprintf(&sb, "  dropped: %s\n", line)
 		}
 	}
+	if len(r.SettingsCarried) > 0 {
+		fmt.Fprintf(&sb, "Settings that differ from the defaults (%d):\n", len(r.SettingsCarried))
+		for _, line := range r.SettingsCarried {
+			fmt.Fprintf(&sb, "  %s\n", line)
+		}
+	}
+	formatFitComparison(&sb, r.Fit)
 
 	return sb.String()
 }
@@ -2882,7 +2901,7 @@ func PlainToHTML(plain string) string {
 				cur = &block{}
 			}
 			if len(cur.lines) > 0 {
-				cur.lines[len(cur.lines)-1] += " " + stripped
+				cur.lines[len(cur.lines)-1] += "\n" + stripped // a single newline is a line break
 			} else {
 				cur.lines = append(cur.lines, stripped)
 			}
@@ -2904,7 +2923,7 @@ func PlainToHTML(plain string) string {
 		default:
 			for _, para := range b.lines {
 				buf.WriteString("<p>")
-				buf.WriteString(html.EscapeString(para))
+				buf.WriteString(strings.ReplaceAll(html.EscapeString(para), "\n", "<br>"))
 				buf.WriteString("</p>")
 			}
 		}

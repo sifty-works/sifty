@@ -1,0 +1,262 @@
+{
+  "options": {
+    "skillLevels": [
+      {
+        "value": "Beginner",
+        "label": "Beginner"
+      },
+      {
+        "value": "Proficient",
+        "label": "Proficient"
+      },
+      {
+        "value": "Expert",
+        "label": "Expert"
+      }
+    ],
+    "languageLevels": [
+      {
+        "value": "Pre-A1",
+        "label": "Pre-A1 — Novice"
+      },
+      {
+        "value": "A1",
+        "label": "A1 — Beginner"
+      },
+      {
+        "value": "A2",
+        "label": "A2 — Elementary"
+      },
+      {
+        "value": "B1",
+        "label": "B1 — Intermediate"
+      },
+      {
+        "value": "B2",
+        "label": "B2 — Upper-intermediate"
+      },
+      {
+        "value": "C1",
+        "label": "C1 — Advanced"
+      },
+      {
+        "value": "C2",
+        "label": "C2 — Proficient"
+      },
+      {
+        "value": "Native",
+        "label": "Native"
+      }
+    ],
+    "currencies": [
+      {
+        "value": "EUR",
+        "label": "EUR — Euro"
+      },
+      {
+        "value": "USD",
+        "label": "USD — US dollar"
+      }
+    ],
+    "periods": [
+      {
+        "value": "month",
+        "label": "Monthly"
+      },
+      {
+        "value": "year",
+        "label": "Yearly"
+      }
+    ],
+    "paymentMethods": [
+      {
+        "value": "fiat_only",
+        "label": "Fiat only"
+      },
+      {
+        "value": "crypto_accepted",
+        "label": "Crypto accepted"
+      },
+      {
+        "value": "crypto_only",
+        "label": "Crypto only"
+      }
+    ],
+    "engagement": [
+      {
+        "value": "employment",
+        "label": "Employment"
+      },
+      {
+        "value": "contract",
+        "label": "Contract"
+      }
+    ],
+    "workingTime": [
+      {
+        "value": "full_time",
+        "label": "Full-time"
+      },
+      {
+        "value": "part_time",
+        "label": "Part-time"
+      }
+    ],
+    "workModes": [
+      {
+        "value": "remote",
+        "label": "Remote"
+      },
+      {
+        "value": "hybrid",
+        "label": "Hybrid"
+      },
+      {
+        "value": "onsite",
+        "label": "Onsite"
+      }
+    ],
+    "relocation": [
+      {
+        "value": "yes",
+        "label": "Yes"
+      },
+      {
+        "value": "no",
+        "label": "No"
+      }
+    ],
+    "noticeUnits": [
+      {
+        "value": "day",
+        "label": "Days"
+      },
+      {
+        "value": "week",
+        "label": "Weeks"
+      },
+      {
+        "value": "month",
+        "label": "Months"
+      }
+    ],
+    "gender": [
+      {
+        "value": "woman",
+        "label": "Woman"
+      },
+      {
+        "value": "man",
+        "label": "Man"
+      },
+      {
+        "value": "non_binary",
+        "label": "Non-binary"
+      },
+      {
+        "value": "self_describe",
+        "label": "Self-describe"
+      },
+      {
+        "value": "prefer_not_to_say",
+        "label": "Prefer not to say"
+      }
+    ],
+    "race": [
+      {
+        "value": "american_indian_or_alaska_native",
+        "label": "American Indian or Alaska Native"
+      },
+      {
+        "value": "asian",
+        "label": "Asian"
+      },
+      {
+        "value": "black_or_african_american",
+        "label": "Black or African American"
+      },
+      {
+        "value": "native_hawaiian_or_other_pacific_islander",
+        "label": "Native Hawaiian or Other Pacific Islander"
+      },
+      {
+        "value": "white",
+        "label": "White"
+      },
+      {
+        "value": "self_describe",
+        "label": "Self-describe"
+      },
+      {
+        "value": "prefer_not_to_say",
+        "label": "Prefer not to say"
+      }
+    ],
+    "ethnicity": [
+      {
+        "value": "hispanic_or_latino",
+        "label": "Hispanic or Latino"
+      },
+      {
+        "value": "not_hispanic_or_latino",
+        "label": "Not Hispanic or Latino"
+      },
+      {
+        "value": "prefer_not_to_say",
+        "label": "Prefer not to say"
+      }
+    ],
+    "disability": [
+      {
+        "value": "yes",
+        "label": "Yes, I have a disability (or previously had a disability)"
+      },
+      {
+        "value": "no",
+        "label": "No, I do not have a disability and have not had one in the past"
+      },
+      {
+        "value": "prefer_not_to_say",
+        "label": "Prefer not to say"
+      }
+    ],
+    "veteranStatus": [
+      {
+        "value": "veteran",
+        "label": "I am a protected veteran"
+      },
+      {
+        "value": "not_veteran",
+        "label": "I am not a protected veteran"
+      },
+      {
+        "value": "prefer_not_to_say",
+        "label": "Prefer not to say"
+      }
+    ],
+    "criminalRecord": [
+      {
+        "value": "yes",
+        "label": "Yes"
+      },
+      {
+        "value": "no",
+        "label": "No"
+      },
+      {
+        "value": "prefer_not_to_say",
+        "label": "Prefer not to say"
+      }
+    ],
+    "workAuthorization": [
+      {
+        "value": "eligible",
+        "label": "Eligible to work"
+      },
+      {
+        "value": "need_visa",
+        "label": "Need visa sponsorship"
+      }
+    ]
+  }
+}
