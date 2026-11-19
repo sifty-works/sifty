@@ -4,6 +4,7 @@ Notable changes of Sifty, newest first. Versions follow `MAJOR.MINOR.PATCH`.
 
 ## Unreleased
 
+- Web client 0.4.1: no comments in its sources; interface synced.
 - Fits you treats a vacancy that states no engagement as employment; the Contract tile shows "Employment (assumed)".
 - No comments in code, migrations, embedded YAML, the Makefile or scripts; `make uncomment` removes them and `make check` refuses them.
 - The built-in web client is sifty-web 0.4.0: Fits you on every row, the Best fit / Newest switch, the Fits you filter group and the vacancy band with four tiles.
