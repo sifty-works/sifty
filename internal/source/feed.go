@@ -102,12 +102,11 @@ func buildPostings(items []feedItem, base string) []listing.Posting {
 	var out []listing.Posting
 	for _, it := range items {
 		p := listing.Posting{
-			URL:      it.url,
-			Title:    it.title,
-			Company:  it.company,
-			Tags:     it.tags,
-			Text:     it.text,
-			TextKind: listing.HTML,
+			URL:     it.url,
+			Title:   it.title,
+			Company: it.company,
+			Tags:    it.tags,
+			Text:    it.text,
 		}
 		if pub, ok := parseDate(it.published); ok {
 			p.Published = pub

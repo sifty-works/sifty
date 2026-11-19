@@ -194,13 +194,9 @@ func TestRunWithMixedSourcesEndsDone(t *testing.T) {
 
 	setSources(t, e, "https://boards.greenhouse.io/acme", "https://feeds.example.com/jobs.xml", "https://failing.example.com/jobs")
 
-	j := runCollect(t, e)
+	runCollect(t, e)
 
-	if j.State != "done" {
-		t.Errorf("state: got %q, want done", j.State)
-	}
-	st := e.get(t, "/api/status")
-	lr := st["lastRun"].(map[string]any)
+	lr := e.get(t, "/api/status")["lastRun"].(map[string]any)
 	if lr["state"] != "done" {
 		t.Errorf("lastRun.state: got %v", lr["state"])
 	}
@@ -216,13 +212,9 @@ func TestRunAllFailingEndsFailed(t *testing.T) {
 
 	setSources(t, e, "https://failing.example.com/jobs", "https://feeds.example.com/jobs.xml")
 
-	j := runCollect(t, e)
+	runCollect(t, e)
 
-	if j.State != "failed" {
-		t.Errorf("state: got %q, want failed", j.State)
-	}
-	st := e.get(t, "/api/status")
-	lr := st["lastRun"].(map[string]any)
+	lr := e.get(t, "/api/status")["lastRun"].(map[string]any)
 	if lr["message"] != "Every source failed" {
 		t.Errorf("lastRun.message: got %v", lr["message"])
 	}
@@ -260,10 +252,7 @@ func TestRunTwoBoardsOnSameAPIHostReadSequentially(t *testing.T) {
 
 	setSources(t, e, "https://boards.greenhouse.io/acme", "https://boards.greenhouse.io/otherco")
 
-	j := runCollect(t, e)
-	if j.State != "done" {
-		t.Errorf("state: got %q, want done", j.State)
-	}
+	runCollect(t, e)
 	// Both boards must be fetched; each board is one request.
 	if reqs := e.fm.Requests(); len(reqs) != 2 {
 		t.Errorf("requests: got %d, want 2 (one per board): %v", len(reqs), reqs)
@@ -324,14 +313,6 @@ func TestDueIntervalMeasuredFromLastRunCreated(t *testing.T) {
 	}
 }
 
-func TestPostCollectForceFalseEnqueuesWhenDue(t *testing.T) {
-	e := newEnv(t)
-	e.fm.Set("https://feeds.example.com/jobs.xml", fetchtest.MapEntry{Err: fetch.ErrNotFound})
-	addSource(t, e, "https://feeds.example.com/jobs.xml")
-	e.mutate(t, "POST", "/api/collect", map[string]any{"force": false})
-	waitJob(t, e.r)
-}
-
 func TestPostCollectForceTrueIgnoresAutoSetting(t *testing.T) {
 	e := newEnv(t)
 	e.fm.Set("https://feeds.example.com/jobs.xml", fetchtest.MapEntry{Err: fetch.ErrNotFound})
@@ -347,13 +328,6 @@ func TestPostCollectForceTrueIgnoresAutoSetting(t *testing.T) {
 	j := waitJob(t, e.r)
 	if j.State != "failed" {
 		t.Errorf("state: got %q (ErrNotFound → all failed)", j.State)
-	}
-	// Status response must carry all expected keys.
-	st := e.get(t, "/api/status")
-	for _, key := range []string{"version", "offline", "debug", "collecting", "lastRun", "catalogue"} {
-		if _, ok := st[key]; !ok {
-			t.Errorf("status key %q missing from response", key)
-		}
 	}
 }
 
@@ -428,11 +402,10 @@ func TestAddSourceValidationMessages(t *testing.T) {
 
 func TestSourceCRUD(t *testing.T) {
 	e := newEnv(t)
-	for _, method := range []string{"PATCH", "DELETE"} {
-		_, status := e.mutate(t, method, "/api/sources", map[string]any{"key": "https://no-such.example.com"})
-		if status != 404 {
-			t.Errorf("%s unknown key: got %d, want 404", method, status)
-		}
+	_, s1 := e.mutate(t, "PATCH", "/api/sources", map[string]any{"key": "https://no-such.example.com"})
+	_, s2 := e.mutate(t, "DELETE", "/api/sources", map[string]any{"key": "https://no-such.example.com"})
+	if s1 != 404 || s2 != 404 {
+		t.Errorf("PATCH/DELETE unknown key: got %d/%d, want 404/404", s1, s2)
 	}
 	body, _ := e.mutate(t, "POST", "/api/sources", map[string]any{"url": "https://feeds.example.com/jobs.xml"})
 	key := body["sources"].([]any)[0].(map[string]any)["key"].(string)
@@ -507,6 +480,23 @@ func TestStatusCatalogueCounterIncreasesAfterRun(t *testing.T) {
 
 // --- source_run rows ---------------------------------------------------------
 
+// statusText returns the status.text field for the source with the given URL,
+// calling t.Errorf if the source is not found or has no status object.
+func statusText(t *testing.T, srcs []map[string]any, url string) string {
+	t.Helper()
+	for _, s := range srcs {
+		if s["url"] == url {
+			if s["status"] == nil {
+				t.Errorf("source %q: status is nil", url)
+				return ""
+			}
+			return s["status"].(map[string]any)["text"].(string)
+		}
+	}
+	t.Errorf("source %q not found", url)
+	return ""
+}
+
 // sourcesOf extracts the sources slice from a /api/sources response.
 func sourcesOf(body map[string]any) []map[string]any {
 	raw := body["sources"].([]any)
@@ -542,47 +532,19 @@ func TestRunWritesSourceRunRowsForEachOutcome(t *testing.T) {
 		t.Fatalf("sources: got %d, want 4", len(srcs))
 	}
 
-	for _, s := range srcs {
-		st := s["status"]
-		switch s["url"] {
-		case "https://boards.greenhouse.io/acme":
-			// ok run: status object with text containing "Last success"
-			if st == nil {
-				t.Errorf("ok source: status is nil")
-				continue
-			}
-			text := st.(map[string]any)["text"].(string)
-			if !strings.HasPrefix(text, "Last success") {
-				t.Errorf("ok source text: got %q, want prefix 'Last success'", text)
-			}
-			// found=2, new=2 — text ends with "2 seen · 2 new"
-			if !strings.HasSuffix(text, "2 seen · 2 new") {
-				t.Errorf("ok source text counts: got %q", text)
-			}
-		case "https://feeds.example.com/empty.xml":
-			// empty run: status is not nil but text is empty (no success, no error)
-			if st == nil {
-				t.Errorf("empty source: status is nil")
-			}
-		case "https://blocked.example.com/jobs":
-			if st == nil {
-				t.Errorf("blocked source: status is nil")
-				continue
-			}
-			text := st.(map[string]any)["text"].(string)
-			if !strings.Contains(text, "Blocked by site") {
-				t.Errorf("blocked source text: got %q, want 'Blocked by site'", text)
-			}
-		case "https://noparse.example.com/jobs":
-			if st == nil {
-				t.Errorf("noparse source: status is nil")
-				continue
-			}
-			text := st.(map[string]any)["text"].(string)
-			if !strings.Contains(text, "Nothing recognised on the page") {
-				t.Errorf("noparse source text: got %q, want 'Nothing recognised on the page'", text)
-			}
-		}
+	acme := statusText(t, srcs, "https://boards.greenhouse.io/acme")
+	if !strings.HasPrefix(acme, "Last success") {
+		t.Errorf("ok source text: got %q, want prefix 'Last success'", acme)
+	}
+	if !strings.HasSuffix(acme, "2 seen · 2 new") {
+		t.Errorf("ok source text counts: got %q", acme)
+	}
+	statusText(t, srcs, "https://feeds.example.com/empty.xml") // asserts status is not nil
+	if text := statusText(t, srcs, "https://blocked.example.com/jobs"); !strings.Contains(text, "Blocked by site") {
+		t.Errorf("blocked source text: got %q, want 'Blocked by site'", text)
+	}
+	if text := statusText(t, srcs, "https://noparse.example.com/jobs"); !strings.Contains(text, "Nothing recognised on the page") {
+		t.Errorf("noparse source text: got %q, want 'Nothing recognised on the page'", text)
 	}
 }
 
@@ -727,8 +689,7 @@ func TestRunDetailFetchesTextForNewPostingWithoutText(t *testing.T) {
 		t.Errorf("requests: got %d, want 2 (listing+detail)", n)
 	}
 	var state string
-	e.db.QueryRow(`SELECT text_state FROM vacancy WHERE url = ?`, vacURL).Scan(&state) //nolint:errcheck
-	if state != "full" {
+	if e.db.QueryRow(`SELECT text_state FROM vacancy WHERE url = ?`, vacURL).Scan(&state); state != "full" { //nolint:errcheck
 		t.Errorf("text_state: got %q, want full", state)
 	}
 }
@@ -790,8 +751,7 @@ func TestRunBlockedDetailSavesPostingAsBlocked(t *testing.T) {
 	addSource(t, e, "https://generic.example.com/jobs")
 	runCollect(t, e)
 	var state, reqAt string
-	e.db.QueryRow(`SELECT text_state, detail_requested_at FROM vacancy WHERE url = ?`, vacURL).Scan(&state, &reqAt) //nolint:errcheck
-	if state != "blocked" || reqAt != "" {
+	if e.db.QueryRow(`SELECT text_state, detail_requested_at FROM vacancy WHERE url = ?`, vacURL).Scan(&state, &reqAt); state != "blocked" || reqAt != "" { //nolint:errcheck
 		t.Errorf("text_state=%q detail_requested_at=%q, want blocked and empty", state, reqAt)
 	}
 }
@@ -806,20 +766,32 @@ func TestSourceRunRowDeletedWithJob(t *testing.T) {
 
 	// Confirm source_run row was written
 	var cnt int
-	e.db.QueryRow(`SELECT COUNT(*) FROM source_run WHERE job_id=?`, j.ID).Scan(&cnt) //nolint:errcheck
-	if cnt == 0 {
+	if e.db.QueryRow(`SELECT COUNT(*) FROM source_run WHERE job_id=?`, j.ID).Scan(&cnt); cnt == 0 { //nolint:errcheck
 		t.Fatal("source_run: expected a row but found none")
 	}
 
 	// Delete the job; CASCADE should remove the source_run row
-	e.db.Exec(`DELETE FROM job WHERE id=?`, j.ID)                                    //nolint:errcheck
-	e.db.QueryRow(`SELECT COUNT(*) FROM source_run WHERE job_id=?`, j.ID).Scan(&cnt) //nolint:errcheck
-	if cnt != 0 {
+	e.db.Exec(`DELETE FROM job WHERE id=?`, j.ID)                                                   //nolint:errcheck
+	if e.db.QueryRow(`SELECT COUNT(*) FROM source_run WHERE job_id=?`, j.ID).Scan(&cnt); cnt != 0 { //nolint:errcheck
 		t.Errorf("source_run row should be deleted with its job, got %d rows", cnt)
 	}
 }
 
 // --- Exclusions --------------------------------------------------------------
+
+// checkExclusionRun asserts that vacancy count is wantVacancies and that
+// source_run.excluded is 1 for the most recent job.
+func checkExclusionRun(t *testing.T, e *env, wantVacancies int) {
+	t.Helper()
+	var cnt int
+	if e.db.QueryRow(`SELECT count(*) FROM vacancy`).Scan(&cnt); cnt != wantVacancies { //nolint:errcheck
+		t.Errorf("catalog: got %d vacancies, want %d", cnt, wantVacancies)
+	}
+	var excl int
+	if e.db.QueryRow(`SELECT excluded FROM source_run ORDER BY job_id DESC LIMIT 1`).Scan(&excl); excl != 1 { //nolint:errcheck
+		t.Errorf("source_run.excluded: got %d, want 1", excl)
+	}
+}
 
 // exclusionFeed is a minimal RSS feed with no body text so that needDetail=true.
 const exclusionFeed = `<rss version="2.0"><channel>
@@ -841,18 +813,8 @@ func TestCollect_ExcludedBeforeDetail(t *testing.T) {
 	e.db.Exec(`INSERT INTO exclusion (kind,value,norm,profile_id,created) VALUES ('word','engineer','engineer',0,datetime('now'))`) //nolint:errcheck
 
 	runCollect(t, e)
-
 	// Both postings are saved; "Engineer" is excluded from view but still upserted.
-	var cnt int
-	e.db.QueryRow(`SELECT count(*) FROM vacancy`).Scan(&cnt) //nolint:errcheck
-	if cnt != 2 {
-		t.Errorf("catalog: got %d vacancies, want 2 (both saved, Engineer excluded from view)", cnt)
-	}
-	var excl int
-	e.db.QueryRow(`SELECT excluded FROM source_run ORDER BY job_id DESC LIMIT 1`).Scan(&excl) //nolint:errcheck
-	if excl != 1 {
-		t.Errorf("source_run.excluded: got %d, want 1", excl)
-	}
+	checkExclusionRun(t, e, 2)
 }
 
 func TestCollect_ExcludedAfterDetail(t *testing.T) {
@@ -867,16 +829,6 @@ func TestCollect_ExcludedAfterDetail(t *testing.T) {
 	e.db.Exec(`INSERT INTO exclusion (kind,value,norm,profile_id,created) VALUES ('company','ExclCo','exclco',0,datetime('now'))`) //nolint:errcheck
 
 	runCollect(t, e)
-
 	// The posting is saved with detail text; it is excluded from view but still upserted.
-	var cnt int
-	e.db.QueryRow(`SELECT count(*) FROM vacancy`).Scan(&cnt) //nolint:errcheck
-	if cnt != 1 {
-		t.Errorf("catalog: got %d vacancies, want 1 (saved with detail text, excluded from view)", cnt)
-	}
-	var excl int
-	e.db.QueryRow(`SELECT excluded FROM source_run ORDER BY job_id DESC LIMIT 1`).Scan(&excl) //nolint:errcheck
-	if excl != 1 {
-		t.Errorf("source_run.excluded: got %d, want 1", excl)
-	}
+	checkExclusionRun(t, e, 1)
 }

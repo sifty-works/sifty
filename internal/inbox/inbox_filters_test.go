@@ -134,7 +134,7 @@ func TestFilter_Remote(t *testing.T) {
 	mkLoc := func(url, loc string) listing.Posting {
 		return listing.Posting{
 			URL: url, Title: "Engineer", Company: "Co",
-			Location: loc, Text: "job", TextKind: listing.Plain, TextState: listing.TextFull,
+			Location: loc, Text: "job", TextState: listing.TextFull,
 		}
 	}
 	idA := add(t, cat, mkLoc("https://example.com/jobs/r1", "Remote · EU"))
@@ -174,15 +174,15 @@ func TestFilter_Remote_Anywhere(t *testing.T) {
 
 	add(t, cat, listing.Posting{
 		URL: "https://example.com/jobs/ra1", Title: "Engineer", Company: "Co",
-		Location: "Worldwide – anywhere", Text: "job", TextKind: listing.Plain, TextState: listing.TextFull,
+		Location: "Worldwide – anywhere", Text: "job", TextState: listing.TextFull,
 	})
 	add(t, cat, listing.Posting{
 		URL: "https://example.com/jobs/ra2", Title: "Engineer", Company: "Co",
-		Location: "Telecommute · US", Text: "job", TextKind: listing.Plain, TextState: listing.TextFull,
+		Location: "Telecommute · US", Text: "job", TextState: listing.TextFull,
 	})
 	add(t, cat, listing.Posting{
 		URL: "https://example.com/jobs/ra3", Title: "Engineer", Company: "Co",
-		Location: "San Francisco", Text: "job", TextKind: listing.Plain, TextState: listing.TextFull,
+		Location: "San Francisco", Text: "job", TextState: listing.TextFull,
 	})
 
 	ts := newTestServer(t, d)
@@ -217,7 +217,7 @@ func TestFilter_Leadership(t *testing.T) {
 	for _, tc := range cases {
 		add(t, cat, listing.Posting{
 			URL: tc.url, Title: tc.title, Company: "Co",
-			Text: "job description", TextKind: listing.Plain, TextState: listing.TextFull,
+			Text: "job description", TextState: listing.TextFull,
 		})
 	}
 
@@ -301,17 +301,17 @@ func TestFilter_Combined(t *testing.T) {
 
 	idOK := addWithSrc(t, catRecent, listing.Posting{
 		URL: "https://example.com/jobs/cb1", Title: "Engineer", Company: "Co",
-		Location: "Remote · EU", Text: "job", TextKind: listing.Plain, TextState: listing.TextFull,
+		Location: "Remote · EU", Text: "job", TextState: listing.TextFull,
 	}, "src")
 	// recent but not remote
 	add(t, catRecent, listing.Posting{
 		URL: "https://example.com/jobs/cb2", Title: "Engineer", Company: "Co",
-		Location: "London", Text: "job", TextKind: listing.Plain, TextState: listing.TextFull,
+		Location: "London", Text: "job", TextState: listing.TextFull,
 	})
 	// remote but old
 	add(t, catOld, listing.Posting{
 		URL: "https://example.com/jobs/cb3", Title: "Engineer", Company: "Co",
-		Location: "Remote · US", Text: "job", TextKind: listing.Plain, TextState: listing.TextFull,
+		Location: "Remote · US", Text: "job", TextState: listing.TextFull,
 	})
 
 	ts := newTestServer(t, d)
@@ -401,7 +401,7 @@ func TestFilter_Total_UnchangedByFilters(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		add(t, cat, listing.Posting{
 			URL: fmt.Sprintf("https://example.com/jobs/tot%d", i), Title: "Engineer", Company: "Co",
-			Location: "London", Text: "job", TextKind: listing.Plain, TextState: listing.TextFull,
+			Location: "London", Text: "job", TextState: listing.TextFull,
 		})
 	}
 
@@ -489,11 +489,11 @@ func TestFilter_Leadership_HeadMatch(t *testing.T) {
 
 	idHead := add(t, cat, listing.Posting{
 		URL: "https://example.com/jobs/lh1", Title: "Head of Platform Engineering", Company: "Co",
-		Text: "job description", TextKind: listing.Plain, TextState: listing.TextFull,
+		Text: "job description", TextState: listing.TextFull,
 	})
 	add(t, cat, listing.Posting{
 		URL: "https://example.com/jobs/lh2", Title: "Lead Generation Director", Company: "Co",
-		Text: "job description", TextKind: listing.Plain, TextState: listing.TextFull,
+		Text: "job description", TextState: listing.TextFull,
 	})
 
 	ts := newTestServer(t, d)

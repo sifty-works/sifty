@@ -398,7 +398,7 @@ func TestImport_PlainTextDescription(t *testing.T) {
 	}
 
 	// Verify that catalog.Encode of the same normalized text gives identical body and hash.
-	normalized := listing.Normalize(plainText, listing.Plain)
+	normalized := listing.Normalize(importv1.PlainToHTML(plainText))
 	wantBody, wantHash, err := catalog.Encode(normalized)
 	if err != nil {
 		t.Fatalf("encode: %v", err)
@@ -444,7 +444,6 @@ func TestImport_EncodeConsistencyWithUpsert(t *testing.T) {
 		Title:     "Engineer",
 		Company:   "Alpha",
 		Text:      htmlText,
-		TextKind:  listing.HTML,
 		TextState: listing.TextFull,
 	}
 	_, outcome, err := cat.Upsert(context.Background(), p, "alpha")
@@ -886,7 +885,6 @@ func TestImport_TombstonedAddressBlocksUpsert(t *testing.T) {
 		Title:     "Removed Job",
 		Company:   "Co",
 		Text:      "text",
-		TextKind:  listing.Plain,
 		TextState: listing.TextFull,
 	}
 	_, outcome, err := cat.Upsert(context.Background(), p, "src")
@@ -1111,7 +1109,6 @@ func TestImport_NextIDAboveAll(t *testing.T) {
 		Title:     "New Job",
 		Company:   "NewCo",
 		Text:      "text",
-		TextKind:  listing.Plain,
 		TextState: listing.TextFull,
 	}
 	newID, _, err := cat.Upsert(context.Background(), p, "src")

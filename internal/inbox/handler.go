@@ -96,11 +96,19 @@ type PreviewResp struct {
 
 // RegisterRoutes registers all inbox routes on mux.
 // collectActive reports whether a collect job is queued or running.
-// sourceNames maps source keys (from config.SourceKey) to their display names.
+// getSourceNames returns the current source-key-to-display-name map; it is
+// called on each vacancy-page request so a source added while the server is
+// running is named correctly.
 // getVocabNames returns the current vocabulary's industry names; nil means no
 // vocabulary is configured and target-industry filtering is not applied.
-func RegisterRoutes(mux *http.ServeMux, database *db.DB, now func() time.Time, logger *slog.Logger, collectActive func() bool, sourceNames map[string]string, getVocabNames func() []string) {
+func RegisterRoutes(mux *http.ServeMux, database *db.DB, now func() time.Time, logger *slog.Logger, collectActive func() bool, getSourceNames func() map[string]string, getVocabNames func() []string) {
 	cat := catalog.New(database, now)
+	sourceNamesFor := func() map[string]string {
+		if getSourceNames == nil {
+			return nil
+		}
+		return getSourceNames()
+	}
 	vocabNames := func() []string {
 		if getVocabNames == nil {
 			return nil
@@ -176,7 +184,7 @@ func RegisterRoutes(mux *http.ServeMux, database *db.DB, now func() time.Time, l
 		if err != nil {
 			return VacancyView{}, err
 		}
-		return vacancyView(r.Context(), database, now, vacancyID, pid, sourceNames)
+		return vacancyView(r.Context(), database, now, vacancyID, pid, sourceNamesFor())
 	})
 
 	server.Handle(mux, "POST /api/vacancies/{id}/decision", logger, func(r *http.Request, req DecisionReq) (DecisionResp, error) {

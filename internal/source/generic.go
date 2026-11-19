@@ -93,8 +93,8 @@ func Detail(ctx context.Context, f fetch.Fetcher, p listing.Posting, s SiteConfi
 	}
 	if useBody {
 		if raw := extractBodyText(resp.Body, s.Content); raw != "" {
-			p.Text = listing.Normalize(raw, listing.HTML)
-			p.TextKind, p.TextState = listing.HTML, listing.TextFull
+			p.Text = raw
+			p.TextState = listing.TextFull
 		}
 	}
 	if tryPageTitle && p.Company == "" {
@@ -124,8 +124,8 @@ func Detail(ctx context.Context, f fetch.Fetcher, p listing.Posting, s SiteConfi
 
 func mergeDetail(p, m listing.Posting) listing.Posting {
 	if m.Text != "" {
-		p.Text = listing.Normalize(m.Text, listing.HTML)
-		p.TextKind, p.TextState = listing.HTML, listing.TextFull
+		p.Text = m.Text
+		p.TextState = listing.TextFull
 	}
 	for _, kv := range [][2]*string{{&p.Company, &m.Company}, {&p.Location, &m.Location}} {
 		if *kv[0] == "" {
@@ -254,9 +254,8 @@ func jsonldToPosting(o map[string]any, pageURL string, nItems int, keepNoURL boo
 	p := listing.Posting{URL: postURL, Title: trim(title), Company: trim(company), Location: strings.Join(uniq, ", ")}
 	if desc := ldStr(o, "description"); desc != "" {
 		p.Text = desc
-		p.TextKind = listing.HTML
 	}
-	if t, ok := parseDate(ldStr(o, "datePosted")); ok && !t.IsZero() && !t.After(time.Now()) {
+	if t, ok := parseDate(ldStr(o, "datePosted")); ok {
 		p.Published, p.PublishedBasis = t, "datePosted"
 	}
 	if t, ok := parseDate(ldStr(o, "validThrough")); ok {

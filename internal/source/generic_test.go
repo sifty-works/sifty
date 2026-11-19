@@ -69,9 +69,6 @@ func TestList_jsonld_single_maps_all_fields(t *testing.T) {
 	if p.Text == "" {
 		t.Errorf("text is empty")
 	}
-	if p.TextKind != listing.HTML {
-		t.Errorf("text kind = %v, want HTML", p.TextKind)
-	}
 	if p.TextState != listing.TextFull {
 		t.Errorf("text state = %q, want full", p.TextState)
 	}
@@ -361,9 +358,6 @@ func TestDetail_match_by_address(t *testing.T) {
 	}
 	if result.TextState != listing.TextFull {
 		t.Errorf("text state = %q, want full", result.TextState)
-	}
-	if result.TextKind != listing.HTML {
-		t.Errorf("text kind = %v, want HTML", result.TextKind)
 	}
 	if !strings.Contains(result.Text, "protocol") {
 		t.Errorf("text %q does not contain expected content", result.Text)

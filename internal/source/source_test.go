@@ -117,9 +117,6 @@ func TestFeed_RSS_maps_all_fields(t *testing.T) {
 	if p.Text != "<p>Senior Developer role at Acme.</p>" {
 		t.Errorf("text = %q", p.Text)
 	}
-	if p.TextKind != listing.HTML {
-		t.Errorf("text kind = %v, want HTML", p.TextKind)
-	}
 	if p.TextState != listing.TextFull {
 		t.Errorf("text state = %q, want full", p.TextState)
 	}
@@ -301,9 +298,6 @@ func TestGreenhouse_maps_all_fields(t *testing.T) {
 	if p.Text == "" {
 		t.Errorf("text is empty")
 	}
-	if p.TextKind != listing.EscapedHTML {
-		t.Errorf("text kind = %v, want EscapedHTML", p.TextKind)
-	}
 	if p.TextState != listing.TextFull {
 		t.Errorf("text state = %q, want full", p.TextState)
 	}
@@ -388,9 +382,6 @@ func TestLever_maps_all_fields(t *testing.T) {
 			t.Errorf("text missing %q", want)
 		}
 	}
-	if p.TextKind != listing.HTML {
-		t.Errorf("text kind = %v, want HTML", p.TextKind)
-	}
 	// Source name set → not guessed.
 	if p.CompanyGuessed {
 		t.Error("CompanyGuessed should be false when source name is set")
@@ -474,9 +465,6 @@ func TestAshby_maps_all_fields(t *testing.T) {
 	}
 	if p.Text != "<p>Join our AI research team.</p>" {
 		t.Errorf("text = %q", p.Text)
-	}
-	if p.TextKind != listing.HTML {
-		t.Errorf("text kind = %v, want HTML", p.TextKind)
 	}
 	// Source name set → not guessed.
 	if p.CompanyGuessed {

@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -103,12 +102,6 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	}
 	defer database.Close()
 
-	// 7a. Rebuild the full-text index if the database was just migrated and the
-	// index is empty. This is a one-off step; subsequent starts skip it.
-	if err := catalog.RebuildFTS(ctx, database); err != nil {
-		logger.Warn("fts rebuild failed", "err", err)
-	}
-
 	// 7b. Load the industry vocabulary.
 	vocabPath := filepath.Join(dataDir, "vocab", "industries.yaml")
 	vocab, err := industry.LoadOrDefault(vocabPath)
@@ -124,7 +117,8 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		if err != nil {
 			return fmt.Errorf("loading replay dir: %w", err)
 		}
-		fetcher = newReplayFetcher(rm, logger)
+		rm.OnMiss = func(url string) { logger.Info("replay: not recorded " + url) }
+		fetcher = rm
 	} else {
 		fetcher = fetch.New(fetch.Options{
 			Blocks:  fetch.NewDomainBlocks(database),
@@ -172,12 +166,6 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		}
 	}
 
-	// Queue the initial assign_industries job when no vacancy has been assigned
-	// yet (fresh import of an existing database).
-	if err := queueInitialAssign(ctx, database, r); err != nil {
-		logger.Warn("could not queue initial industry assignment", "err", err)
-	}
-
 	// Queue retention at start when it has not run in the last 24 hours.
 	if retentionDue(time.Now(), r) {
 		r.Enqueue(runner.Spec{Kind: "retention"}) //nolint:errcheck
@@ -198,13 +186,6 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 			}
 		}
 		return false
-	}
-
-	sourceNames := make(map[string]string, len(cfg.Sources))
-	for _, s := range cfg.Sources {
-		if key, err := config.SourceKey(s.URL); err == nil {
-			sourceNames[key] = s.Name
-		}
 	}
 
 	filesDir := filepath.Join(dataDir, "files")
@@ -253,7 +234,16 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 			}
 			return names
 		}
-		inbox.RegisterRoutes(mux, database, time.Now, logger, collectActive, sourceNames, getVocabNames)
+		inbox.RegisterRoutes(mux, database, time.Now, logger, collectActive, func() map[string]string {
+			cfg := store.Get()
+			m := make(map[string]string, len(cfg.Sources))
+			for _, s := range cfg.Sources {
+				if key, err := config.SourceKey(s.URL); err == nil {
+					m[key] = s.Name
+				}
+			}
+			return m
+		}, getVocabNames)
 		inbox.RegisterIndustryRoutes(mux, logger, getVocab, saveVocab)
 		candidate.RegisterRoutes(mux, database, filesDir, logger)
 		col.RegisterRoutes(mux)
@@ -293,24 +283,6 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		}
 		return nil
 	}
-}
-
-// replayFetcher wraps a fetchtest.Map and logs addresses not in the index.
-type replayFetcher struct {
-	m   *fetchtest.Map
-	log *slog.Logger
-}
-
-func newReplayFetcher(m *fetchtest.Map, log *slog.Logger) *replayFetcher {
-	return &replayFetcher{m: m, log: log}
-}
-
-func (r *replayFetcher) Get(ctx context.Context, u string, opt fetch.Opt) (fetch.Response, error) {
-	resp, err := r.m.Get(ctx, u, opt)
-	if errors.Is(err, fetch.ErrNotFound) {
-		r.log.Info("replay: not recorded " + u)
-	}
-	return resp, err
 }
 
 // acquireLock opens (or creates) the lock file and acquires an exclusive
@@ -356,65 +328,28 @@ func openLog(dataDir string, stderr io.Writer) (*slog.Logger, func(), error) {
 	return logger, func() { logFile.Close() }, nil
 }
 
-// queueInitialAssign enqueues one assign_industries job when every vacancy in
-// the database has an empty industries column. This handles the first start
-// after migrating a database that pre-dates the industries feature.
-func queueInitialAssign(ctx context.Context, database *db.DB, r *runner.Runner) error {
-	var total, withIndustries int
-	if err := database.QueryRowContext(ctx, `SELECT count(*) FROM vacancy`).Scan(&total); err != nil {
-		return err
-	}
-	if total == 0 {
-		return nil
-	}
-	if err := database.QueryRowContext(ctx,
-		`SELECT count(*) FROM vacancy WHERE industries != '[]'`).Scan(&withIndustries); err != nil {
-		return err
-	}
-	if withIndustries == 0 {
-		_, err := r.Enqueue(runner.Spec{Kind: "assign_industries", Subject: "", Priority: 0})
-		return err
-	}
-	return nil
-}
-
 // runRetention removes expired vacancies that have no application.
 // It permanently deletes each one using catalog.Delete so tombstone keys are
 // written, keeping those addresses away from future collection runs.
 func runRetention(ctx context.Context, j *runner.Job, cat *catalog.Catalog, log *slog.Logger, now time.Time) error {
 	cutoff := now.UTC().Add(-24 * time.Hour) // expired more than one day ago
 
-	total, err := cat.CountExpiredWithoutApplication(ctx, cutoff)
+	ids, err := cat.RetainableExpired(ctx, cutoff)
 	if err != nil {
-		return fmt.Errorf("retention: count: %w", err)
+		return fmt.Errorf("retention: load: %w", err)
 	}
-	j.Progress(0, total, "")
+	j.Progress(0, len(ids), "")
 
-	const batchSize = 200
-	done := 0
-	for {
+	for done, id := range ids {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		ids, err := cat.ExpiredWithoutApplication(ctx, cutoff, batchSize)
-		if err != nil {
-			return fmt.Errorf("retention: load: %w", err)
+		if err := cat.Delete(ctx, id); err != nil {
+			return fmt.Errorf("retention: delete %d: %w", id, err)
 		}
-		if len(ids) == 0 {
-			break
-		}
-		for _, id := range ids {
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-			if err := cat.Delete(ctx, id); err != nil {
-				return fmt.Errorf("retention: delete %d: %w", id, err)
-			}
-			done++
-			j.Progress(done, total, "")
-		}
+		j.Progress(done+1, len(ids), "")
 	}
-	log.Info("retention: removed expired vacancies", "count", done)
+	log.Info("retention: removed expired vacancies", "count", len(ids))
 	return nil
 }
 

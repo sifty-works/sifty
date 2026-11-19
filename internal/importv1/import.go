@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"html"
 	"io"
 	"net/http"
 	"net/url"
@@ -1618,22 +1619,19 @@ func encodeVacancy(j *oldJob) (listing.TextState, []byte, string, error) {
 		}
 	}
 
-	// Pick HTML or plain text.
+	// Pick HTML or plain text; plain text is converted to HTML before normalising.
 	var rawText string
-	var kind listing.Kind
 	if j.descriptionHTML.Valid && j.descriptionHTML.String != "" {
 		rawText = j.descriptionHTML.String
-		kind = listing.HTML
 	} else {
-		rawText = j.description
-		kind = listing.Plain
+		rawText = PlainToHTML(j.description)
 	}
 
 	if rawText == "" {
 		return ts, []byte{}, "", nil
 	}
 
-	normalized := listing.Normalize(rawText, kind)
+	normalized := listing.Normalize(rawText)
 	body, hash, err := catalog.Encode(normalized)
 	if err != nil {
 		return ts, nil, "", err
@@ -2833,4 +2831,83 @@ func formatReport(r *importReport) string {
 	}
 
 	return sb.String()
+}
+
+// PlainToHTML converts plain-text job descriptions from the v1 database to
+// HTML. Bullet lines become <ul><li> lists; paragraphs are wrapped in <p> tags.
+func PlainToHTML(plain string) string {
+	if plain == "" {
+		return ""
+	}
+	lines := strings.Split(strings.ReplaceAll(plain, "\r\n", "\n"), "\n")
+
+	type block struct {
+		tag   string   // "ul" or "" (paragraph)
+		lines []string // items for ul; single entry for paragraph
+	}
+
+	var blocks []block
+	var cur *block
+
+	flush := func() {
+		if cur != nil && len(cur.lines) > 0 {
+			blocks = append(blocks, *cur)
+		}
+		cur = nil
+	}
+
+	for _, line := range lines {
+		stripped := strings.TrimSpace(line)
+		if stripped == "" {
+			flush()
+			continue
+		}
+		isBullet := strings.HasPrefix(stripped, "- ") ||
+			strings.HasPrefix(stripped, "* ") ||
+			strings.HasPrefix(stripped, "• ")
+		if isBullet {
+			if cur == nil || cur.tag != "ul" {
+				flush()
+				cur = &block{tag: "ul"}
+			}
+			text := strings.TrimPrefix(stripped, "- ")
+			text = strings.TrimPrefix(text, "* ")
+			text = strings.TrimPrefix(text, "• ")
+			cur.lines = append(cur.lines, strings.TrimSpace(text))
+		} else {
+			if cur == nil {
+				cur = &block{}
+			} else if cur.tag != "" {
+				flush()
+				cur = &block{}
+			}
+			if len(cur.lines) > 0 {
+				cur.lines[len(cur.lines)-1] += " " + stripped
+			} else {
+				cur.lines = append(cur.lines, stripped)
+			}
+		}
+	}
+	flush()
+
+	var buf strings.Builder
+	for _, b := range blocks {
+		switch b.tag {
+		case "ul":
+			buf.WriteString("<ul>")
+			for _, item := range b.lines {
+				buf.WriteString("<li>")
+				buf.WriteString(html.EscapeString(item))
+				buf.WriteString("</li>")
+			}
+			buf.WriteString("</ul>")
+		default:
+			for _, para := range b.lines {
+				buf.WriteString("<p>")
+				buf.WriteString(html.EscapeString(para))
+				buf.WriteString("</p>")
+			}
+		}
+	}
+	return buf.String()
 }

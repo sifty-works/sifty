@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -156,7 +157,7 @@ func add(t *testing.T, cat *catalog.Catalog, p listing.Posting) int64 {
 func post(url, title, company string) listing.Posting {
 	return listing.Posting{
 		URL: url, Title: title, Company: company,
-		Text: "job description", TextKind: listing.Plain, TextState: listing.TextFull,
+		Text: "job description", TextState: listing.TextFull,
 	}
 }
 
@@ -185,7 +186,7 @@ func TestRows_AllFieldsPresent(t *testing.T) {
 		URL: "https://example.com/jobs/1", Title: "Backend Engineer",
 		Company: "Acme Corp", Location: "Remote · EU",
 		Published: time.Date(2026, 11, 2, 0, 0, 0, 0, time.UTC), PublishedBasis: "datePosted",
-		Text: "Full description.", TextKind: listing.Plain, TextState: listing.TextFull,
+		Text: "Full description.", TextState: listing.TextFull,
 	})
 	rs := getRows(apiGet(t, newTestServer(t, d), "/api/vacancies"))
 	if len(rs) != 1 {
@@ -250,15 +251,15 @@ func TestOrder_ThreeRanks(t *testing.T) {
 	for _, p := range []listing.Posting{
 		{URL: "https://example.com/jobs/ord1", Title: "Rank2", Company: "Co",
 			Published: time.Date(2026, 11, 10, 0, 0, 0, 0, time.UTC),
-			Text:      "job", TextKind: listing.Plain, TextState: listing.TextFull},
+			Text:      "job", TextState: listing.TextFull},
 		{URL: "https://example.com/jobs/ord2", Title: "Rank1 Newer", Company: "Co",
 			Published: time.Date(2026, 11, 5, 0, 0, 0, 0, time.UTC), PublishedBasis: "datePosted",
-			Text: "job", TextKind: listing.Plain, TextState: listing.TextFull},
+			Text: "job", TextState: listing.TextFull},
 		{URL: "https://example.com/jobs/ord3", Title: "Rank3", Company: "Co",
-			Text: "job", TextKind: listing.Plain, TextState: listing.TextFull},
+			Text: "job", TextState: listing.TextFull},
 		{URL: "https://example.com/jobs/ord4", Title: "Rank1 Older", Company: "Co",
 			Published: time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC), PublishedBasis: "datePosted",
-			Text: "job", TextKind: listing.Plain, TextState: listing.TextFull},
+			Text: "job", TextState: listing.TextFull},
 	} {
 		add(t, cat, p)
 	}
@@ -299,15 +300,15 @@ func TestSearch(t *testing.T) {
 	cat := newCat(d)
 	add(t, cat, listing.Posting{
 		URL: "https://example.com/jobs/s1", Title: "Golang Backend", Company: "Acme Corp",
-		Tags: []string{"Kubernetes"}, Text: "orchestration experience", TextKind: listing.Plain, TextState: listing.TextFull,
+		Tags: []string{"Kubernetes"}, Text: "orchestration experience", TextState: listing.TextFull,
 	})
 	add(t, cat, listing.Posting{
 		URL: "https://example.com/jobs/s2", Title: "Frontend Designer", Company: "DeepMind AI",
-		Tags: []string{"Figma"}, Text: "knowledge of color theory", TextKind: listing.Plain, TextState: listing.TextFull,
+		Tags: []string{"Figma"}, Text: "knowledge of color theory", TextState: listing.TextFull,
 	})
 	add(t, cat, listing.Posting{
 		URL: "https://example.com/jobs/s3", Title: "TypeScript Engineer", Company: "Acme",
-		Text: "Must have OBSERVABILITY and distributed tracing systems", TextKind: listing.Plain, TextState: listing.TextFull,
+		Text: "Must have OBSERVABILITY and distributed tracing systems", TextState: listing.TextFull,
 	})
 	add(t, cat, listing.Posting{
 		URL: "https://example.com/jobs/s4", Title: "Platform Engineer", Company: "Acme",
@@ -432,7 +433,7 @@ func TestExclusions_Filter(t *testing.T) {
 	add(t, cat, listing.Posting{
 		URL: "https://example.com/jobs/ex3", Title: "Staff Engineer", Company: "Widget Co",
 		ApplyURL: "https://boards.greenhouse.io/widgetboard/jobs/999",
-		Text:     "job", TextKind: listing.Plain, TextState: listing.TextFull,
+		Text:     "job", TextState: listing.TextFull,
 	})
 	ts := newTestServer(t, d)
 	rows := func() int { return len(getRows(apiGet(t, ts, "/api/vacancies"))) }
@@ -745,7 +746,7 @@ func TestDelete_RemovesVacancy(t *testing.T) {
 		URL:      "https://example.com/jobs/del1",
 		ApplyURL: "https://jobs.lever.co/co/550e8400-e29b-41d4-a716-446655440000",
 		Title:    "Role", Company: "Co",
-		Text: "job", TextKind: listing.Plain, TextState: listing.TextFull,
+		Text: "job", TextState: listing.TextFull,
 	})
 	ts := newTestServer(t, d)
 	now := time.Now().UTC().Format(time.RFC3339)
@@ -877,7 +878,7 @@ func TestVacancyView_ExpiredVacancy(t *testing.T) {
 	setProfileData(t, d, nil, []string{"description"}, nil)
 	p := listing.Posting{
 		URL: "https://example.com/jobs/exp1", Title: "R", Company: "Co",
-		Text: "job description", TextKind: listing.Plain, TextState: listing.TextFull,
+		Text: "job description", TextState: listing.TextFull,
 		Expires: time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC), // before testNow
 	}
 	id := add(t, newCat(d), p)
@@ -946,7 +947,7 @@ func TestVacancyView_Sources(t *testing.T) {
 	h := server.New(server.Options{Version: "test", Port: 9999, Logger: logger},
 		func(mux *http.ServeMux) {
 			inbox.RegisterRoutes(mux, d, testNowFn, logger, func() bool { return false },
-				map[string]string{"src": "Named Board"}, nil)
+				func() map[string]string { return map[string]string{"src": "Named Board"} }, nil)
 		})
 	ts := httptest.NewServer(h)
 	t.Cleanup(ts.Close)
@@ -976,6 +977,62 @@ func TestVacancyView_Sources(t *testing.T) {
 	}
 }
 
+// TestVacancyView_SourceNameFromLiveConfig verifies that a source added to the
+// configuration after the server starts is named on the vacancy view without
+// restarting. The getSourceNames function is called on every request.
+func TestVacancyView_SourceNameFromLiveConfig(t *testing.T) {
+	d := openTestDB(t)
+	// Source key "live-board" is not a URL, so without a name map it shows as "live-board".
+	cat := catalog.New(d, testNowFn)
+	id, _, err := cat.Upsert(context.Background(), post("https://live.example.com/jobs/1", "Staff Engineer", "LiveCo"), "live-board")
+	if err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	var mu sync.Mutex
+	names := map[string]string{}
+	h := server.New(server.Options{Version: "test", Port: 9999, Logger: logger},
+		func(mux *http.ServeMux) {
+			inbox.RegisterRoutes(mux, d, testNowFn, logger, func() bool { return false },
+				func() map[string]string {
+					mu.Lock()
+					defer mu.Unlock()
+					out := make(map[string]string, len(names))
+					for k, v := range names {
+						out[k] = v
+					}
+					return out
+				}, nil)
+		})
+	ts := httptest.NewServer(h)
+	t.Cleanup(ts.Close)
+
+	body1, _ := apiGetRaw(t, ts, fmt.Sprintf("/api/vacancies/%d?profile=1", id))
+	srcs1, _ := body1["sources"].([]any)
+	if len(srcs1) == 0 {
+		t.Fatal("sources empty on first request")
+	}
+	s1, _ := srcs1[0].(map[string]any)
+	if s1["name"] != "live-board" {
+		t.Errorf("before config update: name %q, want %q", s1["name"], "live-board")
+	}
+
+	// Add the source to the live config; the next request must pick it up.
+	mu.Lock()
+	names["live-board"] = "Live Board"
+	mu.Unlock()
+
+	body2, _ := apiGetRaw(t, ts, fmt.Sprintf("/api/vacancies/%d?profile=1", id))
+	srcs2, _ := body2["sources"].([]any)
+	if len(srcs2) == 0 {
+		t.Fatal("sources empty on second request")
+	}
+	s2, _ := srcs2[0].(map[string]any)
+	if s2["name"] != "Live Board" {
+		t.Errorf("after config update: name %q, want %q", s2["name"], "Live Board")
+	}
+}
+
 // TestVacancyView_ListingState checks that each text_state value maps to its
 // display string in the listing.state field.
 func TestVacancyView_ListingState(t *testing.T) {
@@ -992,7 +1049,7 @@ func TestVacancyView_ListingState(t *testing.T) {
 		d := openTestDB(t)
 		p := listing.Posting{
 			URL: "https://example.com/jobs/ls-" + string(tc.state), Title: "R", Company: "Co",
-			Text: "d", TextKind: listing.Plain, TextState: tc.state,
+			Text: "d", TextState: tc.state,
 		}
 		id := add(t, newCat(d), p)
 		body, _ := apiGetRaw(t, newTestServer(t, d), fmt.Sprintf("/api/vacancies/%d?profile=1", id))
@@ -1037,11 +1094,11 @@ func TestVisibility_RolesOnly(t *testing.T) {
 	setProfileData(t, d, []string{"engineer"}, nil, nil)
 	add(t, cat, listing.Posting{
 		URL: "https://example.com/jobs/ro1", Title: "Senior Engineer", Company: "Acme",
-		Text: "job description", TextKind: listing.Plain, TextState: listing.TextFull,
+		Text: "job description", TextState: listing.TextFull,
 	})
 	add(t, cat, listing.Posting{
 		URL: "https://example.com/jobs/ro2", Title: "Product Manager", Company: "Acme",
-		Text: "job description", TextKind: listing.Plain, TextState: listing.TextFull,
+		Text: "job description", TextState: listing.TextFull,
 	})
 	rs := getRows(apiGet(t, newTestServer(t, d), "/api/vacancies"))
 	if len(rs) != 1 {
@@ -1059,11 +1116,11 @@ func TestVisibility_KeywordsOnly(t *testing.T) {
 	setProfileData(t, d, nil, []string{"golang"}, nil)
 	add(t, cat, listing.Posting{
 		URL: "https://example.com/jobs/kw1", Title: "Golang Backend", Company: "Acme",
-		Text: "systems programming", TextKind: listing.Plain, TextState: listing.TextFull,
+		Text: "systems programming", TextState: listing.TextFull,
 	})
 	add(t, cat, listing.Posting{
 		URL: "https://example.com/jobs/kw2", Title: "Python Developer", Company: "Acme",
-		Text: "data science work", TextKind: listing.Plain, TextState: listing.TextFull,
+		Text: "data science work", TextState: listing.TextFull,
 	})
 	rs := getRows(apiGet(t, newTestServer(t, d), "/api/vacancies"))
 	if len(rs) != 1 {
@@ -1083,22 +1140,22 @@ func TestVisibility_RolesAndKeywords(t *testing.T) {
 	// Matches both: role "engineer" in title and keyword "backend" in title.
 	add(t, cat, listing.Posting{
 		URL: "https://example.com/jobs/rk1", Title: "Backend Engineer", Company: "Acme",
-		Text: "orchestration", TextKind: listing.Plain, TextState: listing.TextFull,
+		Text: "orchestration", TextState: listing.TextFull,
 	})
 	// Role matches, keyword does not appear anywhere.
 	add(t, cat, listing.Posting{
 		URL: "https://example.com/jobs/rk2", Title: "Frontend Engineer", Company: "Acme",
-		Text: "design systems", TextKind: listing.Plain, TextState: listing.TextFull,
+		Text: "design systems", TextState: listing.TextFull,
 	})
 	// Keyword matches by title, role does not appear anywhere.
 	add(t, cat, listing.Posting{
 		URL: "https://example.com/jobs/rk3", Title: "Backend Specialist", Company: "Acme",
-		Text: "cloud services", TextKind: listing.Plain, TextState: listing.TextFull,
+		Text: "cloud services", TextState: listing.TextFull,
 	})
 	// Neither matches.
 	add(t, cat, listing.Posting{
 		URL: "https://example.com/jobs/rk4", Title: "Product Manager", Company: "Acme",
-		Text: "roadmap planning", TextKind: listing.Plain, TextState: listing.TextFull,
+		Text: "roadmap planning", TextState: listing.TextFull,
 	})
 	rs := getRows(apiGet(t, newTestServer(t, d), "/api/vacancies"))
 	if len(rs) != 1 {
@@ -1134,17 +1191,17 @@ func TestVisibility_AllOf(t *testing.T) {
 	// Keyword "senior" and allOf term "typescript" both present in title.
 	add(t, cat, listing.Posting{
 		URL: "https://example.com/jobs/alof1", Title: "Senior TypeScript Developer", Company: "Acme",
-		Text: "frontend work", TextKind: listing.Plain, TextState: listing.TextFull,
+		Text: "frontend work", TextState: listing.TextFull,
 	})
 	// Keyword matches but allOf term absent everywhere.
 	add(t, cat, listing.Posting{
 		URL: "https://example.com/jobs/alof2", Title: "Senior Python Developer", Company: "Acme",
-		Text: "data work", TextKind: listing.Plain, TextState: listing.TextFull,
+		Text: "data work", TextState: listing.TextFull,
 	})
 	// Neither keyword nor allOf term present.
 	add(t, cat, listing.Posting{
 		URL: "https://example.com/jobs/alof3", Title: "Junior Developer", Company: "Acme",
-		Text: "learning path", TextKind: listing.Plain, TextState: listing.TextFull,
+		Text: "learning path", TextState: listing.TextFull,
 	})
 	rs := getRows(apiGet(t, newTestServer(t, d), "/api/vacancies"))
 	if len(rs) != 1 {
@@ -1165,17 +1222,17 @@ func TestVisibility_ShortTerm(t *testing.T) {
 	// "ai" appears in the title.
 	add(t, cat, listing.Posting{
 		URL: "https://example.com/jobs/sh1", Title: "AI Researcher", Company: "Acme",
-		Text: "language models", TextKind: listing.Plain, TextState: listing.TextFull,
+		Text: "language models", TextState: listing.TextFull,
 	})
 	// "ai" appears as a whole word in the body text.
 	add(t, cat, listing.Posting{
 		URL: "https://example.com/jobs/sh2", Title: "Data Scientist", Company: "Acme",
-		Text: "working with ai systems daily", TextKind: listing.Plain, TextState: listing.TextFull,
+		Text: "working with ai systems daily", TextState: listing.TextFull,
 	})
 	// "ai" appears only inside longer words; should not match.
 	add(t, cat, listing.Posting{
 		URL: "https://example.com/jobs/sh3", Title: "Engineer", Company: "Acme",
-		Text: "detail-oriented daily work", TextKind: listing.Plain, TextState: listing.TextFull,
+		Text: "detail-oriented daily work", TextState: listing.TextFull,
 	})
 	rs := getRows(apiGet(t, newTestServer(t, d), "/api/vacancies"))
 	if len(rs) != 2 {
@@ -1195,11 +1252,11 @@ func TestVisibility_PerProfileExclusion(t *testing.T) {
 	setProfileData(t, d, nil, []string{"role"}, nil)
 	add(t, cat, listing.Posting{
 		URL: "https://example.com/jobs/pe1", Title: "Restricted Role", Company: "Acme",
-		Text: "some work", TextKind: listing.Plain, TextState: listing.TextFull,
+		Text: "some work", TextState: listing.TextFull,
 	})
 	add(t, cat, listing.Posting{
 		URL: "https://example.com/jobs/pe2", Title: "Open Role", Company: "Acme",
-		Text: "other work", TextKind: listing.Plain, TextState: listing.TextFull,
+		Text: "other work", TextState: listing.TextFull,
 	})
 	// Add a word exclusion for profile 1 only (not all profiles).
 	d.Exec(`INSERT INTO exclusion (kind,value,norm,profile_id,created) VALUES ('word','restricted','restricted',1,'2026-01-01T00:00:00Z')`) //nolint:errcheck
@@ -1222,7 +1279,7 @@ func TestVisibility_DecidedVacancyStaysWhenSearchNoLongerFits(t *testing.T) {
 	setProfileData(t, d, nil, []string{"golang"}, nil)
 	id1 := add(t, cat, listing.Posting{
 		URL: "https://example.com/jobs/dv1", Title: "Golang Developer", Company: "Acme",
-		Text: "systems programming", TextKind: listing.Plain, TextState: listing.TextFull,
+		Text: "systems programming", TextState: listing.TextFull,
 	})
 	ts := newTestServer(t, d)
 	now := testNow.UTC().Format(time.RFC3339)
@@ -1258,11 +1315,11 @@ func TestVisibility_WholeWordRole(t *testing.T) {
 	setProfileData(t, d, []string{"CTO"}, nil, nil)
 	add(t, cat, listing.Posting{
 		URL: "https://example.com/jobs/wwr1", Title: "Director of Sales", Company: "Acme",
-		Text: "lead the sales team", TextKind: listing.Plain, TextState: listing.TextFull,
+		Text: "lead the sales team", TextState: listing.TextFull,
 	})
 	id2 := add(t, cat, listing.Posting{
 		URL: "https://example.com/jobs/wwr2", Title: "Interim CTO (remote)", Company: "Acme",
-		Text: "lead the engineering team", TextKind: listing.Plain, TextState: listing.TextFull,
+		Text: "lead the engineering team", TextState: listing.TextFull,
 	})
 	ts := newTestServer(t, d)
 	rs := getRows(apiGet(t, ts, "/api/vacancies"))
@@ -1280,7 +1337,7 @@ func TestVisibility_ShortTermInText(t *testing.T) {
 	setProfileData(t, d, nil, []string{"JS"}, nil)
 	id := add(t, cat, listing.Posting{
 		URL: "https://example.com/jobs/stt1", Title: "Frontend Developer", Company: "Acme",
-		Text: "Experience with JS, React, and Vue", TextKind: listing.Plain, TextState: listing.TextFull,
+		Text: "Experience with JS, React, and Vue", TextState: listing.TextFull,
 	})
 	ts := newTestServer(t, d)
 	rs := getRows(apiGet(t, ts, "/api/vacancies"))
@@ -1316,32 +1373,11 @@ func TestSearch_NormalizationInText(t *testing.T) {
 	setProfileData(t, d, nil, []string{"developer"}, nil)
 	id := add(t, cat, listing.Posting{
 		URL: "https://example.com/jobs/sni1", Title: "Backend Developer", Company: "Acme",
-		Text: "Using Node.js for server-side rendering", TextKind: listing.Plain, TextState: listing.TextFull,
+		Text: "Using Node.js for server-side rendering", TextState: listing.TextFull,
 	})
 	ts := newTestServer(t, d)
 	rs := getRows(apiGet(t, ts, "/api/vacancies?q=node.js"))
 	if len(rs) != 1 || rowID(rs[0]) != float64(id) {
 		t.Errorf("search normalisation: rows %d, want 1 with id %d", len(rs), id)
-	}
-}
-
-// TestVisibility_IndexRebuilt checks that vacancies added before the FTS table
-// was cleared are still found after catalog.RebuildFTS restores the index.
-func TestVisibility_IndexRebuilt(t *testing.T) {
-	d := openTestDB(t)
-	cat := newCat(d)
-	setProfileData(t, d, nil, []string{"developer"}, nil)
-	id := add(t, cat, listing.Posting{
-		URL: "https://example.com/jobs/ir1", Title: "Frontend Developer", Company: "Acme",
-		TextState: listing.TextNotFetched,
-	})
-	d.Exec(`DELETE FROM vacancy_fts`) //nolint:errcheck
-	if err := catalog.RebuildFTS(context.Background(), d); err != nil {
-		t.Fatalf("RebuildFTS: %v", err)
-	}
-	ts := newTestServer(t, d)
-	rs := getRows(apiGet(t, ts, "/api/vacancies"))
-	if len(rs) != 1 || rowID(rs[0]) != float64(id) {
-		t.Errorf("after rebuild: rows %d, want 1 with id %d", len(rs), id)
 	}
 }

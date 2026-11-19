@@ -2,7 +2,6 @@ package source
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/url"
 	"strings"
@@ -23,13 +22,9 @@ func (s *ashbySource) List(ctx context.Context, f fetch.Fetcher, cfg SiteConfig)
 		return nil, ErrNothingRecognised
 	}
 	apiURL := fmt.Sprintf("https://%s/posting-api/job-board/%s?includeCompensation=true", Host(boardURL), boardSlug(boardURL))
-	resp, err := f.Get(ctx, apiURL, fetch.Opt{})
-	if err != nil {
-		return nil, err
-	}
 	var body ashbyResponse
-	if err := json.Unmarshal(resp.Body, &body); err != nil {
-		return nil, ErrNothingRecognised
+	if err := fetchJSON(ctx, f, apiURL, &body); err != nil {
+		return nil, err
 	}
 	company := trim(cfg.Name)
 	guessed := company == ""
@@ -63,7 +58,6 @@ func (s *ashbySource) List(ctx context.Context, f fetch.Fetcher, cfg SiteConfig)
 			Tags:           []string{job.Department, job.Team},
 			Fields:         setFields("employment_type", job.EmploymentType, "salary", salary),
 			Text:           job.DescriptionHTML,
-			TextKind:       listing.HTML,
 		}
 		if pub, ok := parseDate(job.PublishedAt); ok {
 			p.Published = pub

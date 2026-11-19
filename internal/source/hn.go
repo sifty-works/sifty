@@ -2,7 +2,6 @@ package source
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/url"
 	"strings"
@@ -29,13 +28,9 @@ type hnComment struct {
 }
 
 func (s *hnSource) List(ctx context.Context, f fetch.Fetcher, cfg SiteConfig) ([]listing.Posting, error) {
-	r1, err := f.Get(ctx, "https://hn.algolia.com/api/v1/search_by_date?tags=story,author_whoishiring&hitsPerPage=5", fetch.Opt{})
-	if err != nil {
-		return nil, err
-	}
 	var sr hnSearchResult
-	if json.Unmarshal(r1.Body, &sr) != nil {
-		return nil, ErrNothingRecognised
+	if err := fetchJSON(ctx, f, "https://hn.algolia.com/api/v1/search_by_date?tags=story,author_whoishiring&hitsPerPage=5", &sr); err != nil {
+		return nil, err
 	}
 	var storyID string
 	for _, h := range sr.Hits {
@@ -47,13 +42,9 @@ func (s *hnSource) List(ctx context.Context, f fetch.Fetcher, cfg SiteConfig) ([
 	if storyID == "" {
 		return nil, ErrNothingRecognised
 	}
-	r2, err := f.Get(ctx, "https://hn.algolia.com/api/v1/items/"+storyID, fetch.Opt{})
-	if err != nil {
-		return nil, err
-	}
 	var item hnComment
-	if json.Unmarshal(r2.Body, &item) != nil {
-		return nil, ErrNothingRecognised
+	if err := fetchJSON(ctx, f, "https://hn.algolia.com/api/v1/items/"+storyID, &item); err != nil {
+		return nil, err
 	}
 	var out []listing.Posting
 	for _, c := range item.Children {
@@ -98,7 +89,7 @@ func hnCommentToPosting(c *hnComment) (listing.Posting, bool) {
 	p := listing.Posting{
 		URL:     fmt.Sprintf("https://news.ycombinator.com/item?id=%d", c.ID),
 		Company: company, Title: title, Location: loc,
-		Text: listing.Normalize(c.Text, listing.HTML), TextKind: listing.HTML,
+		Text: c.Text,
 	}
 	if t, ok := parseDate(c.CreatedAt); ok {
 		p.Published, p.PublishedBasis = t, "created_at"

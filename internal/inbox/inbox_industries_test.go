@@ -63,7 +63,7 @@ func TestRows_IndustriesField(t *testing.T) {
 	setProfileData(t, d, nil, []string{"description"}, nil)
 	id := add(t, cat, listing.Posting{
 		URL: "https://example.com/jobs/1", Title: "Blockchain Developer",
-		Text: "job description", TextKind: listing.Plain, TextState: listing.TextFull,
+		Text: "job description", TextState: listing.TextFull,
 	})
 	setVacancyIndustries(t, d, id, []string{"Web3", "Security"})
 
@@ -335,7 +335,7 @@ func TestVacancyPage_IndustriesField(t *testing.T) {
 
 	id := add(t, cat, listing.Posting{
 		URL: "https://example.com/jobs/1", Title: "Blockchain Developer",
-		Text: "job description", TextKind: listing.Plain, TextState: listing.TextFull,
+		Text: "job description", TextState: listing.TextFull,
 	})
 	setVacancyIndustries(t, d, id, []string{"Web3"})
 
@@ -483,10 +483,10 @@ func TestImport_IndustriesAssigned(t *testing.T) {
 	cat := newCat(d) // no assign, so industries stay []
 
 	id := add(t, cat, listing.Posting{
-		URL:       "https://example.com/jobs/88",
-		Title:     "Solidity developer",
-		Text:      "Write smart contract code using solidity.",
-		TextKind:  listing.Plain,
+		URL:   "https://example.com/jobs/88",
+		Title: "Solidity developer",
+		Text:  "Write smart contract code using solidity.",
+
 		TextState: listing.TextFull,
 	})
 

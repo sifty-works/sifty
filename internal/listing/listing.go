@@ -4,16 +4,6 @@ package listing
 
 import "time"
 
-// Kind describes the format of the raw text in a Posting.
-type Kind int
-
-const (
-	HTML        Kind = iota // HTML markup
-	EscapedHTML             // HTML-escaped markup (e.g. &lt;p&gt;)
-	Markdown                // Markdown
-	Plain                   // plain text
-)
-
 // TextState describes the state of a vacancy's text.
 type TextState string
 
@@ -45,7 +35,6 @@ type Posting struct {
 	Expires        time.Time
 
 	Text      string
-	TextKind  Kind
 	TextState TextState
 
 	// Requested is set by the collector when source.Detail was called for this

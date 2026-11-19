@@ -42,7 +42,7 @@ type Source interface {
     List(ctx context.Context, f Fetcher, s SiteConfig) ([]Posting, error)
 }
 func Detail(ctx context.Context, f Fetcher, p Posting, s SiteConfig) (Posting, error) // fills text; only called where the listing has none
-func Normalize(raw string, kind Kind) string                    // the only path from any input to stored HTML
+func Normalize(raw string) string                               // the only path from any raw HTML to stored HTML
 func (c *Catalog) Upsert(ctx context.Context, p Posting, src string) (int64, Outcome, error) // New|Updated|Unchanged|Merged|Tombstoned, one transaction
 ```
 

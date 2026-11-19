@@ -1,12 +1,10 @@
 package listing
 
 import (
-	"bytes"
 	"html"
 	"strings"
 	"unicode"
 
-	"github.com/yuin/goldmark"
 	xhtml "golang.org/x/net/html"
 	"golang.org/x/net/html/atom"
 )
@@ -37,7 +35,7 @@ func FTSNorm(s string) string {
 	return b.String()
 }
 
-// Normalize converts raw vacancy text of the given Kind into sanitised HTML.
+// Normalize converts raw HTML vacancy text into sanitised HTML.
 //
 // Output is limited to h2 h3 h4 p ul ol li strong em br elements, with no
 // attributes. Scripts, styles, HTML comments and their content are removed.
@@ -54,21 +52,8 @@ func FTSNorm(s string) string {
 // A paragraph whose entire text (bold or not, with or without a trailing
 // colon) is a known section heading is promoted to h3. Empty elements are
 // removed. The output is deterministic.
-func Normalize(raw string, kind Kind) string {
-	var htmlIn string
-	switch kind {
-	case HTML:
-		htmlIn = raw
-	case EscapedHTML:
-		htmlIn = html.UnescapeString(raw)
-	case Markdown:
-		htmlIn = markdownToHTML(raw)
-	case Plain:
-		htmlIn = plainToHTML(raw)
-	default:
-		htmlIn = raw
-	}
-	return sanitise(htmlIn)
+func Normalize(raw string) string {
+	return sanitise(raw)
 }
 
 // PlainText returns the plain text of sanitised HTML. Block elements are
@@ -94,15 +79,6 @@ func PlainText(h string) string {
 	return text
 }
 
-// markdownToHTML converts Markdown to HTML using goldmark.
-func markdownToHTML(md string) string {
-	var buf bytes.Buffer
-	if err := goldmark.Convert([]byte(md), &buf); err != nil {
-		return md
-	}
-	return buf.String()
-}
-
 // headingSet returns a lowercase lookup set for the known section headings.
 func headingSet() map[string]bool {
 	hset := make(map[string]bool, len(headings))
@@ -110,95 +86,6 @@ func headingSet() map[string]bool {
 		hset[strings.ToLower(h)] = true
 	}
 	return hset
-}
-
-// plainToHTML converts plain text to HTML.
-// Blank lines separate paragraphs. Lines starting with -, * or • start list
-// items. A line whose text (stripped of a trailing colon) is a known section
-// heading becomes its own paragraph; sanitise will promote it to h3.
-func plainToHTML(plain string) string {
-	hset := headingSet()
-	lines := strings.Split(strings.ReplaceAll(plain, "\r\n", "\n"), "\n")
-
-	type block struct {
-		tag   string   // "ul" or "" (paragraph)
-		lines []string // items for ul; single entry for paragraph
-	}
-
-	var blocks []block
-	var cur *block
-
-	flush := func() {
-		if cur != nil && len(cur.lines) > 0 {
-			blocks = append(blocks, *cur)
-		}
-		cur = nil
-	}
-
-	isHeadingLine := func(s string) bool {
-		s = strings.TrimSuffix(strings.TrimSpace(s), ":")
-		return hset[strings.ToLower(strings.TrimSpace(s))]
-	}
-
-	for _, line := range lines {
-		stripped := strings.TrimSpace(line)
-		if stripped == "" {
-			flush()
-			continue
-		}
-		isBullet := strings.HasPrefix(stripped, "- ") ||
-			strings.HasPrefix(stripped, "* ") ||
-			strings.HasPrefix(stripped, "• ")
-		if isBullet {
-			if cur == nil || cur.tag != "ul" {
-				flush()
-				cur = &block{tag: "ul"}
-			}
-			text := strings.TrimPrefix(stripped, "- ")
-			text = strings.TrimPrefix(text, "* ")
-			text = strings.TrimPrefix(text, "• ")
-			cur.lines = append(cur.lines, strings.TrimSpace(text))
-		} else if isHeadingLine(stripped) {
-			flush()
-			heading := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(stripped), ":"))
-			// Output as <p>; sanitise promotes it to <h3> via block flattening.
-			blocks = append(blocks, block{tag: "", lines: []string{heading}})
-		} else {
-			if cur == nil {
-				cur = &block{}
-			} else if cur.tag != "" {
-				flush()
-				cur = &block{}
-			}
-			if len(cur.lines) > 0 {
-				cur.lines[len(cur.lines)-1] += " " + stripped
-			} else {
-				cur.lines = append(cur.lines, stripped)
-			}
-		}
-	}
-	flush()
-
-	var buf strings.Builder
-	for _, b := range blocks {
-		switch b.tag {
-		case "ul":
-			buf.WriteString("<ul>")
-			for _, item := range b.lines {
-				buf.WriteString("<li>")
-				buf.WriteString(html.EscapeString(item))
-				buf.WriteString("</li>")
-			}
-			buf.WriteString("</ul>")
-		default:
-			for _, para := range b.lines {
-				buf.WriteString("<p>")
-				buf.WriteString(html.EscapeString(para))
-				buf.WriteString("</p>")
-			}
-		}
-	}
-	return buf.String()
 }
 
 // sanitise parses HTML and returns cleaned output.

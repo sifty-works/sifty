@@ -311,13 +311,14 @@ func (c *Collector) buildStatusExtra() server.StatusExtra {
 	c.mu.Unlock()
 
 	cfg := c.store.Get()
+	needsAttn := c.attentionSources()
 	var attentionCount int
 	for _, s := range cfg.Sources {
 		if !s.Enabled {
 			continue
 		}
 		key, _ := config.SourceKey(s.URL)
-		if needsAttention(c.querySourceRuns(key)) {
+		if needsAttn[key] {
 			attentionCount++
 		}
 	}
@@ -526,6 +527,24 @@ func (c *Collector) querySourceRuns(key string) []sourceRunRec {
 		}
 		r.started, _ = time.Parse(time.RFC3339, startedStr)
 		out = append(out, r)
+	}
+	return out
+}
+
+// attentionSources returns the set of source keys whose last three runs
+// (at least three) all ended in error or empty.
+func (c *Collector) attentionSources() map[string]bool {
+	rows, err := c.db.Query(`SELECT source FROM (SELECT source, status, ROW_NUMBER() OVER (PARTITION BY source ORDER BY started DESC) rn FROM source_run) WHERE rn<=3 GROUP BY source HAVING COUNT(*)=3 AND SUM(status='ok')=0`)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	out := make(map[string]bool)
+	for rows.Next() {
+		var key string
+		if rows.Scan(&key) == nil {
+			out[key] = true
+		}
 	}
 	return out
 }

@@ -3,6 +3,7 @@ package source
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/url"
 	"strings"
@@ -15,6 +16,19 @@ import (
 // ErrNothingRecognised is returned when a feed or page is not in a recognised format.
 // User text: "Nothing recognised on the page".
 var ErrNothingRecognised = errors.New("nothing recognised on the page")
+
+// fetchJSON fetches apiURL and unmarshals the JSON body into dst.
+// It returns ErrNothingRecognised when the body is not valid JSON.
+func fetchJSON(ctx context.Context, f fetch.Fetcher, apiURL string, dst any) error {
+	resp, err := f.Get(ctx, apiURL, fetch.Opt{})
+	if err != nil {
+		return err
+	}
+	if err := json.Unmarshal(resp.Body, dst); err != nil {
+		return ErrNothingRecognised
+	}
+	return nil
+}
 
 // Attr selects page elements by attribute substring: every element whose named
 // attribute value contains Substr, in document order.

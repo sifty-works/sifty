@@ -31,7 +31,6 @@ func expiryPosting(url string, expires time.Time) listing.Posting {
 		Title:     "Data Engineer",
 		Company:   "RetentionCo",
 		Text:      "Job description.",
-		TextKind:  listing.Plain,
 		TextState: listing.TextFull,
 		Expires:   expires,
 	}

@@ -2,7 +2,6 @@ package source
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"html"
 	"net/url"
@@ -30,13 +29,9 @@ func (s *leverSource) List(ctx context.Context, f fetch.Fetcher, cfg SiteConfig)
 	}
 	site := boardSlug(boardURL)
 	apiURL := "https://" + Host(boardURL) + "/v0/postings/" + site + "?mode=json"
-	resp, err := f.Get(ctx, apiURL, fetch.Opt{})
-	if err != nil {
-		return nil, err
-	}
 	var body []lvPosting
-	if err := json.Unmarshal(resp.Body, &body); err != nil {
-		return nil, ErrNothingRecognised
+	if err := fetchJSON(ctx, f, apiURL, &body); err != nil {
+		return nil, err
 	}
 	company := trim(cfg.Name)
 	guessed := company == ""
@@ -82,7 +77,6 @@ func (s *leverSource) List(ctx context.Context, f fetch.Fetcher, cfg SiteConfig)
 			Tags:           []string{post.Categories.Team, post.Categories.Department},
 			Fields:         setFields("employment_type", post.Categories.Commitment, "workplace_type", post.WorkplaceType, "salary", salary),
 			Text:           tb.String(),
-			TextKind:       listing.HTML,
 		}
 		if post.CreatedAt > 0 {
 			p.Published = time.UnixMilli(post.CreatedAt).UTC()

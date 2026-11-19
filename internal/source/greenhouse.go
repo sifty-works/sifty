@@ -2,8 +2,8 @@ package source
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"html"
 	"net/url"
 	"strings"
 
@@ -29,13 +29,9 @@ func (s *greenhouseSource) List(ctx context.Context, f fetch.Fetcher, cfg SiteCo
 	}
 	board := boardSlug(boardURL)
 	apiURL := "https://" + Host(boardURL) + "/v1/boards/" + board + "/jobs?content=true"
-	resp, err := f.Get(ctx, apiURL, fetch.Opt{})
-	if err != nil {
-		return nil, err
-	}
 	var body ghResponse
-	if err := json.Unmarshal(resp.Body, &body); err != nil {
-		return nil, ErrNothingRecognised
+	if err := fetchJSON(ctx, f, apiURL, &body); err != nil {
+		return nil, err
 	}
 	boardCompany := trim(body.Company.Name)
 	if boardCompany == "" {
@@ -62,8 +58,7 @@ func (s *greenhouseSource) List(ctx context.Context, f fetch.Fetcher, cfg SiteCo
 			CompanyGuessed: companyGuessed,
 			Location:       job.Location.Name,
 			Tags:           tags,
-			Text:           job.Content,
-			TextKind:       listing.EscapedHTML,
+			Text:           html.UnescapeString(job.Content),
 		}
 		if pub, ok := parseDate(job.FirstPublished); ok {
 			p.Published = pub

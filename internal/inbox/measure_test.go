@@ -89,8 +89,8 @@ func buildFixtureDB(t *testing.T) *db.DB {
 			Published:      time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC).AddDate(0, 0, -(i % 90)),
 			PublishedBasis: "datePosted",
 			Text:           body,
-			TextKind:       listing.HTML,
-			TextState:      listing.TextFull,
+
+			TextState: listing.TextFull,
 		}
 		if _, _, err := cat.Upsert(context.Background(), p, "measure"); err != nil {
 			t.Fatalf("upsert vacancy %d: %v", i, err)

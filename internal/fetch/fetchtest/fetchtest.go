@@ -22,9 +22,13 @@ type MapEntry struct {
 }
 
 // Map is a Fetcher that answers from an in-memory map of URL → entry.
-// A missing URL returns fetch.ErrNotFound.
+// A missing URL returns fetch.ErrNotFound and calls OnMiss when it is set.
 // Requests records every URL passed to Get, in order.
 type Map struct {
+	// OnMiss is called with the URL when a Get request finds no entry.
+	// It is called with the Map's lock released, so it may call Set safely.
+	OnMiss func(url string)
+
 	mu       sync.Mutex
 	entries  map[string]MapEntry
 	requests []string
@@ -44,12 +48,18 @@ func (m *Map) Set(url string, entry MapEntry) {
 
 // Get implements fetch.Fetcher. It records the URL in Requests and applies
 // fetch.StatusError so a recorded 403 or challenge page returns ErrBlocked.
+// When no entry exists and OnMiss is set, Get calls OnMiss before returning
+// fetch.ErrNotFound.
 func (m *Map) Get(_ context.Context, url string, _ fetch.Opt) (fetch.Response, error) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	m.requests = append(m.requests, url)
 	e, ok := m.entries[url]
+	onMiss := m.OnMiss
+	m.mu.Unlock()
 	if !ok {
+		if onMiss != nil {
+			onMiss(url)
+		}
 		return fetch.Response{}, fetch.ErrNotFound
 	}
 	if e.Err != nil {

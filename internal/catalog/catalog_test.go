@@ -40,7 +40,6 @@ func posting(rawURL, title, company string) listing.Posting {
 		Title:     title,
 		Company:   company,
 		Text:      "Full text of the vacancy.",
-		TextKind:  listing.Plain,
 		TextState: listing.TextFull,
 	}
 }
@@ -103,9 +102,8 @@ func TestUpsert_MatchedByAddress(t *testing.T) {
 	// Different text: OutcomeUpdated, version increments.
 	p1 := posting("https://example.com/jobs/12", "Engineer", "Acme")
 	id1, _, _ := cat.Upsert(context.Background(), p1, "src")
-	p1b := p1
-	p1b.Text = "Different content here."
-	_, out1, err := cat.Upsert(context.Background(), p1b, "src")
+	p1.Text = "Different content here."
+	_, out1, err := cat.Upsert(context.Background(), p1, "src")
 	if err != nil {
 		t.Fatalf("text update upsert: %v", err)
 	}
@@ -113,8 +111,7 @@ func TestUpsert_MatchedByAddress(t *testing.T) {
 		t.Errorf("text update outcome: got %v, want OutcomeUpdated", out1)
 	}
 	var version int
-	d.QueryRow(`SELECT version FROM vacancy WHERE id = ?`, id1).Scan(&version) //nolint:errcheck
-	if version != 2 {
+	if d.QueryRow(`SELECT version FROM vacancy WHERE id = ?`, id1).Scan(&version); version != 2 { //nolint:errcheck
 		t.Errorf("version: got %d, want 2", version)
 	}
 
@@ -122,11 +119,10 @@ func TestUpsert_MatchedByAddress(t *testing.T) {
 	p2 := posting("https://example.com/jobs/14", "Old Title", "Acme")
 	p2.Fields = map[string]string{"salary": "100k", "type": "full-time"}
 	id2, _, _ := cat.Upsert(context.Background(), p2, "src")
-	p2b := p2
-	p2b.Title = "New Title"
-	p2b.Company = "" // empty (no company known); original named company should stay
-	p2b.Fields = map[string]string{"salary": "120k", "remote": "yes"}
-	cat.Upsert(context.Background(), p2b, "src") //nolint:errcheck
+	p2.Title = "New Title"
+	p2.Company = "" // empty (no company known); original named company should stay
+	p2.Fields = map[string]string{"salary": "120k", "remote": "yes"}
+	cat.Upsert(context.Background(), p2, "src") //nolint:errcheck
 	var title, company, fields string
 	d.QueryRow(`SELECT title, company, source_fields FROM vacancy WHERE id = ?`, id2).
 		Scan(&title, &company, &fields) //nolint:errcheck
@@ -189,17 +185,15 @@ func TestUpsert_MatchedByApplyAddress(t *testing.T) {
 		t.Error("outcome: should not be OutcomeNew")
 	}
 	// A board posting whose URL is the ATS canonical of another posting's ApplyURL also matches.
-	{
-		ats := "https://jobs.ashbyhq.com/acme/550e8400-e29b-41d4-a716-446655440000"
-		cat2 := catalog.New(openTestDB(t), fixedNow())
-		agg := posting("https://aggregator.example/jobs/9", "Platform Engineer", "Acme")
-		agg.ApplyURL = ats + "/application"
-		id1, _, _ := cat2.Upsert(context.Background(), agg, "agg")
-		board := posting(ats, "Platform Engineer", "acme")
-		id2, out, err := cat2.Upsert(context.Background(), board, "board")
-		if err != nil || id2 != id1 || out == catalog.OutcomeNew {
-			t.Fatalf("board posting: id %d (want %d), outcome %v, err %v", id2, id1, out, err)
-		}
+	ats := "https://jobs.ashbyhq.com/acme/550e8400-e29b-41d4-a716-446655440000"
+	cat2 := catalog.New(openTestDB(t), fixedNow())
+	agg := posting("https://aggregator.example/jobs/9", "Platform Engineer", "Acme")
+	agg.ApplyURL = ats + "/application"
+	atsID1, _, _ := cat2.Upsert(context.Background(), agg, "agg")
+	board := posting(ats, "Platform Engineer", "acme")
+	atsID2, atsOut, atsErr := cat2.Upsert(context.Background(), board, "board")
+	if atsErr != nil || atsID2 != atsID1 || atsOut == catalog.OutcomeNew {
+		t.Fatalf("board posting: id %d (want %d), outcome %v, err %v", atsID2, atsID1, atsOut, atsErr)
 	}
 }
 
@@ -303,26 +297,22 @@ func TestUpsert_TextReplacement(t *testing.T) {
 			t.Errorf("%s: outcome %v, want %v", tc.url, out, tc.wantOut)
 		}
 		var state string
-		d.QueryRow(`SELECT text_state FROM vacancy WHERE id = ?`, id).Scan(&state) //nolint:errcheck
-		if state != "full" {
+		if d.QueryRow(`SELECT text_state FROM vacancy WHERE id = ?`, id).Scan(&state); state != "full" { //nolint:errcheck
 			t.Errorf("%s: text_state %q, want full", tc.url, state)
 		}
 	}
 	// A whitespace-only difference after normalization keeps the version.
-	{
-		d2 := openTestDB(t)
-		p := posting("https://example.com/jobs/u31", "Analyst", "Acme")
-		p.Text, p.TextKind, p.TextState = "<p>Headquarters:</p><p>Remote</p>", listing.HTML, listing.TextFull
-		id, _, _ := catalog.New(d2, fixedNow()).Upsert(context.Background(), p, "src")
-		p.Text = "<p>Headquarters: Remote</p>"
-		if _, out, _ := catalog.New(d2, fixedNow()).Upsert(context.Background(), p, "src"); out != catalog.OutcomeUnchanged {
-			t.Fatalf("whitespace-only change: outcome %v, want Unchanged", out)
-		}
-		var v int
-		d2.QueryRow(`SELECT version FROM vacancy WHERE id = ?`, id).Scan(&v) //nolint:errcheck
-		if v != 1 {
-			t.Fatalf("whitespace-only change: version %d, want 1", v)
-		}
+	d2 := openTestDB(t)
+	pw := posting("https://example.com/jobs/u31", "Analyst", "Acme")
+	pw.Text, pw.TextState = "<p>Headquarters:</p><p>Remote</p>", listing.TextFull
+	idw, _, _ := catalog.New(d2, fixedNow()).Upsert(context.Background(), pw, "src")
+	pw.Text = "<p>Headquarters: Remote</p>"
+	if _, out, _ := catalog.New(d2, fixedNow()).Upsert(context.Background(), pw, "src"); out != catalog.OutcomeUnchanged {
+		t.Fatalf("whitespace-only change: outcome %v, want Unchanged", out)
+	}
+	var v int
+	if d2.QueryRow(`SELECT version FROM vacancy WHERE id = ?`, idw).Scan(&v); v != 1 { //nolint:errcheck
+		t.Fatalf("whitespace-only change: version %d, want 1", v)
 	}
 }
 
@@ -339,17 +329,14 @@ func TestUpsert_PublicationDateRules(t *testing.T) {
 	p1.PublishedBasis = "datePosted"
 	id1, _, _ := cat.Upsert(context.Background(), p1, "src")
 	var pubAt, pubBasis string
-	d.QueryRow(`SELECT published_at, published_basis FROM vacancy WHERE id = ?`, id1).Scan(&pubAt, &pubBasis) //nolint:errcheck
-	if pubAt == "" || pubBasis != "datePosted" {
+	if d.QueryRow(`SELECT published_at, published_basis FROM vacancy WHERE id = ?`, id1).Scan(&pubAt, &pubBasis); pubAt == "" || pubBasis != "datePosted" { //nolint:errcheck
 		t.Errorf("published_at=%q basis=%q", pubAt, pubBasis)
 	}
-	p1b := p1
-	p1b.Published = time.Date(2024, 1, 20, 0, 0, 0, 0, time.UTC)
-	p1b.PublishedBasis = "pubDate"
-	cat.Upsert(context.Background(), p1b, "src") //nolint:errcheck
+	p1.Published = time.Date(2024, 1, 20, 0, 0, 0, 0, time.UTC)
+	p1.PublishedBasis = "pubDate"
+	cat.Upsert(context.Background(), p1, "src") //nolint:errcheck
 	var pubAt2 string
-	d.QueryRow(`SELECT published_at FROM vacancy WHERE id = ?`, id1).Scan(&pubAt2) //nolint:errcheck
-	if pubAt2 != pubAt {
+	if d.QueryRow(`SELECT published_at FROM vacancy WHERE id = ?`, id1).Scan(&pubAt2); pubAt2 != pubAt { //nolint:errcheck
 		t.Errorf("date replaced: %q → %q", pubAt, pubAt2)
 	}
 	// Future date is not stored.
@@ -357,20 +344,17 @@ func TestUpsert_PublicationDateRules(t *testing.T) {
 	p2.Published = future
 	id2, _, _ := cat.Upsert(context.Background(), p2, "src")
 	var pubAt3 string
-	d.QueryRow(`SELECT published_at FROM vacancy WHERE id = ?`, id2).Scan(&pubAt3) //nolint:errcheck
-	if pubAt3 != "" {
+	if d.QueryRow(`SELECT published_at FROM vacancy WHERE id = ?`, id2).Scan(&pubAt3); pubAt3 != "" { //nolint:errcheck
 		t.Errorf("future date stored: %q", pubAt3)
 	}
 	// Expiry is not cleared when posting has no expiry.
 	p3 := posting("https://example.com/jobs/33", "Engineer", "Acme")
 	p3.Expires = time.Date(2025, 3, 1, 0, 0, 0, 0, time.UTC)
 	id3, _, _ := cat.Upsert(context.Background(), p3, "src")
-	p3b := p3
-	p3b.Expires = time.Time{}
-	cat.Upsert(context.Background(), p3b, "src") //nolint:errcheck
+	p3.Expires = time.Time{}
+	cat.Upsert(context.Background(), p3, "src") //nolint:errcheck
 	var exp string
-	d.QueryRow(`SELECT expires_at FROM vacancy WHERE id = ?`, id3).Scan(&exp) //nolint:errcheck
-	if exp == "" {
+	if d.QueryRow(`SELECT expires_at FROM vacancy WHERE id = ?`, id3).Scan(&exp); exp == "" { //nolint:errcheck
 		t.Error("expires_at cleared when posting had no expiry")
 	}
 }
@@ -392,8 +376,7 @@ func TestUpsert_TombstonedURLIsRejected(t *testing.T) {
 		t.Errorf("url tombstone: got %v, want OutcomeTombstoned", outcome)
 	}
 	var count int
-	d.QueryRow(`SELECT count(*) FROM vacancy`).Scan(&count) //nolint:errcheck
-	if count != 0 {
+	if d.QueryRow(`SELECT count(*) FROM vacancy`).Scan(&count); count != 0 { //nolint:errcheck
 		t.Errorf("vacancy count: got %d, want 0", count)
 	}
 
@@ -419,12 +402,10 @@ func TestUpsert_ApplyURLRules(t *testing.T) {
 	// Apply URL is set when it was previously empty.
 	p1 := posting("https://example.com/jobs/70", "Engineer", "Acme")
 	id1, _, _ := cat.Upsert(context.Background(), p1, "src")
-	p1b := p1
-	p1b.ApplyURL = "https://jobs.lever.co/acme/550e8400-e29b-41d4-a716-446655440000"
-	cat.Upsert(context.Background(), p1b, "src") //nolint:errcheck
+	p1.ApplyURL = "https://jobs.lever.co/acme/550e8400-e29b-41d4-a716-446655440000"
+	cat.Upsert(context.Background(), p1, "src") //nolint:errcheck
 	var got1 string
-	d.QueryRow(`SELECT apply_url FROM vacancy WHERE id = ?`, id1).Scan(&got1) //nolint:errcheck
-	if got1 == "" {
+	if d.QueryRow(`SELECT apply_url FROM vacancy WHERE id = ?`, id1).Scan(&got1); got1 == "" { //nolint:errcheck
 		t.Error("apply_url: should be set after update")
 	}
 	// Apply URL is not overwritten when already set.
@@ -432,12 +413,10 @@ func TestUpsert_ApplyURLRules(t *testing.T) {
 	p2 := posting("https://example.com/jobs/71", "Engineer", "Acme")
 	p2.ApplyURL = orig
 	id2, _, _ := cat.Upsert(context.Background(), p2, "src")
-	p2b := p2
-	p2b.ApplyURL = "https://jobs.lever.co/acme/770e8400-e29b-41d4-a716-446655440002"
-	cat.Upsert(context.Background(), p2b, "src") //nolint:errcheck
+	p2.ApplyURL = "https://jobs.lever.co/acme/770e8400-e29b-41d4-a716-446655440002"
+	cat.Upsert(context.Background(), p2, "src") //nolint:errcheck
 	var got2 string
-	d.QueryRow(`SELECT apply_url FROM vacancy WHERE id = ?`, id2).Scan(&got2) //nolint:errcheck
-	if got2 != orig {
+	if d.QueryRow(`SELECT apply_url FROM vacancy WHERE id = ?`, id2).Scan(&got2); got2 != orig { //nolint:errcheck
 		t.Errorf("apply_url overwritten: got %q, want %q", got2, orig)
 	}
 	// An apply address that is not one concrete ATS vacancy is not kept.
@@ -445,8 +424,7 @@ func TestUpsert_ApplyURLRules(t *testing.T) {
 	p3.ApplyURL = "https://apply.acmecorp.example/"
 	id3, _, _ := cat.Upsert(context.Background(), p3, "src")
 	var got3 string
-	d.QueryRow(`SELECT apply_url FROM vacancy WHERE id = ?`, id3).Scan(&got3) //nolint:errcheck
-	if got3 != "" {
+	if d.QueryRow(`SELECT apply_url FROM vacancy WHERE id = ?`, id3).Scan(&got3); got3 != "" { //nolint:errcheck
 		t.Errorf("apply_url kept for a non-ATS address: %q", got3)
 	}
 }
@@ -521,10 +499,10 @@ func TestUpsert_MergeTransfersBestText(t *testing.T) {
 	d := openTestDB(t)
 	cat := catalog.New(d, fixedNow())
 	lowP := listing.Posting{URL: "https://c.io/j1", Title: "AI Dev", Company: "C",
-		Text: "Brief.", TextKind: listing.Plain, TextState: listing.TextSummary}
+		Text: "Brief.", TextState: listing.TextSummary}
 	idLow, _, _ := cat.Upsert(context.Background(), lowP, "s1")
 	highP := listing.Posting{URL: "https://c.io/j2", Title: "AI Dev", Company: "C",
-		Text: "Full text.", TextKind: listing.Plain, TextState: listing.TextFull}
+		Text: "Full text.", TextState: listing.TextFull}
 	idHigh, _, _ := cat.Upsert(context.Background(), highP, "s2")
 	if idHigh <= idLow {
 		t.Fatal("expected idHigh > idLow")
@@ -536,8 +514,7 @@ func TestUpsert_MergeTransfersBestText(t *testing.T) {
 	}
 	var state string
 	var ver int
-	d.QueryRow(`SELECT text_state, version FROM vacancy WHERE id = ?`, idLow).Scan(&state, &ver) //nolint:errcheck
-	if state != "full" || ver != 2 {
+	if d.QueryRow(`SELECT text_state, version FROM vacancy WHERE id = ?`, idLow).Scan(&state, &ver); state != "full" || ver != 2 { //nolint:errcheck
 		t.Errorf("text_state=%q ver=%d, want full/2", state, ver)
 	}
 }
@@ -584,8 +561,7 @@ func TestUpsert_MergeAliasRowsAndSources(t *testing.T) {
 
 	// The pre-existing alias is repointed to keptID.
 	var newTarget int64
-	d.QueryRow(`SELECT new_id FROM vacancy_alias WHERE old_id = ?`, oldAlias).Scan(&newTarget) //nolint:errcheck
-	if newTarget != keptID {
+	if d.QueryRow(`SELECT new_id FROM vacancy_alias WHERE old_id = ?`, oldAlias).Scan(&newTarget); newTarget != keptID { //nolint:errcheck
 		t.Errorf("old alias repointed: got %d, want %d", newTarget, keptID)
 	}
 
@@ -595,14 +571,12 @@ func TestUpsert_MergeAliasRowsAndSources(t *testing.T) {
 			continue
 		}
 		var orphaned int
-		d.QueryRow(`SELECT count(*) FROM vacancy_source WHERE vacancy_id = ?`, mid).Scan(&orphaned) //nolint:errcheck
-		if orphaned != 0 {
+		if d.QueryRow(`SELECT count(*) FROM vacancy_source WHERE vacancy_id = ?`, mid).Scan(&orphaned); orphaned != 0 { //nolint:errcheck
 			t.Errorf("source rows for merged id %d: got %d, want 0", mid, orphaned)
 		}
 	}
 	var kept int
-	d.QueryRow(`SELECT count(*) FROM vacancy_source WHERE vacancy_id = ?`, keptID).Scan(&kept) //nolint:errcheck
-	if kept < 2 {
+	if d.QueryRow(`SELECT count(*) FROM vacancy_source WHERE vacancy_id = ?`, keptID).Scan(&kept); kept < 2 { //nolint:errcheck
 		t.Errorf("source rows for kept id %d: got %d, want >= 2", keptID, kept)
 	}
 }
@@ -613,53 +587,48 @@ func TestUpsert_MergeAliasRowsAndSources(t *testing.T) {
 func TestUpsert_CrossATSApplyRules(t *testing.T) {
 	// A role with an Ashby apply URL and the same company+title on a different
 	// host but with a Greenhouse apply URL must match (different ATS systems).
-	t.Run("cross-ATS apply addresses match", func(t *testing.T) {
-		d := openTestDB(t)
-		cat := catalog.New(d, fixedNow())
-		p1 := posting("https://acme.com/jobs/engineer", "Platform Engineer", "Acme Corp")
-		p1.ApplyURL = "https://jobs.ashbyhq.com/acme/550e8400-e29b-41d4-a716-446655440000"
-		id1, _, _ := cat.Upsert(context.Background(), p1, "src1")
-		p2 := posting("https://anotherjobs.com/engineer", "Platform Engineer", "Acme Corp")
-		p2.ApplyURL = "https://boards.greenhouse.io/acme/jobs/9999"
-		id2, outcome, err := cat.Upsert(context.Background(), p2, "src2")
-		if err != nil {
-			t.Fatalf("second upsert: %v", err)
-		}
-		if id2 != id1 {
-			t.Errorf("id: got %d, want %d (should match across ATS systems)", id2, id1)
-		}
-		if outcome == catalog.OutcomeNew {
-			t.Error("outcome: should not be OutcomeNew for a cross-ATS match")
-		}
-		// Kept vacancy keeps the original (Ashby) apply address.
-		var kept string
-		d.QueryRow(`SELECT apply_url FROM vacancy WHERE id = ?`, id1).Scan(&kept) //nolint:errcheck
-		if kept == "" || !strings.Contains(kept, "ashbyhq.com") {
-			t.Errorf("apply_url: got %q, want the Ashby address (kept on match)", kept)
-		}
-	})
+	d := openTestDB(t)
+	cat := catalog.New(d, fixedNow())
+	p1 := posting("https://acme.com/jobs/engineer", "Platform Engineer", "Acme Corp")
+	p1.ApplyURL = "https://jobs.ashbyhq.com/acme/550e8400-e29b-41d4-a716-446655440000"
+	id1, _, _ := cat.Upsert(context.Background(), p1, "src1")
+	p2 := posting("https://anotherjobs.com/engineer", "Platform Engineer", "Acme Corp")
+	p2.ApplyURL = "https://boards.greenhouse.io/acme/jobs/9999"
+	id2, outcome, err := cat.Upsert(context.Background(), p2, "src2")
+	if err != nil {
+		t.Fatalf("second upsert: %v", err)
+	}
+	if id2 != id1 {
+		t.Errorf("id: got %d, want %d (should match across ATS systems)", id2, id1)
+	}
+	if outcome == catalog.OutcomeNew {
+		t.Error("outcome: should not be OutcomeNew for a cross-ATS match")
+	}
+	// Kept vacancy keeps the original (Ashby) apply address.
+	var kept string
+	if d.QueryRow(`SELECT apply_url FROM vacancy WHERE id = ?`, id1).Scan(&kept); kept == "" || !strings.Contains(kept, "ashbyhq.com") { //nolint:errcheck
+		t.Errorf("apply_url: got %q, want the Ashby address (kept on match)", kept)
+	}
 
 	// Two different concrete Greenhouse vacancies for the same company+title on
 	// different posting hosts must not match (same ATS system).
-	t.Run("same ATS system apply addresses do not match", func(t *testing.T) {
-		d := openTestDB(t)
-		cat := catalog.New(d, fixedNow())
-		p1 := posting("https://acme.com/jobs/sre", "Site Reliability Engineer", "Acme Corp")
-		p1.ApplyURL = "https://boards.greenhouse.io/acme/jobs/1111"
-		id1, _, _ := cat.Upsert(context.Background(), p1, "src1")
-		p2 := posting("https://anotherjobs.com/sre", "Site Reliability Engineer", "Acme Corp")
-		p2.ApplyURL = "https://boards.greenhouse.io/acme/jobs/2222"
-		id2, outcome, err := cat.Upsert(context.Background(), p2, "src2")
-		if err != nil {
-			t.Fatalf("second upsert: %v", err)
-		}
-		if id2 == id1 {
-			t.Error("should not match: two different concrete vacancies on the same ATS")
-		}
-		if outcome != catalog.OutcomeNew {
-			t.Errorf("outcome: got %v, want OutcomeNew", outcome)
-		}
-	})
+	d2 := openTestDB(t)
+	cat2 := catalog.New(d2, fixedNow())
+	p12 := posting("https://acme.com/jobs/sre", "Site Reliability Engineer", "Acme Corp")
+	p12.ApplyURL = "https://boards.greenhouse.io/acme/jobs/1111"
+	id12, _, _ := cat2.Upsert(context.Background(), p12, "src1")
+	p22 := posting("https://anotherjobs.com/sre", "Site Reliability Engineer", "Acme Corp")
+	p22.ApplyURL = "https://boards.greenhouse.io/acme/jobs/2222"
+	id22, outcome2, err2 := cat2.Upsert(context.Background(), p22, "src2")
+	if err2 != nil {
+		t.Fatalf("second upsert (same-ATS): %v", err2)
+	}
+	if id22 == id12 {
+		t.Error("should not match: two different concrete vacancies on the same ATS")
+	}
+	if outcome2 != catalog.OutcomeNew {
+		t.Errorf("outcome: got %v, want OutcomeNew", outcome2)
+	}
 }
 
 // --- Guessed company rules ---
@@ -668,54 +637,36 @@ func TestUpsert_CrossATSApplyRules(t *testing.T) {
 // a stored named company but does replace an empty company, and that new
 // vacancies keep it.
 func TestUpsert_GuessedCompanyRules(t *testing.T) {
-	// A guessed company must not replace a stored company that is already named.
-	t.Run("guessed company does not replace named", func(t *testing.T) {
+	// Guessed company update: does not replace a named company; replaces an empty one.
+	for _, tc := range []struct{ init, next, want string }{
+		{"Acme Corp", "acme-board", "Acme Corp"},
+		{"", "acme-board", "acme-board"},
+	} {
 		d := openTestDB(t)
 		cat := catalog.New(d, fixedNow())
-		p1 := posting("https://acme.com/jobs/swe", "Software Engineer", "Acme Corp")
-		id1, _, _ := cat.Upsert(context.Background(), p1, "src1")
-		p2 := posting("https://acme.com/jobs/swe", "Software Engineer", "acme-board")
-		p2.CompanyGuessed = true
-		cat.Upsert(context.Background(), p2, "src2") //nolint:errcheck
-		var company string
-		d.QueryRow(`SELECT company FROM vacancy WHERE id = ?`, id1).Scan(&company) //nolint:errcheck
-		if company != "Acme Corp" {
-			t.Errorf("company: got %q, want Acme Corp (guessed must not replace named)", company)
-		}
-	})
-
-	// A guessed company may replace an empty company.
-	t.Run("guessed company replaces empty company", func(t *testing.T) {
-		d := openTestDB(t)
-		cat := catalog.New(d, fixedNow())
-		p1 := posting("https://acme.com/jobs/analyst", "Data Analyst", "")
-		id1, _, _ := cat.Upsert(context.Background(), p1, "src1")
-		p2 := posting("https://acme.com/jobs/analyst", "Data Analyst", "acme-board")
-		p2.CompanyGuessed = true
-		cat.Upsert(context.Background(), p2, "src2") //nolint:errcheck
-		var company string
-		d.QueryRow(`SELECT company FROM vacancy WHERE id = ?`, id1).Scan(&company) //nolint:errcheck
-		if company != "acme-board" {
-			t.Errorf("company: got %q, want acme-board (guessed should replace empty company)", company)
-		}
-	})
-
-	// A new vacancy always keeps its company, even when guessed.
-	t.Run("new vacancy keeps guessed company", func(t *testing.T) {
-		d := openTestDB(t)
-		cat := catalog.New(d, fixedNow())
-		p := posting("https://newboard.com/jobs/dev", "Developer", "newboard-slug")
+		p := posting("https://acme.com/jobs/role", "Role", tc.init)
+		id, _, _ := cat.Upsert(context.Background(), p, "src1")
+		p.Company = tc.next
 		p.CompanyGuessed = true
-		id, outcome, err := cat.Upsert(context.Background(), p, "src1")
-		if err != nil || outcome != catalog.OutcomeNew {
-			t.Fatalf("upsert: %v / %v", err, outcome)
+		cat.Upsert(context.Background(), p, "src2") //nolint:errcheck
+		var got string
+		if d.QueryRow(`SELECT company FROM vacancy WHERE id = ?`, id).Scan(&got); got != tc.want { //nolint:errcheck
+			t.Errorf("init=%q next=%q: company = %q, want %q", tc.init, tc.next, got, tc.want)
 		}
-		var company string
-		d.QueryRow(`SELECT company FROM vacancy WHERE id = ?`, id).Scan(&company) //nolint:errcheck
-		if company != "newboard-slug" {
-			t.Errorf("company: got %q, want newboard-slug (guessed company kept for new vacancy)", company)
-		}
-	})
+	}
+	// A new vacancy always keeps its company, even when guessed.
+	dg := openTestDB(t)
+	catg := catalog.New(dg, fixedNow())
+	pg := posting("https://newboard.com/jobs/dev", "Developer", "newboard-slug")
+	pg.CompanyGuessed = true
+	idg, outcome, err := catg.Upsert(context.Background(), pg, "src1")
+	if err != nil || outcome != catalog.OutcomeNew {
+		t.Fatalf("upsert: %v / %v", err, outcome)
+	}
+	var company string
+	if dg.QueryRow(`SELECT company FROM vacancy WHERE id = ?`, idg).Scan(&company); company != "newboard-slug" { //nolint:errcheck
+		t.Errorf("company: got %q, want newboard-slug (guessed company kept for new vacancy)", company)
+	}
 }
 
 // --- Known ---
@@ -757,8 +708,7 @@ func TestUpsert_BlockedStateStoredWithoutText(t *testing.T) {
 	p.TextState = listing.TextBlocked
 	cat.Upsert(context.Background(), p, "s") //nolint:errcheck
 	var state string
-	d.QueryRow(`SELECT text_state FROM vacancy WHERE id = ?`, id).Scan(&state) //nolint:errcheck
-	if state != "blocked" {
+	if d.QueryRow(`SELECT text_state FROM vacancy WHERE id = ?`, id).Scan(&state); state != "blocked" { //nolint:errcheck
 		t.Errorf("text_state: got %q, want blocked", state)
 	}
 }
@@ -792,8 +742,7 @@ func TestUpsert_EmptyBodyNotFetchedDoesNotError(t *testing.T) {
 	}
 	var count int
 	var bodyIsNull bool
-	d.QueryRow(`SELECT count(*), body IS NULL FROM vacancy WHERE url = ?`, vacURL).Scan(&count, &bodyIsNull) //nolint:errcheck
-	if count != 1 {
+	if d.QueryRow(`SELECT count(*), body IS NULL FROM vacancy WHERE url = ?`, vacURL).Scan(&count, &bodyIsNull); count != 1 { //nolint:errcheck
 		t.Errorf("vacancy count = %d, want 1", count)
 	}
 	if bodyIsNull {
@@ -817,13 +766,11 @@ func TestUpsert_MergePreservesBestDecision(t *testing.T) {
 	keptID, _, _ := cat.Upsert(context.Background(),
 		listing.Posting{URL: "https://c.example.com/jobs/3", Title: "Engineer", Company: "Acme", TextState: listing.TextNotFetched}, "src")
 	var stage string
-	d.QueryRow(`SELECT stage FROM decision WHERE vacancy=? AND profile=1`, keptID).Scan(&stage) //nolint:errcheck
-	if stage != "applied" {
+	if d.QueryRow(`SELECT stage FROM decision WHERE vacancy=? AND profile=1`, keptID).Scan(&stage); stage != "applied" { //nolint:errcheck
 		t.Errorf("merged decision stage = %q, want applied", stage)
 	}
 	var vcount int
-	d.QueryRow(`SELECT count(*) FROM vacancy`).Scan(&vcount) //nolint:errcheck
-	if vcount != 1 {
+	if d.QueryRow(`SELECT count(*) FROM vacancy`).Scan(&vcount); vcount != 1 { //nolint:errcheck
 		t.Errorf("vacancy count = %d, want 1 after merge", vcount)
 	}
 }
@@ -840,8 +787,7 @@ func TestUpsert_DeleteTombstonesAddress(t *testing.T) {
 		t.Fatalf("Delete: %v", err)
 	}
 	var vcount int
-	d.QueryRow(`SELECT count(*) FROM vacancy WHERE id=?`, id).Scan(&vcount) //nolint:errcheck
-	if vcount != 0 {
+	if d.QueryRow(`SELECT count(*) FROM vacancy WHERE id=?`, id).Scan(&vcount); vcount != 0 { //nolint:errcheck
 		t.Errorf("vacancy still present after Delete")
 	}
 	_, out, err := cat.Upsert(context.Background(), posting("https://example.com/jobs/del", "Engineer", "Acme"), "src")
@@ -868,15 +814,13 @@ func TestUpsert_AssignsIndustriesOnNew(t *testing.T) {
 		Title:     "Solidity Developer",
 		Company:   "ChainCo",
 		Text:      "Write smart contracts.",
-		TextKind:  listing.Plain,
 		TextState: listing.TextFull,
 	}, "src")
 	if err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
 	var industries string
-	d.QueryRow(`SELECT industries FROM vacancy WHERE id=?`, id).Scan(&industries) //nolint:errcheck
-	if industries != `["Blockchain"]` {
+	if d.QueryRow(`SELECT industries FROM vacancy WHERE id=?`, id).Scan(&industries); industries != `["Blockchain"]` { //nolint:errcheck
 		t.Errorf("industries: got %q, want %q", industries, `["Blockchain"]`)
 	}
 }
@@ -890,15 +834,13 @@ func TestUpsert_ReassignsIndustriesWhenTextChanges(t *testing.T) {
 		Title:     "Backend Engineer",
 		Company:   "GenericCo",
 		Text:      "Build APIs.",
-		TextKind:  listing.Plain,
 		TextState: listing.TextFull,
 	}, "src")
 	if err != nil {
 		t.Fatalf("upsert new: %v", err)
 	}
 	var before string
-	d.QueryRow(`SELECT industries FROM vacancy WHERE id=?`, id).Scan(&before) //nolint:errcheck
-	if before != `[]` {
+	if d.QueryRow(`SELECT industries FROM vacancy WHERE id=?`, id).Scan(&before); before != `[]` { //nolint:errcheck
 		t.Errorf("before: got %q, want []", before)
 	}
 	// Update with text that includes solidity → industry assigned
@@ -907,15 +849,13 @@ func TestUpsert_ReassignsIndustriesWhenTextChanges(t *testing.T) {
 		Title:     "Backend Engineer",
 		Company:   "GenericCo",
 		Text:      "Build APIs using solidity for Web3.",
-		TextKind:  listing.Plain,
 		TextState: listing.TextFull,
 	}, "src")
 	if err != nil {
 		t.Fatalf("upsert update: %v", err)
 	}
 	var after string
-	d.QueryRow(`SELECT industries FROM vacancy WHERE id=?`, id).Scan(&after) //nolint:errcheck
-	if after != `["Blockchain"]` {
+	if d.QueryRow(`SELECT industries FROM vacancy WHERE id=?`, id).Scan(&after); after != `["Blockchain"]` { //nolint:errcheck
 		t.Errorf("after: got %q, want [Blockchain]", after)
 	}
 }
@@ -928,8 +868,26 @@ func TestUpsert_NoAssignerLeavesIndustriesEmpty(t *testing.T) {
 		t.Fatalf("upsert: %v", err)
 	}
 	var industries string
-	d.QueryRow(`SELECT industries FROM vacancy WHERE id=?`, id).Scan(&industries) //nolint:errcheck
-	if industries != `[]` {
+	if d.QueryRow(`SELECT industries FROM vacancy WHERE id=?`, id).Scan(&industries); industries != `[]` { //nolint:errcheck
 		t.Errorf("no assigner: got %q, want []", industries)
+	}
+}
+
+// TestUpsert_FTSPreservedOnUnchangedUpsert verifies that a repeated upsert with
+// the same title, tags and text leaves the FTS row present and searchable.
+func TestUpsert_FTSPreservedOnUnchangedUpsert(t *testing.T) {
+	d := openTestDB(t)
+	cat := catalog.New(d, fixedNow())
+	p := posting("https://example.com/jobs/fts1", "Site Reliability Engineer", "Ops")
+	id, _, _ := cat.Upsert(context.Background(), p, "src")
+
+	// Same posting: outcome is Unchanged, FTS row must still exist.
+	_, out, _ := cat.Upsert(context.Background(), p, "src")
+	if out != catalog.OutcomeUnchanged {
+		t.Fatalf("second upsert: outcome %v, want Unchanged", out)
+	}
+	var n int
+	if d.QueryRow(`SELECT count(*) FROM vacancy_fts WHERE rowid=?`, id).Scan(&n); n != 1 { //nolint:errcheck
+		t.Errorf("FTS row count after unchanged upsert: got %d, want 1", n)
 	}
 }

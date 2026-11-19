@@ -54,7 +54,7 @@ func TestNormalize_HTML(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := listing.Normalize(tc.in, listing.HTML); got != tc.want {
+			if got := listing.Normalize(tc.in); got != tc.want {
 				t.Errorf("got %q, want %q", got, tc.want)
 			}
 		})
@@ -63,80 +63,10 @@ func TestNormalize_HTML(t *testing.T) {
 
 func TestNormalize_HTMLDeterministic(t *testing.T) {
 	in := `<p>Hello <strong>world</strong></p><ul><li>a</li><li>b</li></ul>`
-	a := listing.Normalize(in, listing.HTML)
-	b := listing.Normalize(in, listing.HTML)
+	a := listing.Normalize(in)
+	b := listing.Normalize(in)
 	if a != b {
 		t.Errorf("output is not deterministic: %q != %q", a, b)
-	}
-}
-
-// --- Normalize EscapedHTML ---
-
-func TestNormalize_EscapedHTML(t *testing.T) {
-	in := `&lt;p&gt;Hello &lt;strong&gt;world&lt;/strong&gt;&lt;/p&gt;`
-	got := listing.Normalize(in, listing.EscapedHTML)
-	want := `<p>Hello <strong>world</strong></p>`
-	if got != want {
-		t.Errorf("got %q, want %q", got, want)
-	}
-}
-
-// --- Normalize Markdown ---
-
-func TestNormalize_Markdown(t *testing.T) {
-	in := "## Title\n\nSome *text* here.\n\n- Item one\n- Item two\n"
-	got := listing.Normalize(in, listing.Markdown)
-	if !strings.Contains(got, "<h2>") {
-		t.Errorf("expected <h2> in output, got: %s", got)
-	}
-	if !strings.Contains(got, "<em>text</em>") {
-		t.Errorf("expected <em>text</em> in output, got: %s", got)
-	}
-	if !strings.Contains(got, "<li>") {
-		t.Errorf("expected <li> in output, got: %s", got)
-	}
-}
-
-// --- Normalize Plain ---
-
-func TestNormalize_Plain(t *testing.T) {
-	cases := []struct {
-		name string
-		in   string
-		want string
-	}{
-		{
-			"paragraphs separated by blank lines",
-			"First paragraph.\n\nSecond paragraph.",
-			`<p>First paragraph.</p><p>Second paragraph.</p>`,
-		},
-		{
-			"bullet lines become ul",
-			"- Item one\n- Item two\n- Item three",
-			`<ul><li>Item one</li><li>Item two</li><li>Item three</li></ul>`,
-		},
-		{
-			"bullet variants * and bullet",
-			"* Alpha\n• Beta",
-			`<ul><li>Alpha</li><li>Beta</li></ul>`,
-		},
-		{
-			"heading line without blank separator becomes h3",
-			"Requirements\nMust have Go experience.",
-			`<h3>Requirements</h3><p>Must have Go experience.</p>`,
-		},
-		{
-			"heading line with trailing colon becomes h3 without colon",
-			"Benefits:\nCompetitive pay.",
-			`<h3>Benefits</h3><p>Competitive pay.</p>`,
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := listing.Normalize(tc.in, listing.Plain); got != tc.want {
-				t.Errorf("got %q, want %q", got, tc.want)
-			}
-		})
 	}
 }
 

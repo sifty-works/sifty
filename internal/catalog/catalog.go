@@ -107,62 +107,6 @@ func WriteFTS(ctx context.Context, tx *sql.Tx, id int64, title, tagsJSON string,
 	return nil
 }
 
-// vacFTSData holds the columns needed to rebuild one FTS row.
-type vacFTSData struct {
-	id       int64
-	title    string
-	tagsJSON string
-	body     []byte
-}
-
-// RebuildFTS rebuilds the full-text index from stored vacancy rows when the
-// index is empty but vacancies exist. This is called once after a migration
-// that recreates the FTS table. It does nothing when the index already has
-// entries or when there are no vacancies.
-func RebuildFTS(ctx context.Context, database *db.DB) error {
-	var ftsCount, vacCount int64
-	if err := database.QueryRowContext(ctx, `SELECT count(*) FROM vacancy_fts`).Scan(&ftsCount); err != nil {
-		return fmt.Errorf("catalog: rebuild fts: check fts: %w", err)
-	}
-	if ftsCount > 0 {
-		return nil
-	}
-	if err := database.QueryRowContext(ctx, `SELECT count(*) FROM vacancy`).Scan(&vacCount); err != nil {
-		return fmt.Errorf("catalog: rebuild fts: check vac: %w", err)
-	}
-	if vacCount == 0 {
-		return nil
-	}
-	rows, err := database.QueryContext(ctx, `SELECT id, title, tags, body FROM vacancy`)
-	if err != nil {
-		return fmt.Errorf("catalog: rebuild fts: query: %w", err)
-	}
-	var vacs []vacFTSData
-	for rows.Next() {
-		var r vacFTSData
-		if err := rows.Scan(&r.id, &r.title, &r.tagsJSON, &r.body); err != nil {
-			rows.Close()
-			return fmt.Errorf("catalog: rebuild fts: scan: %w", err)
-		}
-		vacs = append(vacs, r)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("catalog: rebuild fts: iterate: %w", err)
-	}
-	tx, err := database.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("catalog: rebuild fts: begin tx: %w", err)
-	}
-	defer tx.Rollback() //nolint:errcheck
-	for _, r := range vacs {
-		if err := WriteFTS(ctx, tx, r.id, r.title, r.tagsJSON, r.body); err != nil {
-			return fmt.Errorf("catalog: rebuild fts: write %d: %w", r.id, err)
-		}
-	}
-	return tx.Commit()
-}
-
 // resolved holds the computed canonical keys, company, identity and matches
 // for a posting, returned by resolve.
 type resolved struct {
@@ -212,7 +156,7 @@ func (c *Catalog) Upsert(ctx context.Context, p listing.Posting, src string) (in
 	now := c.now().UTC()
 	nowStr := now.Format(time.RFC3339)
 
-	bodyHTML := listing.Normalize(p.Text, p.TextKind)
+	bodyHTML := listing.Normalize(p.Text)
 	newBody, newHash, err := Encode(bodyHTML)
 	if err != nil {
 		return 0, 0, fmt.Errorf("catalog: upsert: %w", err)
@@ -372,8 +316,10 @@ func (c *Catalog) Upsert(ctx context.Context, p listing.Posting, src string) (in
 		return 0, 0, fmt.Errorf("catalog: upsert: update: %w", err)
 	}
 
-	if err := WriteFTS(ctx, tx, vacancyID, upd.title, upd.tagsJSON, upd.body); err != nil {
-		return 0, 0, fmt.Errorf("catalog: upsert: fts: %w", err)
+	if titleChanged || tagsChanged || textChanged {
+		if err := WriteFTS(ctx, tx, vacancyID, upd.title, upd.tagsJSON, upd.body); err != nil {
+			return 0, 0, fmt.Errorf("catalog: upsert: fts: %w", err)
+		}
 	}
 	if err := saveSource(ctx, tx, vacancyID, src, r.canonURL, nowStr); err != nil {
 		return 0, 0, fmt.Errorf("catalog: upsert: source: %w", err)

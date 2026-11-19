@@ -2,7 +2,6 @@ package listing
 
 import (
 	"strings"
-	"unicode"
 )
 
 // Identity returns a normalised "company|title" string used for
@@ -17,7 +16,7 @@ import (
 //     "node.js" / "nodejs"        → "nodejs"
 //     "web3.js"                   → "web3js"
 //     "layer 2"                   → "l2"
-//  3. Every run of non-alphanumeric characters becomes one space.
+//  3. Every run of non-alphanumeric characters becomes one space (via FTSNorm).
 //  4. Trimmed.
 //
 // The result is "normalisedCompany|normalisedTitle".
@@ -25,12 +24,13 @@ func Identity(company, title string) string {
 	return normaliseIdPart(company) + "|" + normaliseIdPart(title)
 }
 
+// normaliseIdPart applies the identity normalisation to one part (company or
+// title). It uses FTSNorm so that the identity key's character collapsing is
+// always consistent with the full-text index normalisation.
 func normaliseIdPart(s string) string {
 	s = strings.ToLower(s)
 	s = applyPhrases(s)
-	s = collapseNonAlnum(s)
-	s = strings.TrimSpace(s)
-	return s
+	return strings.TrimSpace(FTSNorm(s))
 }
 
 // phrase is an exact-string replacement applied after lowercasing.
@@ -52,23 +52,4 @@ func applyPhrases(s string) string {
 		s = strings.ReplaceAll(s, p.from, p.to)
 	}
 	return s
-}
-
-// collapseNonAlnum replaces every run of non-alphanumeric runes with a
-// single ASCII space.
-func collapseNonAlnum(s string) string {
-	var b strings.Builder
-	inRun := false
-	for _, r := range s {
-		if unicode.IsLetter(r) || unicode.IsDigit(r) {
-			if inRun {
-				b.WriteByte(' ')
-				inRun = false
-			}
-			b.WriteRune(r)
-		} else {
-			inRun = true
-		}
-	}
-	return b.String()
 }
