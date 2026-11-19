@@ -1863,3 +1863,62 @@ func TestImport_VacancyWithNoMatchingKeywordsKeepsEmptyIndustries(t *testing.T) 
 		t.Errorf("vacancy with no keyword matches: got %q, want []", industriesJSON)
 	}
 }
+
+func TestImport_CompanyRecovery(t *testing.T) {
+	// Each row: id, title, existing company, canonical URL, expected company after import.
+	cases := []struct {
+		id                        int
+		title, company, url, want string
+	}{
+		// Getro: title-cased when no sibling.
+		{1, "Engineer", "", "https://jobs.example.com/companies/fund-protocol/jobs/1-engineer", "Fund Protocol"},
+		// Getro sibling with non-title-case name seeds the slug map.
+		{2, "Lead", "DeFi Labs", "https://jobs.example.com/companies/defi-labs/jobs/2-lead", "DeFi Labs"},
+		// Getro: exact sibling name wins over title-cased "Defi Labs".
+		{3, "Dev", "", "https://jobs.example.com/companies/defi-labs/jobs/3-dev", "DeFi Labs"},
+		// WWR: title suffix stripped from combined slug.
+		{4, "Blockchain Dev", "", "https://weworkremotely.com/remote-jobs/acme-co-blockchain-dev", "Acme Co"},
+		// web3.career: title prefix stripped from combined slug.
+		{5, "Blockchain Dev", "", "https://web3.career/blockchain-dev-chainlink/12345", "Chainlink"},
+		// Probe slug: no company assigned.
+		{6, "Engineer", "", "https://jobs.example.com/companies/zzz-probe/jobs/6-engineer", ""},
+		// Existing company: not replaced.
+		{7, "Designer", "Already Set Inc", "https://jobs.example.com/companies/other-org/jobs/7-designer", "Already Set Inc"},
+		// Getro sibling that seeds the slug map for WWR prefix fallback below.
+		{8, "PM", "Acme Corp", "https://jobs.example.com/companies/acme-corp/jobs/8-pm", "Acme Corp"},
+		// Getro disambiguation: trailing -<digits> stripped.
+		{9, "Dev", "", "https://jobs.example.com/companies/acme-2/jobs/9-dev", "Acme"},
+		// Getro disambiguation: trailing -<digits>-<uuid> stripped.
+		{10, "Dev", "", "https://jobs.example.com/companies/acme-2-1a2b3c4d-5e6f-7890-abcd-ef1234567890/jobs/10-dev", "Acme"},
+		// WWR: trailing -<digits> stripped before title removal.
+		{11, "Blockchain Dev", "", "https://weworkremotely.com/remote-jobs/acme-co-blockchain-dev-1", "Acme Co"},
+		// WWR sibling prefix fallback: title does not match, longest slug-map prefix wins.
+		{12, "Frontend Dev", "", "https://weworkremotely.com/remote-jobs/acme-corp-different-job", "Acme Corp"},
+		// WWR: title does not match and no sibling prefix — left empty.
+		{13, "Frontend Dev", "", "https://weworkremotely.com/remote-jobs/unknown-vendor-some-job", ""},
+	}
+
+	fromDir := makeOldDir(t, "")
+	oldDB := openOldDB(t, fromDir)
+	for _, c := range cases {
+		_, err := oldDB.Exec(
+			`INSERT INTO jobs (id, identity, title, company, original_url, description, description_status, first_seen, last_seen) VALUES (?, '', ?, ?, ?, '', '', '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z')`,
+			c.id, c.title, c.company, c.url)
+		if err != nil {
+			t.Fatalf("insert %d: %v", c.id, err)
+		}
+	}
+	targetDir := t.TempDir()
+	runImport(t, fromDir, targetDir)
+	newDB := openNewDB(t, targetDir)
+	for _, c := range cases {
+		var got string
+		if err := newDB.QueryRow(`SELECT company FROM vacancy WHERE id=?`, c.id).Scan(&got); err != nil {
+			t.Errorf("id=%d: query: %v", c.id, err)
+			continue
+		}
+		if got != c.want {
+			t.Errorf("id=%d: company = %q, want %q", c.id, got, c.want)
+		}
+	}
+}

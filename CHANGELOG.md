@@ -4,6 +4,7 @@ Notable changes of Sifty, newest first. Versions follow `MAJOR.MINOR.PATCH`.
 
 ## Unreleased
 
+- web3.career vacancies carry their company, from the listing row and from their own page; a vacancy page with several JSON-LD items without addresses is matched by a unique title, and a page title "Role at Company" fills an empty company. `sifty import-v1` recovers a missing company from the address of We Work Remotely, Getro and web3.career vacancies.
 - The built-in web client is sifty-web 0.3.1: the filter panel no longer offers Hide expired.
 - Vacancies past their expiry date are left out of Inbox, Shortlist and Dismissed, their counts and search; Applied still shows them with "Listing expired". The `hideExpired` list parameter is gone.
 - The built-in web client is sifty-web 0.3.0: industries as badges in rows and on the vacancy page, Settings → Industries, and the Unread and Filters controls with Collected, Role, Industries and Sources.

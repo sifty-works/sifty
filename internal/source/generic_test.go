@@ -536,6 +536,16 @@ func TestList_links_title_extraction(t *testing.T) {
 			html:  "<html><body><a href=\"/jobs/eng-101\">Engineer</a><a href=\"/jobs/apply-link\">Apply for this job</a><a href=\"/jobs/view-more\">View all roles</a></body></html>",
 			title: "Engineer",
 		},
+		{
+			name:  "second link to same address supplies company from h3",
+			html:  `<html><body><a href="/career/engineer-acme/12345"><h2>Acme Engineer</h2></a><a href="/career/engineer-acme/12345"><h3>Acme</h3></a></body></html>`,
+			title: "Acme Engineer", company: "Acme",
+		},
+		{
+			name:  "second link with h3 does not replace existing company",
+			html:  `<html><body><a href="/jobs/dev-999" aria-label="Zeta Corp – Dev">x</a><a href="/jobs/dev-999"><h3>Other Corp</h3></a></body></html>`,
+			title: "Dev", company: "Zeta Corp",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m := fetchtest.NewMap()

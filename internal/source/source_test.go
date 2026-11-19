@@ -550,6 +550,50 @@ func TestHN_list(t *testing.T) {
 	}
 }
 
+// ── Detail: company recovery from JSON-LD items and page title ───────────────
+
+func TestDetail_company_recovery(t *testing.T) {
+	cases := []struct {
+		name, body, title, wantCo string
+	}{
+		{
+			"json-ld no url matched by title",
+			`<html><head><script type="application/ld+json">[{"@type":"JobPosting","title":"Rust Engineer","hiringOrganization":{"name":"Chain Labs"}},{"@type":"JobPosting","title":"Community Manager","hiringOrganization":{"name":"Other"}}]</script></head><body><main><p>b</p></main></body></html>`,
+			"Rust Engineer", "Chain Labs",
+		},
+		{
+			"page title fallback when no json-ld item matches",
+			`<html><head><title>Rust Engineer at Chain Labs | site</title><script type="application/ld+json">[{"@type":"JobPosting","title":"Community Manager","hiringOrganization":{"name":"Chain Labs"}}]</script></head><body><p>b</p></body></html>`,
+			"Rust Engineer", "Chain Labs",
+		},
+		{
+			"ambiguous json-ld suppresses page title fallback",
+			`<html><head><title>Rust Engineer at Chain Labs | site</title><script type="application/ld+json">[{"@type":"JobPosting","title":"Rust Engineer","hiringOrganization":{"name":"Chain A"}},{"@type":"JobPosting","title":"Rust Engineer","hiringOrganization":{"name":"Chain B"}}]</script></head></html>`,
+			"Rust Engineer", "",
+		},
+		{
+			"page title fills company when no json-ld present",
+			`<html><head><title>Smart Contract Dev at DeFi Labs</title></head><body><main><p>desc</p></main></body></html>`,
+			"Smart Contract Dev", "DeFi Labs",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			const pageURL = "https://jobs.example.com/vacancy/12345"
+			m := fetchtest.NewMap()
+			m.Set(pageURL, fetchtest.MapEntry{Response: fetch.Response{URL: pageURL, Status: 200, Body: []byte(tc.body)}})
+			p := listing.Posting{URL: pageURL, Title: tc.title}
+			result, err := source.Detail(context.Background(), m, p, source.SiteConfig{URL: pageURL})
+			if err != nil {
+				t.Fatalf("Detail: %v", err)
+			}
+			if result.Company != tc.wantCo {
+				t.Errorf("company = %q, want %q", result.Company, tc.wantCo)
+			}
+		})
+	}
+}
+
 // --- helpers ---
 
 func mustParseURL(t *testing.T, s string) *url.URL {

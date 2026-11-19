@@ -45,7 +45,7 @@ func (s *genericSource) List(ctx context.Context, f fetch.Fetcher, cfg SiteConfi
 		}
 	}
 	if !cfg.SkipJSONLD {
-		if ps := jsonldPostings(resp.Body, base); len(ps) > 0 {
+		if ps := jsonldPostings(resp.Body, base, false); len(ps) > 0 {
 			return ps, nil
 		}
 	}
@@ -59,9 +59,11 @@ func (s *genericSource) List(ctx context.Context, f fetch.Fetcher, cfg SiteConfi
 }
 
 // Detail fetches p.URL once and fills text and empty fields. JSON-LD on the
-// page is matched by address or unique title+company; ambiguous pages leave
-// text empty. With SkipJSONLD, matched JSON-LD still fills empty fields but
-// its description is ignored and body/Content is used for text instead.
+// page is matched by address or unique title; an ambiguous page (multiple
+// items share p's title) leaves text and company empty. With SkipJSONLD,
+// matched JSON-LD still fills empty fields but its description is ignored and
+// body/Content is used for text instead. When company is still absent after
+// all JSON-LD attempts, the page <title> is searched for "<role> at <company>".
 func Detail(ctx context.Context, f fetch.Fetcher, p listing.Posting, s SiteConfig) (listing.Posting, error) {
 	s = mergeConfig(s)
 	resp, err := f.Get(ctx, p.URL, fetch.Opt{})
@@ -73,20 +75,31 @@ func Detail(ctx context.Context, f fetch.Fetcher, p listing.Posting, s SiteConfi
 		base = p.URL
 	}
 	useBody := s.SkipJSONLD
-	if cs := jsonldPostings(resp.Body, base); len(cs) > 0 {
-		if m, ok := matchJSONLD(cs, p); ok {
+	// tryPageTitle is set when no JSON-LD match was found and the page was not
+	// ambiguous, so we can still recover the company from the page <title>.
+	tryPageTitle := false
+	if cs := jsonldPostings(resp.Body, base, true); len(cs) > 0 {
+		if m, ok, ambig := matchJSONLD(cs, p); ok {
 			if s.SkipJSONLD {
 				m.Text = ""
 			}
 			p = mergeDetail(p, m)
+		} else {
+			tryPageTitle = !ambig
 		}
 	} else {
 		useBody = true
+		tryPageTitle = true
 	}
 	if useBody {
 		if raw := extractBodyText(resp.Body, s.Content); raw != "" {
 			p.Text = listing.Normalize(raw, listing.HTML)
 			p.TextKind, p.TextState = listing.HTML, listing.TextFull
+		}
+	}
+	if tryPageTitle && p.Company == "" {
+		if co := companyFromPageTitle(resp.Body); co != "" {
+			p.Company = co
 		}
 	}
 	if p.ApplyURL == "" {
@@ -145,7 +158,10 @@ func isXMLContent(ct string, body []byte) bool {
 
 // ── JSON-LD ───────────────────────────────────────────────────────────────────
 
-func jsonldPostings(body []byte, pageURL string) []listing.Posting {
+// jsonldPostings parses JSON-LD JobPosting items from body and returns postings
+// whose URL can be determined. When keepNoURL is true, items without a url
+// field receive pageURL as their address (used by Detail for title matching).
+func jsonldPostings(body []byte, pageURL string, keepNoURL bool) []listing.Posting {
 	doc, _ := xhtml.Parse(bytes.NewReader(body))
 	var items []map[string]any
 	htmlWalk(doc, func(n *xhtml.Node) bool {
@@ -163,7 +179,7 @@ func jsonldPostings(body []byte, pageURL string) []listing.Posting {
 	})
 	out := make([]listing.Posting, 0, len(items))
 	for _, item := range items {
-		if p, ok := jsonldToPosting(item, pageURL, len(items)); ok {
+		if p, ok := jsonldToPosting(item, pageURL, len(items), keepNoURL); ok {
 			if p, ok = finalise(p, pageURL); ok {
 				out = append(out, p)
 			}
@@ -193,7 +209,7 @@ func collectJobPostings(v any, out *[]map[string]any) {
 	}
 }
 
-func jsonldToPosting(o map[string]any, pageURL string, nItems int) (listing.Posting, bool) {
+func jsonldToPosting(o map[string]any, pageURL string, nItems int, keepNoURL bool) (listing.Posting, bool) {
 	title := ldStr(o, "title")
 	if title == "" {
 		return listing.Posting{}, false
@@ -206,7 +222,7 @@ func jsonldToPosting(o map[string]any, pageURL string, nItems int) (listing.Post
 		company = ldStr(h, "name")
 	}
 	postURL := resolveURL(ldStr(o, "url"), pageURL)
-	if postURL == "" && nItems != 1 {
+	if postURL == "" && nItems != 1 && !keepNoURL {
 		return listing.Posting{}, false
 	}
 	if postURL == "" {
@@ -250,7 +266,10 @@ func jsonldToPosting(o map[string]any, pageURL string, nItems int) (listing.Post
 	return p, true
 }
 
-func matchJSONLD(cs []listing.Posting, p listing.Posting) (listing.Posting, bool) {
+// matchJSONLD returns the JSON-LD item that uniquely matches p (by address or
+// title), ok=true when found. When ok is false and ambiguous is true, more
+// than one item shares p's title so the page cannot be attributed to p.
+func matchJSONLD(cs []listing.Posting, p listing.Posting) (listing.Posting, bool, bool) {
 	if pc, _ := listing.Canonical(p.URL); pc != "" {
 		var ms []listing.Posting
 		for _, c := range cs {
@@ -259,7 +278,7 @@ func matchJSONLD(cs []listing.Posting, p listing.Posting) (listing.Posting, bool
 			}
 		}
 		if len(ms) == 1 {
-			return ms[0], true
+			return ms[0], true, false
 		}
 	}
 	pt, pco := strings.ToLower(trim(p.Title)), strings.ToLower(trim(p.Company))
@@ -271,9 +290,9 @@ func matchJSONLD(cs []listing.Posting, p listing.Posting) (listing.Posting, bool
 		}
 	}
 	if len(ms) == 1 {
-		return ms[0], true
+		return ms[0], true, false
 	}
-	return listing.Posting{}, false
+	return listing.Posting{}, false, len(ms) > 1
 }
 
 func ldStr(m map[string]any, k string) string { s, _ := m[k].(string); return s }
@@ -383,6 +402,7 @@ func linkPostings(body []byte, base, pattern string) []listing.Posting {
 	}
 	doc, _ := xhtml.Parse(bytes.NewReader(body))
 	seen := map[string]bool{}
+	keyToIdx := map[string]int{} // address → index in out, for company backfill
 	var out []listing.Posting
 	htmlWalk(doc, func(n *xhtml.Node) bool {
 		if n.Type != xhtml.ElementNode || n.Data != "a" {
@@ -412,11 +432,24 @@ func linkPostings(body []byte, base, pattern string) []listing.Posting {
 		if !isVacancy {
 			isVacancy = vacancyPathRE.MatchString(u.Path)
 		}
-		if seen[key] || !isVacancy {
+		if !isVacancy {
 			return true
 		}
 		switch strings.ToLower(u.Path[strings.LastIndex(u.Path, "/")+1:]) {
 		case "signup", "login", "search", "new", "rss", "feed":
+			return true
+		}
+		if seen[key] {
+			// A second link to the same address may carry the company in an h3
+			// when the first link only held the title (e.g. listing rows where
+			// title is in a first link's h2 and company in a second link's h3).
+			if idx, ok := keyToIdx[key]; ok && out[idx].Company == "" {
+				if co := firstText(n, func(c *xhtml.Node) bool {
+					return c.Type == xhtml.ElementNode && c.Data == "h3"
+				}); co != "" {
+					out[idx].Company = co
+				}
+			}
 			return true
 		}
 		seen[key] = true
@@ -448,6 +481,7 @@ func linkPostings(body []byte, base, pattern string) []listing.Posting {
 			strings.HasPrefix(lt, "next") || strings.HasPrefix(lt, "previous") {
 			return true
 		}
+		keyToIdx[key] = len(out)
 		out = append(out, listing.Posting{URL: key, Title: title, Company: company, TextState: listing.TextNotFetched})
 		return true
 	})
@@ -549,6 +583,45 @@ func htmlWalk(n *xhtml.Node, fn func(*xhtml.Node) bool) {
 			htmlWalk(c, fn)
 		}
 	}
+}
+
+// companyFromPageTitle extracts the company name from the page <title> element
+// when the title follows the pattern "<role> at <company>" (with an optional
+// site suffix after " | " or " - "). Returns "" when the pattern is not found.
+func companyFromPageTitle(body []byte) string {
+	doc, _ := xhtml.Parse(bytes.NewReader(body))
+	var text string
+	htmlWalk(doc, func(n *xhtml.Node) bool {
+		if text != "" {
+			return false
+		}
+		if n.Type == xhtml.ElementNode && n.Data == "title" && n.FirstChild != nil {
+			var sb strings.Builder
+			htmlWalk(n, func(c *xhtml.Node) bool {
+				if c.Type == xhtml.TextNode {
+					sb.WriteString(c.Data)
+				}
+				return true
+			})
+			text = strings.Join(strings.Fields(sb.String()), " ")
+			return false
+		}
+		return true
+	})
+	if text == "" {
+		return ""
+	}
+	// Strip common site suffixes before the " at " split.
+	for _, sep := range []string{" | ", " - "} {
+		if i := strings.Index(text, sep); i >= 0 {
+			text = text[:i]
+		}
+	}
+	text = strings.TrimSpace(text)
+	if i := strings.LastIndex(text, " at "); i >= 0 {
+		return strings.TrimSpace(text[i+4:])
+	}
+	return ""
 }
 
 // firstText returns the text content of the first descendant of n that

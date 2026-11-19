@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -682,6 +683,32 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 
 	// --- Write all in one transaction ---
 
+	// Build a map from normalised company slugs (extracted from canonical
+	// addresses) to the exact company names already set on sibling vacancies.
+	// When a vacancy lacks a company, an exact sibling name wins over the
+	// title-cased slug produced by companyFromCanonURL.
+	slugCompanyMap := make(map[string]string)
+	for _, vj := range validJobs {
+		if !keepIDs[vj.job.id] {
+			continue
+		}
+		co := vj.job.company
+		if strings.EqualFold(co, "Unknown") {
+			co = ""
+		}
+		if co == "" {
+			continue
+		}
+		slug := urlCompanySlug(vj.canonURL, vj.job.title, nil)
+		if slug == "" {
+			continue
+		}
+		norm := strings.ToLower(slug)
+		if _, exists := slugCompanyMap[norm]; !exists {
+			slugCompanyMap[norm] = co
+		}
+	}
+
 	tx, err := newDB.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("begin transaction: %w", err)
@@ -698,6 +725,9 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 		company := j.company
 		if strings.EqualFold(company, "Unknown") {
 			company = "" // the old placeholder for a missing company
+		}
+		if company == "" {
+			company = companyFromCanonURL(vj.canonURL, j.title, slugCompanyMap)
 		}
 		identity := listing.Identity(company, j.title)
 
@@ -2493,6 +2523,198 @@ func appendLegacy(other, line string) string {
 		return line
 	}
 	return other + "\n\n" + line
+}
+
+// --- company recovery from canonical URL ---
+
+// companyFromCanonURL attempts to recover a company name from a canonical
+// vacancy address when no company was stored. It recognises Getro board
+// addresses (/companies/<org-slug>/jobs/…), We Work Remotely listing addresses
+// (/remote-jobs/<company-title-slug>) and web3.career addresses
+// (/<title-company-slug>/<numeric-id>). slugMap maps normalised slugs to exact
+// company names already seen among siblings; an exact match wins over
+// title-casing. Returns "" when no company can be inferred.
+func companyFromCanonURL(canonURL, title string, slugMap map[string]string) string {
+	slug := urlCompanySlug(canonURL, title, slugMap)
+	if slug == "" {
+		return ""
+	}
+	return slugToCompany(slug, slugMap)
+}
+
+// urlCompanySlug returns the normalised company slug embedded in a canonical
+// URL for the address shapes we recover from. Returns "" when the shape is not
+// recognised, the slug is a probe (starts with "zzz-"), or no company slug can
+// be isolated cleanly. slugMap is forwarded to trimTitleSuffix for WWR sibling
+// prefix matching; pass nil when the map is not yet built.
+func urlCompanySlug(canonURL, title string, slugMap map[string]string) string {
+	u, err := url.Parse(canonURL)
+	if err != nil {
+		return ""
+	}
+	host := strings.TrimPrefix(strings.ToLower(u.Host), "www.")
+	segs := strings.FieldsFunc(u.Path, func(r rune) bool { return r == '/' })
+
+	// Getro board: /companies/<org-slug>/jobs/...
+	if len(segs) >= 3 && segs[0] == "companies" && segs[2] == "jobs" {
+		slug := segs[1]
+		if strings.HasPrefix(slug, "zzz-") {
+			return ""
+		}
+		return stripGetroDisambig(slug)
+	}
+	// We Work Remotely: /remote-jobs/<company-title-slug>
+	if host == "weworkremotely.com" && len(segs) >= 2 && segs[0] == "remote-jobs" {
+		return trimTitleSuffix(segs[1], title, slugMap)
+	}
+	// web3.career: /<title-company-slug>/<numeric-id> (id is 5+ decimal digits)
+	if (host == "web3.career" || host == "web3.careers") && len(segs) == 2 {
+		id := segs[1]
+		allDigit := len(id) >= 5 && strings.TrimFunc(id, func(r rune) bool { return r >= '0' && r <= '9' }) == ""
+		if allDigit {
+			return trimTitlePrefix(segs[0], title)
+		}
+	}
+	return ""
+}
+
+// slugToCompany converts a URL slug to a company name. When slugMap contains
+// the normalised slug, the stored exact name is returned (sibling match).
+// Otherwise the slug is title-cased (hyphens replaced by spaces).
+func slugToCompany(slug string, slugMap map[string]string) string {
+	if slug == "" {
+		return ""
+	}
+	norm := strings.ToLower(slug)
+	if co, ok := slugMap[norm]; ok && co != "" {
+		return co
+	}
+	return titleCaseSlug(slug)
+}
+
+// titleCaseSlug converts a hyphen-separated slug to a title-cased name.
+func titleCaseSlug(slug string) string {
+	parts := strings.Split(slug, "-")
+	for i, p := range parts {
+		if len(p) > 0 {
+			parts[i] = strings.ToUpper(p[:1]) + p[1:]
+		}
+	}
+	return strings.Join(parts, " ")
+}
+
+// trimTitleSuffix extracts the company slug from a We Work Remotely combined
+// slug (<company>-<title>). It strips a trailing -<digits> disambiguation
+// suffix first, then removes the slugified title from the end. When the title
+// does not strip cleanly, it falls back to the longest slugMap key that is a
+// proper prefix of the combined slug. Returns "" when no company can be isolated
+// (leave the company empty rather than guess).
+func trimTitleSuffix(slug, title string, slugMap map[string]string) string {
+	if slug == "" || strings.HasPrefix(slug, "zzz-") {
+		return ""
+	}
+	slug = strings.ToLower(slug)
+	// Strip a trailing -<digits> before title matching.
+	if i := strings.LastIndexByte(slug, '-'); i > 0 {
+		if tail := slug[i+1:]; tail != "" && strings.TrimFunc(tail, func(r rune) bool { return r >= '0' && r <= '9' }) == "" {
+			slug = slug[:i]
+		}
+	}
+	if title != "" {
+		if ts := slugifyTitle(title); ts != "" && strings.HasSuffix(slug, "-"+ts) {
+			return slug[:len(slug)-len(ts)-1]
+		}
+	}
+	// Sibling prefix fallback: longest slugMap key that is a proper prefix.
+	best := ""
+	for norm := range slugMap {
+		if len(norm) > len(best) && strings.HasPrefix(slug, norm) {
+			if rest := slug[len(norm):]; rest == "" || rest[0] == '-' {
+				best = norm
+			}
+		}
+	}
+	return best
+}
+
+// trimTitlePrefix extracts the company slug from a web3.career combined slug
+// (<title>-<company>) by removing the slugified title from the start.
+// Returns "" when the title prefix cannot be matched (leave company empty).
+func trimTitlePrefix(slug, title string) string {
+	if slug == "" || strings.HasPrefix(slug, "zzz-") {
+		return ""
+	}
+	if title != "" {
+		if ts := slugifyTitle(title); ts != "" && strings.HasPrefix(slug, ts+"-") {
+			return slug[len(ts)+1:]
+		}
+	}
+	return ""
+}
+
+// stripGetroDisambig removes a Getro organisation-slug disambiguation suffix.
+// Three suffix shapes are stripped:
+//   - trailing -<digits>              ("acme-2"              → "acme")
+//   - trailing -<digits>-<uuid>       ("acme-2-<uuid>"       → "acme")
+//   - trailing -<uuid>                ("acme-<uuid>"         → "acme")
+//
+// A UUID is five hyphen-separated groups of 8, 4, 4, 4 and 12 hex characters.
+// Slugs that have no disambiguation suffix are returned unchanged.
+func stripGetroDisambig(slug string) string {
+	parts := strings.Split(slug, "-")
+	n := len(parts)
+	end := n
+	// Detect a full UUID suffix in the last five parts (need at least one name part).
+	if n >= 6 {
+		lens := [5]int{8, 4, 4, 4, 12}
+		ok := true
+	outer:
+		for i, l := range lens {
+			seg := parts[n-5+i]
+			if len(seg) != l {
+				ok = false
+				break
+			}
+			for _, c := range seg {
+				if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+					ok = false
+					break outer
+				}
+			}
+		}
+		if ok {
+			end = n - 5
+		}
+	}
+	// Strip a trailing all-digits part immediately before the UUID (or at end).
+	if end > 1 {
+		seg := parts[end-1]
+		if seg != "" && strings.TrimFunc(seg, func(r rune) bool { return r >= '0' && r <= '9' }) == "" {
+			end--
+		}
+	}
+	if end == n || end <= 0 {
+		return slug
+	}
+	return strings.Join(parts[:end], "-")
+}
+
+// slugifyTitle lowercases s and replaces runs of non-alphanumeric characters
+// with a single hyphen, trimming leading and trailing hyphens.
+func slugifyTitle(s string) string {
+	s = strings.ToLower(s)
+	var b strings.Builder
+	hyphen := false
+	for _, r := range s {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+			hyphen = false
+		} else if b.Len() > 0 && !hyphen {
+			b.WriteByte('-')
+			hyphen = true
+		}
+	}
+	return strings.TrimRight(b.String(), "-")
 }
 
 // --- report formatting ---
