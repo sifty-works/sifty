@@ -80,6 +80,10 @@ type importReport struct {
 	ProfilesWritten int
 	ProfilesDropped int
 
+	TextlessDroppedSummary    int
+	TextlessDroppedNotFetched int
+	TextlessDroppedBlocked    int
+
 	StagesRead      int
 	StagesNew       int
 	StagesShortlist int
@@ -630,6 +634,46 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 			if _, ok := mergedData[vj.job.id]; ok {
 				keepIDs[vj.job.id] = true
 			}
+		}
+	}
+
+	hasActivity := make(map[int64]bool)
+	for _, s := range stages {
+		if s.status == "new" {
+			continue
+		}
+		jobID := s.jobID
+		if keptID, isAlias := duplicateAlias[jobID]; isAlias {
+			jobID = keptID
+		}
+		hasActivity[jobID] = true
+	}
+	for _, j := range jobs {
+		if !j.appliedAt.Valid || j.appliedAt.String == "" {
+			continue
+		}
+		jobID := j.id
+		if keptID, isAlias := duplicateAlias[jobID]; isAlias {
+			jobID = keptID
+		}
+		hasActivity[jobID] = true
+	}
+	for id := range keepIDs {
+		md := mergedData[id]
+		if md.textState == listing.TextFull {
+			continue
+		}
+		if hasActivity[id] {
+			continue
+		}
+		delete(keepIDs, id)
+		switch md.textState {
+		case listing.TextSummary:
+			report.TextlessDroppedSummary++
+		case listing.TextNotFetched:
+			report.TextlessDroppedNotFetched++
+		case listing.TextBlocked:
+			report.TextlessDroppedBlocked++
 		}
 	}
 
@@ -2471,6 +2515,11 @@ func formatReport(r *importReport) string {
 		r.VacanciesRead, r.VacanciesWritten, len(r.VacanciesDropped))
 	for _, d := range r.VacanciesDropped {
 		fmt.Fprintf(&sb, "  dropped id=%d: %s\n", d.ID, d.Reason)
+	}
+	textlessTotal := r.TextlessDroppedSummary + r.TextlessDroppedNotFetched + r.TextlessDroppedBlocked
+	if textlessTotal > 0 {
+		fmt.Fprintf(&sb, "  dropped (no full text, no decision): %d (summary: %d, not_fetched: %d, blocked: %d)\n",
+			textlessTotal, r.TextlessDroppedSummary, r.TextlessDroppedNotFetched, r.TextlessDroppedBlocked)
 	}
 	if len(r.Duplicates) > 0 {
 		fmt.Fprintf(&sb, "  duplicate canonical address pairs (%d):\n", len(r.Duplicates))

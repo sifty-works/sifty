@@ -341,6 +341,10 @@ func TestImport_TextStates(t *testing.T) {
 			t.Fatalf("insert job %d: %v", i+1, err)
 		}
 	}
+	insertProfile(t, oldDB, "px", "Tester", "2024-01-01T00:00:00Z", false)
+	for i := range cases {
+		insertStage(t, oldDB, "px", int64(i+1), "rejected", "", "2024-01-01T00:00:00Z")
+	}
 
 	targetDir := t.TempDir()
 	runImport(t, fromDir, targetDir)
@@ -1782,7 +1786,7 @@ func TestImport_CompanyRecovery(t *testing.T) {
 	oldDB := openOldDB(t, fromDir)
 	for _, c := range cases {
 		_, err := oldDB.Exec(
-			`INSERT INTO jobs (id, identity, title, company, original_url, description, description_status, first_seen, last_seen) VALUES (?, '', ?, ?, ?, '', '', '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z')`,
+			`INSERT INTO jobs (id, identity, title, company, original_url, description, description_status, first_seen, last_seen) VALUES (?, '', ?, ?, ?, 'text', 'available', '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z')`,
 			c.id, c.title, c.company, c.url)
 		if err != nil {
 			t.Fatalf("insert %d: %v", c.id, err)
@@ -1800,5 +1804,124 @@ func TestImport_CompanyRecovery(t *testing.T) {
 		if got != c.want {
 			t.Errorf("id=%d: company = %q, want %q", c.id, got, c.want)
 		}
+	}
+}
+
+func TestImport_TextlessVacancyFilter(t *testing.T) {
+	cases := []struct {
+		id         int64
+		url        string
+		descStatus string
+		desc       string
+		stage      string
+		appliedAt  string
+		seenAt     string
+		wantKept   bool
+	}{
+		{1, "https://example.com/jobs/1", "other_status", "some summary", "", "", "", false},
+		{2, "https://example.com/jobs/2", "other_status", "some summary", "rejected", "", "", true},
+		{3, "https://example.com/jobs/3", "other_status", "some summary", "", "2024-05-01T00:00:00Z", "", true},
+		{4, "https://example.com/jobs/4", "other_status", "some summary", "draft", "", "", true},
+		{5, "https://example.com/jobs/5", "other_status", "some summary", "", "", "2024-05-01T00:00:00Z", false},
+		{6, "https://example.com/jobs/6", "blocked_by_site", "", "", "", "", false},
+		{7, "https://example.com/jobs/7", "", "", "", "", "", false},
+	}
+
+	fromDir := makeOldDir(t, "")
+	oldDB := openOldDB(t, fromDir)
+	insertProfile(t, oldDB, "p1", "Tester", "2024-01-01T00:00:00Z", false)
+
+	for _, tc := range cases {
+		var appliedAt, seenAt interface{}
+		if tc.appliedAt != "" {
+			appliedAt = tc.appliedAt
+		}
+		if tc.seenAt != "" {
+			seenAt = tc.seenAt
+		}
+		_, err := oldDB.Exec(`
+			INSERT INTO jobs (id, identity, title, company, original_url,
+			  description, description_status, first_seen, last_seen, applied_at, seen_at)
+			VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+			tc.id, "co|title", "Title", "Co", tc.url,
+			tc.desc, tc.descStatus, "2024-01-01T00:00:00Z", "2024-01-01T00:00:00Z",
+			appliedAt, seenAt)
+		if err != nil {
+			t.Fatalf("insert job %d: %v", tc.id, err)
+		}
+		if tc.stage != "" {
+			insertStage(t, oldDB, "p1", tc.id, tc.stage, "", "2024-01-01T00:00:00Z")
+		}
+	}
+
+	targetDir := t.TempDir()
+	report := runImport(t, fromDir, targetDir)
+	newDB := openNewDB(t, targetDir)
+
+	for _, tc := range cases {
+		var n int
+		newDB.QueryRow(`SELECT count(*) FROM vacancy WHERE id=?`, tc.id).Scan(&n)
+		if (n > 0) != tc.wantKept {
+			t.Errorf("id=%d url=%s: present=%v, want %v", tc.id, tc.url, n > 0, tc.wantKept)
+		}
+	}
+
+	droppedURL := cases[0].url
+	cat := catalog.New(newDB, time.Now)
+	p := listing.Posting{
+		URL: droppedURL, Title: "Title", Company: "Co",
+		Text: "<p>full text</p>", TextState: listing.TextFull,
+	}
+	_, outcome, err := cat.Upsert(context.Background(), p, "src")
+	if err != nil {
+		t.Fatalf("upsert after drop: %v", err)
+	}
+	if outcome == catalog.OutcomeTombstoned {
+		t.Error("dropped textless vacancy left a tombstone")
+	}
+
+	if !strings.Contains(report, "dropped (no full text, no decision)") {
+		t.Errorf("report missing textless drop summary: %s", report)
+	}
+	if !strings.Contains(report, "summary: 2") {
+		t.Errorf("report missing summary count: %s", report)
+	}
+	if !strings.Contains(report, "blocked: 1") {
+		t.Errorf("report missing blocked count: %s", report)
+	}
+	if !strings.Contains(report, "not_fetched: 1") {
+		t.Errorf("report missing not_fetched count: %s", report)
+	}
+}
+
+func TestImport_TextlessDuplicateWithFullTextKept(t *testing.T) {
+	fromDir := makeOldDir(t, "")
+	oldDB := openOldDB(t, fromDir)
+
+	_, err := oldDB.Exec(`
+		INSERT INTO jobs (id, identity, title, company, original_url,
+		  description, description_status, first_seen, last_seen)
+		VALUES
+		  (1,'co|t','T','Co','https://example.com/jobs/dup?utm_source=a',
+		   'some summary','other_status','2024-01-01T00:00:00Z','2024-01-05T00:00:00Z'),
+		  (2,'co|t','T','Co','https://example.com/jobs/dup?utm_source=b',
+		   '<p>full text here</p>','available','2024-01-02T00:00:00Z','2024-01-10T00:00:00Z')`)
+	if err != nil {
+		t.Fatalf("insert jobs: %v", err)
+	}
+
+	targetDir := t.TempDir()
+	runImport(t, fromDir, targetDir)
+	newDB := openNewDB(t, targetDir)
+
+	var n int
+	newDB.QueryRow(`SELECT count(*) FROM vacancy`).Scan(&n)
+	if n != 1 {
+		t.Errorf("vacancy count: got %d, want 1 (kept because duplicate has full text)", n)
+	}
+	var state string
+	newDB.QueryRow(`SELECT text_state FROM vacancy WHERE id=1`).Scan(&state)
+	if state != "full" {
+		t.Errorf("text_state: got %q, want full", state)
 	}
 }

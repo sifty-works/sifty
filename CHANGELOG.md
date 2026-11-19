@@ -4,6 +4,7 @@ Notable changes of Sifty, newest first. Versions follow `MAJOR.MINOR.PATCH`.
 
 ## Unreleased
 
+- The import leaves out vacancies without full text that no profile acted on, without a removal mark, so collection can gather them again.
 - Web client 0.4.1: no comments in its sources; interface synced.
 - Fits you treats a vacancy that states no engagement as employment; the Contract tile shows "Employment (assumed)".
 - No comments in code, migrations, embedded YAML, the Makefile or scripts; `make uncomment` removes them and `make check` refuses them.

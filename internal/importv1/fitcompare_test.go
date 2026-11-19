@@ -89,6 +89,7 @@ func TestImport_FitsYouComparedWithPreviousResultsByCause(t *testing.T) {
 		{11, "p1", 1, remote, "available", "", oldRecord(10, nil), ""},
 		{12, "p2", 1, remote, "available", "", oldRecord(79, nil), ""},
 	}
+	insertStage(t, old, "p1", 4, "saved", "", "2024-01-01T00:00:00Z")
 	for _, c := range cases {
 		insertJob(t, old, c.job, fmt.Sprintf("https://jobs.example.org/role/%d", c.job))
 		exec(`UPDATE jobs SET title='Go Engineer', description=?, description_status=?, location=? WHERE id=?`,
