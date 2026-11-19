@@ -280,13 +280,11 @@ func flattenToBlocks(nodes []*xhtml.Node) []string {
 			} else if a == atom.Ul || a == atom.Ol {
 				flushInline()
 				tag := n.Data
+				rawItems := collectListItems(n)
 				var items []string
-				for c := n.FirstChild; c != nil; c = c.NextSibling {
-					if c.Type == xhtml.ElementNode && c.DataAtom == atom.Li {
-						content := normalizeInlineContent(renderInlineChildren(c))
-						if content != "" {
-							items = append(items, "<li>"+content+"</li>")
-						}
+				for _, item := range rawItems {
+					if item != "" {
+						items = append(items, "<li>"+item+"</li>")
 					}
 				}
 				if len(items) > 0 {
@@ -360,6 +358,51 @@ func renderInlineNode(n *xhtml.Node) string {
 		return b.String()
 	}
 	return ""
+}
+
+// collectListItems returns a flat slice of rendered inline strings, one per
+// list item, for the given ul or ol node. Items inside a sublist (whether a
+// direct child of this list or inside an li) are flattened into the same
+// sequence; there is no nesting in the result.
+func collectListItems(listNode *xhtml.Node) []string {
+	var items []string
+	for c := listNode.FirstChild; c != nil; c = c.NextSibling {
+		if c.Type != xhtml.ElementNode {
+			continue
+		}
+		switch c.DataAtom {
+		case atom.Li:
+			items = append(items, renderLiAsItems(c)...)
+		case atom.Ul, atom.Ol:
+			// A list directly inside a list (not inside an li): flatten its items.
+			items = append(items, collectListItems(c)...)
+		}
+	}
+	return items
+}
+
+// renderLiAsItems returns the content strings for a single li element.
+// If the li contains a nested list, the li's own inline text (if any) becomes
+// the first item and the nested items follow, all in the same slice.
+func renderLiAsItems(liNode *xhtml.Node) []string {
+	var inlineB strings.Builder
+	var nested []string
+
+	for c := liNode.FirstChild; c != nil; c = c.NextSibling {
+		if c.Type == xhtml.ElementNode && (c.DataAtom == atom.Ul || c.DataAtom == atom.Ol) {
+			nested = append(nested, collectListItems(c)...)
+		} else {
+			inlineB.WriteString(renderInlineNode(c))
+		}
+	}
+
+	var items []string
+	text := normalizeInlineContent(inlineB.String())
+	if text != "" {
+		items = append(items, text)
+	}
+	items = append(items, nested...)
+	return items
 }
 
 // normalizeInlineContent normalises inline HTML content:

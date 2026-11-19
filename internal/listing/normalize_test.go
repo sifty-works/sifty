@@ -46,6 +46,11 @@ func TestNormalize_HTML(t *testing.T) {
 		{"br at block end dropped", `<p>text<br></p>`, `<p>text</p>`},
 		{"br between blocks dropped", `<p>a</p><br><p>b</p>`, `<p>a</p><p>b</p>`},
 		{"whitespace collapsed inside text", `<p>  foo   bar  </p>`, `<p>foo bar</p>`},
+		{"list directly inside list keeps items", `<ul><li>Alpha</li><ul><li>Beta</li><li>Gamma</li></ul></ul>`, `<ul><li>Alpha</li><li>Beta</li><li>Gamma</li></ul>`},
+		{"list inside li flattens after parent item text", `<ul><li>Intro<ul><li>Detail one</li><li>Detail two</li></ul></li></ul>`, `<ul><li>Intro</li><li>Detail one</li><li>Detail two</li></ul>`},
+		{"ordered list inside unordered flattens as ol", `<ul><li>First</li><ol><li>Sub A</li><li>Sub B</li></ol></ul>`, `<ul><li>First</li><li>Sub A</li><li>Sub B</li></ul>`},
+		{"deeply nested list keeps every item", `<p>About</p><ul><li>Requirements</li><ul><li>Degree in a related field</li><li>Proficient in SQL</li></ul></ul><h3>Benefits</h3><ul><li>Remote</li></ul>`, `<p>About</p><ul><li>Requirements</li><li>Degree in a related field</li><li>Proficient in SQL</li></ul><h3>Benefits</h3><ul><li>Remote</li></ul>`},
+		{"li with only nested list omits empty parent item", `<ul><li><ul><li>Nested only</li></ul></li></ul>`, `<ul><li>Nested only</li></ul>`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
