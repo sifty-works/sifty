@@ -18,10 +18,16 @@ import (
 
 // ListReq carries the query parameters for GET /api/vacancies.
 type ListReq struct {
-	Stage      Stage  `json:"stage"`
-	Profile    int64  `json:"profile"`
-	Q          string `json:"q"`
-	Industries string `json:"industries,omitempty"`
+	Stage       Stage  `json:"stage"`
+	Profile     int64  `json:"profile"`
+	Q           string `json:"q"`
+	Industries  string `json:"industries,omitempty"`
+	Collected   string `json:"collected,omitempty"`   // "7" or "30" days by first_seen; empty = any
+	HideExpired bool   `json:"hideExpired,omitempty"` // hide vacancies past their expiry date
+	Remote      bool   `json:"remote,omitempty"`      // remote/anywhere/telecommute in location
+	Leadership  bool   `json:"leadership,omitempty"`  // CTO/Head/Director/Manager/Lead in title
+	Sources     string `json:"sources,omitempty"`     // comma-separated source keys
+	Unread      bool   `json:"unread,omitempty"`      // hide read vacancies; ignored in applied/dismissed
 }
 
 // ListResp is the response body for GET /api/vacancies.
@@ -29,6 +35,8 @@ type ListResp struct {
 	Rows           []Row           `json:"rows"`
 	Counts         Counts          `json:"counts"`
 	IndustryCounts []IndustryCount `json:"industryCounts"`
+	SourceCounts   []SourceCount   `json:"sourceCounts"`
+	Total          int             `json:"total"`
 	Empty          string          `json:"empty"`
 	Profile        int64           `json:"profile"`
 }
@@ -127,18 +135,50 @@ func RegisterRoutes(mux *http.ServeMux, database *db.DB, now func() time.Time, l
 				}
 			}
 		}
-		rows, counts, indCounts, err := list(r.Context(), database, now, pid, stage, strings.TrimSpace(req.Q), vocabNames(), industries)
+		var sources []string
+		if req.Sources != "" {
+			for _, s := range strings.Split(req.Sources, ",") {
+				if s = strings.TrimSpace(s); s != "" {
+					sources = append(sources, s)
+				}
+			}
+		}
+		collected := 0
+		switch req.Collected {
+		case "7":
+			collected = 7
+		case "30":
+			collected = 30
+		}
+		// unread is ignored in applied and dismissed (Archive).
+		unread := req.Unread && stage != "applied" && stage != "dismissed"
+		f := Filters{
+			Collected:   collected,
+			HideExpired: req.HideExpired,
+			Remote:      req.Remote,
+			Leadership:  req.Leadership,
+			Sources:     sources,
+			Unread:      unread,
+		}
+		rows, counts, indCounts, srcCounts, total, err := list(r.Context(), database, now, pid, stage, strings.TrimSpace(req.Q), vocabNames(), industries, f)
 		if err != nil {
 			return ListResp{}, err
 		}
 		if indCounts == nil {
 			indCounts = []IndustryCount{}
 		}
+		if srcCounts == nil {
+			srcCounts = []SourceCount{}
+		}
+		hasFilters := req.Q != "" || len(industries) > 0 || len(sources) > 0 ||
+			collected != 0 || req.HideExpired || req.Remote || req.Leadership || unread
 		return ListResp{
 			Rows:           rows,
 			Counts:         counts,
 			IndustryCounts: indCounts,
-			Empty:          emptyText(len(rows), stage, req.Q),
+			SourceCounts:   srcCounts,
+			Total:          total,
+			Empty:          emptyText(len(rows), stage, hasFilters),
 			Profile:        pid,
 		}, nil
 	})

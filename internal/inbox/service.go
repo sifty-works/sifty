@@ -16,6 +16,16 @@ import (
 	"github.com/sifty-works/sifty-server/internal/listing"
 )
 
+// Filters carries the user-supplied filter parameters for the vacancy list.
+type Filters struct {
+	Collected   int // 0 = any, 7 = last 7 days, 30 = last 30 days by first_seen
+	HideExpired bool
+	Remote      bool
+	Leadership  bool
+	Sources     []string // source keys; empty means all sources
+	Unread      bool
+}
+
 // Stage is the inbox stage of a vacancy row.
 type Stage string
 
@@ -123,8 +133,8 @@ func loadCounts(ctx context.Context, database *db.DB, profileID int64, vocabName
 // rowAndCounts fetches one vacancy row and the profile counts as a shared tail for decision paths.
 func rowAndCounts(ctx context.Context, database *db.DB, now func() time.Time, profileID, vacancyID int64, stage string, vocabNames []string) (Row, Counts, error) {
 	vis := profileVisibility(ctx, database, profileID, vocabNames)
-	// Single-vacancy fetch: visibility not applied (vacancyID != 0).
-	raws, err := listRows(ctx, database, profileID, vacancyID, stage, "", vis)
+	// Single-vacancy fetch: visibility and user filters not applied (vacancyID != 0).
+	raws, err := listRows(ctx, database, now(), profileID, vacancyID, stage, "", vis, Filters{})
 	if err != nil {
 		return Row{}, Counts{}, err
 	}
@@ -138,29 +148,35 @@ func rowAndCounts(ctx context.Context, database *db.DB, now func() time.Time, pr
 	return toRow(raws[0], now()), buildCounts(cm), nil
 }
 
-// list returns the rows, counts, industry counts and empty text for the given
-// profile, stage, query and optional industries filter. vocabNames is used to
-// restrict the profile's target industries in the visibility filter.
-func list(ctx context.Context, database *db.DB, now func() time.Time, profileID int64, stage, q string, vocabNames []string, industries []string) ([]Row, Counts, []IndustryCount, error) {
+// list returns the rows, counts, industry counts, source counts and total for
+// the given profile, stage, query, industries filter and user Filters.
+// vocabNames restricts the profile's target industries in the visibility filter.
+// total is the stage count before the query and f are applied.
+func list(ctx context.Context, database *db.DB, now func() time.Time, profileID int64, stage, q string, vocabNames []string, industries []string, f Filters) ([]Row, Counts, []IndustryCount, []SourceCount, int, error) {
 	vis := profileVisibility(ctx, database, profileID, vocabNames)
 	cm, err := stageCounts(ctx, database, profileID, vis)
 	if err != nil {
-		return nil, Counts{}, nil, err
-	}
-	indCounts, err := industryCounts(ctx, database, profileID, stage, q, vis)
-	if err != nil {
-		return nil, Counts{}, nil, err
-	}
-	raw, err := listRows(ctx, database, profileID, 0, stage, q, vis, industries...)
-	if err != nil {
-		return nil, Counts{}, nil, err
+		return nil, Counts{}, nil, nil, 0, err
 	}
 	t := now()
+	indCounts, err := industryCounts(ctx, database, t, profileID, stage, q, vis, f)
+	if err != nil {
+		return nil, Counts{}, nil, nil, 0, err
+	}
+	srcCounts, err := sourceCounts(ctx, database, t, profileID, stage, q, vis, industries, f)
+	if err != nil {
+		return nil, Counts{}, nil, nil, 0, err
+	}
+	raw, err := listRows(ctx, database, t, profileID, 0, stage, q, vis, f, industries...)
+	if err != nil {
+		return nil, Counts{}, nil, nil, 0, err
+	}
 	rows := make([]Row, len(raw))
 	for i, rr := range raw {
 		rows[i] = toRow(rr, t)
 	}
-	return rows, buildCounts(cm), indCounts, nil
+	total := cm[stage]
+	return rows, buildCounts(cm), indCounts, srcCounts, total, nil
 }
 
 // applyDecision validates and executes a stage transition.
@@ -323,11 +339,12 @@ func appliedText(appliedAt, profileName, stage string, now time.Time) string {
 }
 
 // emptyText returns the empty-state text for the stage.
-func emptyText(rowCount int, stage, q string) string {
+// hasFilters is true when any query or filter is active.
+func emptyText(rowCount int, stage string, hasFilters bool) string {
 	if rowCount > 0 {
 		return ""
 	}
-	if q != "" {
+	if hasFilters {
 		return "No matching roles. Adjust your filters."
 	}
 	switch stage {
@@ -530,16 +547,16 @@ func vacancyView(ctx context.Context, database *db.DB, now func() time.Time,
 		return VacancyView{}, err
 	}
 
-	// Single-vacancy fetch: visibility not applied (vacancyID != 0).
-	raws, err := listRows(ctx, database, profileID, vacancyID, stage, "", candidate.Filter{})
+	t := now()
+
+	// Single-vacancy fetch: visibility and user filters not applied (vacancyID != 0).
+	raws, err := listRows(ctx, database, t, profileID, vacancyID, stage, "", candidate.Filter{}, Filters{})
 	if err != nil {
 		return VacancyView{}, err
 	}
 	if len(raws) == 0 {
 		return VacancyView{}, apperr.NotFound{Message: "Role not found."}
 	}
-
-	t := now()
 	row := toRow(raws[0], t)
 
 	sources := make([]VacancySource, 0, len(vd.sources))

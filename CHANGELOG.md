@@ -4,6 +4,7 @@ Notable changes of Sifty, newest first. Versions follow `MAJOR.MINOR.PATCH`.
 
 ## Unreleased
 
+- Lists filter by first-seen date (7 or 30 days), hide expired vacancies, keep only remote or leadership roles, keep only chosen sources, and keep only unread vacancies; each response counts the vacancies per industry and per source with the other filters applied, and gives the stage total before the query and filters.
 - The built-in web client is sifty-web 0.2.0: the profile page with the switcher, every section in read and edit mode with inheritance, the photo, Questions & Answers and per-profile exclusions.
 - The interface description gives a profile's inherited fields as an object of field name to source profile; before, it called it a string.
 - Every vacancy carries its industries, matched by the keywords of an editable vocabulary of industries (whole words and phrases in the title, tags and text); `GET/PUT /api/industries` reads and saves the vocabulary, and saving reassigns every vacancy in the background. Lists show each vacancy's industries, filter by industry and count each one. A profile's target industries, own or inherited, keep out of its Inbox the vacancies whose industries are all elsewhere; names not in the vocabulary are ignored. `sifty import-v1` assigns industries to every vacancy and lists, without importing, the previous free-text target industries.

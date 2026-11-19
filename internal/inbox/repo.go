@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/sifty-works/sifty-server/internal/apperr"
 	"github.com/sifty-works/sifty-server/internal/candidate"
@@ -142,12 +143,96 @@ type IndustryCount struct {
 	Count int    `json:"count"`
 }
 
+// SourceCount is one entry in the per-source count returned by the list.
+type SourceCount struct {
+	Name  string `json:"name"`
+	Count int    `json:"count"`
+}
+
+// remoteSQL is a SQL predicate that holds when the vacancy location contains
+// "remote", "anywhere", or "telecommute" as whole words after lightweight
+// normalisation (lowercase, hyphens and middle-dots replaced with spaces).
+// char(183) is U+00B7 MIDDLE DOT (·).
+const remoteSQL = `(` +
+	`instr(' '||lower(replace(replace(v.location,'-',' '),char(183),' '))||' ',' remote ')>0 OR ` +
+	`instr(' '||lower(replace(replace(v.location,'-',' '),char(183),' '))||' ',' anywhere ')>0 OR ` +
+	`instr(' '||lower(replace(replace(v.location,'-',' '),char(183),' '))||' ',' telecommute ')>0` +
+	`)`
+
+// leadershipClause returns the SQL predicate and bound args that hold when the
+// vacancy title contains CTO, Head, Director, Manager, or Lead as whole words.
+// Lead is excluded when "lead generation" also appears in the title.
+// The title column of vacancy_fts holds pre-normalised text so padded phrase
+// queries follow the same pattern as roleClause in the candidate package.
+func leadershipClause() (string, []any) {
+	mk := func(term string) string {
+		norm := listing.FTSNorm(term)
+		return `title: "` + strings.ReplaceAll(norm, `"`, `""`) + `"`
+	}
+	leadMatch := mk("lead")
+	leadGenMatch := mk("lead generation")
+	args := []any{mk("CTO"), mk("Head"), mk("Director"), mk("Manager"), leadMatch, leadGenMatch}
+	sql := `(` +
+		`v.id IN (SELECT rowid FROM vacancy_fts WHERE vacancy_fts MATCH ?) OR ` +
+		`v.id IN (SELECT rowid FROM vacancy_fts WHERE vacancy_fts MATCH ?) OR ` +
+		`v.id IN (SELECT rowid FROM vacancy_fts WHERE vacancy_fts MATCH ?) OR ` +
+		`v.id IN (SELECT rowid FROM vacancy_fts WHERE vacancy_fts MATCH ?) OR ` +
+		`(v.id IN (SELECT rowid FROM vacancy_fts WHERE vacancy_fts MATCH ?) AND ` +
+		`v.id NOT IN (SELECT rowid FROM vacancy_fts WHERE vacancy_fts MATCH ?))` +
+		`)`
+	return sql, args
+}
+
+// filterClauses returns SQL fragments and bound args for the user-supplied
+// Filters f. When skipSources is true the sources clause is omitted so the
+// caller can count across all sources while still honouring every other filter.
+func filterClauses(now time.Time, f Filters, skipSources bool) ([]string, []any) {
+	var parts []string
+	var args []any
+
+	if f.Collected != 0 {
+		cutoff := now.AddDate(0, 0, -f.Collected).UTC().Format(time.RFC3339)
+		parts = append(parts, "v.first_seen>=?")
+		args = append(args, cutoff)
+	}
+
+	if f.HideExpired {
+		parts = append(parts, "(v.expires_at='' OR v.expires_at>?)")
+		args = append(args, now.UTC().Format(time.RFC3339))
+	}
+
+	if f.Remote {
+		parts = append(parts, remoteSQL)
+	}
+
+	if f.Leadership {
+		lSQL, lArgs := leadershipClause()
+		parts = append(parts, lSQL)
+		args = append(args, lArgs...)
+	}
+
+	if !skipSources && len(f.Sources) > 0 {
+		ph := make([]string, len(f.Sources))
+		for i, s := range f.Sources {
+			ph[i] = "?"
+			args = append(args, s)
+		}
+		parts = append(parts, "v.id IN (SELECT vacancy_id FROM vacancy_source WHERE source IN ("+strings.Join(ph, ",")+"))")
+	}
+
+	if f.Unread {
+		parts = append(parts, "v.seen_at=''")
+	}
+
+	return parts, args
+}
+
 // industryCounts returns the number of vacancies per industry for the given
-// profile and stage, applying visibility (inbox only), exclusions and the
-// query q — the same filters as the row list — but NOT the industries filter
-// itself. Only industries with at least one vacancy are returned, sorted
-// alphabetically.
-func industryCounts(ctx context.Context, database *db.DB, profileID int64, stage, q string, vis candidate.Filter) ([]IndustryCount, error) {
+// profile and stage, applying visibility (inbox only), exclusions, the query q
+// and all Filters f — the same conditions as the row list — but NOT the
+// industries filter itself. Only industries with at least one vacancy are
+// returned, sorted alphabetically.
+func industryCounts(ctx context.Context, database *db.DB, now time.Time, profileID int64, stage, q string, vis candidate.Filter, f Filters) ([]IndustryCount, error) {
 	isInbox := stage == "inbox"
 	low := strings.ToLower(strings.TrimSpace(q))
 
@@ -183,6 +268,12 @@ func industryCounts(ctx context.Context, database *db.DB, profileID int64, stage
 		}
 	}
 
+	fParts, fArgs := filterClauses(now, f, false)
+	for _, p := range fParts {
+		where += ` AND ` + p
+	}
+	args = append(args, fArgs...)
+
 	rows, err := database.QueryContext(ctx, `
 		SELECT j.value, COUNT(*)
 		FROM vacancy v
@@ -204,6 +295,92 @@ func industryCounts(ctx context.Context, database *db.DB, profileID int64, stage
 			return nil, fmt.Errorf("inbox: industry counts scan: %w", err)
 		}
 		out = append(out, ic)
+	}
+	return out, rows.Err()
+}
+
+// sourceCounts returns the number of vacancies per source key for the given
+// profile and stage, applying the same conditions as industryCounts but NOT
+// the sources filter. Only sources with at least one vacancy are returned,
+// sorted alphabetically by source key.
+func sourceCounts(ctx context.Context, database *db.DB, now time.Time, profileID int64, stage, q string, vis candidate.Filter, industries []string, f Filters) ([]SourceCount, error) {
+	isInbox := stage == "inbox"
+	low := strings.ToLower(strings.TrimSpace(q))
+
+	var join, where string
+	var args []any
+	if isInbox {
+		join = `LEFT JOIN decision d ON d.vacancy=v.id AND d.profile=?`
+		where = `d.vacancy IS NULL AND ` + notExcludedFor
+		args = []any{profileID, profileID}
+		if vis.SQL != "" {
+			where += ` AND (` + vis.SQL + `)`
+			args = append(args, vis.Args...)
+		}
+	} else {
+		join = `JOIN decision d ON d.vacancy=v.id AND d.profile=? AND d.stage=?`
+		where = notExcludedFor
+		args = []any{profileID, stage, profileID}
+	}
+
+	if low != "" {
+		if len([]rune(q)) >= 3 {
+			normQ := strings.TrimSpace(listing.FTSNorm(q))
+			if normQ != "" {
+				where += ` AND (instr(lower(v.title),?)>0 OR instr(lower(v.company),?)>0 OR instr(lower(v.tags),?)>0 OR v.id IN (SELECT rowid FROM vacancy_fts WHERE vacancy_fts MATCH ?))`
+				args = append(args, low, low, low, `text: "`+strings.ReplaceAll(normQ, `"`, `""`)+`"`)
+			} else {
+				where += ` AND (instr(lower(v.title),?)>0 OR instr(lower(v.company),?)>0 OR instr(lower(v.tags),?)>0)`
+				args = append(args, low, low, low)
+			}
+		} else {
+			where += ` AND (instr(lower(v.title),?)>0 OR instr(lower(v.company),?)>0 OR instr(lower(v.tags),?)>0)`
+			args = append(args, low, low, low)
+		}
+	}
+
+	if len(industries) > 0 {
+		var iparts []string
+		for _, ind := range industries {
+			ind = strings.TrimSpace(ind)
+			if ind == "" {
+				continue
+			}
+			iparts = append(iparts, "EXISTS (SELECT 1 FROM json_each(v.industries) WHERE value=?)")
+			args = append(args, ind)
+		}
+		if len(iparts) > 0 {
+			where += ` AND (` + strings.Join(iparts, " OR ") + `)`
+		}
+	}
+
+	fParts, fArgs := filterClauses(now, f, true) // skip sources
+	for _, p := range fParts {
+		where += ` AND ` + p
+	}
+	args = append(args, fArgs...)
+
+	rows, err := database.QueryContext(ctx, `
+		SELECT vs.source, COUNT(DISTINCT v.id)
+		FROM vacancy v
+		`+join+`
+		JOIN vacancy_source vs ON vs.vacancy_id=v.id
+		WHERE `+where+`
+		GROUP BY vs.source
+		ORDER BY vs.source`,
+		args...,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("inbox: source counts: %w", err)
+	}
+	defer rows.Close()
+	var out []SourceCount
+	for rows.Next() {
+		var sc SourceCount
+		if err := rows.Scan(&sc.Name, &sc.Count); err != nil {
+			return nil, fmt.Errorf("inbox: source counts scan: %w", err)
+		}
+		out = append(out, sc)
 	}
 	return out, rows.Err()
 }
@@ -255,11 +432,11 @@ func stageCounts(ctx context.Context, database *db.DB, profileID int64, vis cand
 }
 
 // listRows returns vacancy rows for the given profile and stage,
-// optionally filtered by query q and by industry names. When vacancyID is
-// non-zero only that vacancy is returned.
+// optionally filtered by query q, Filters f and by industry names.
+// When vacancyID is non-zero only that vacancy is returned and f is ignored.
 // vis is applied to inbox listings only (stage == "inbox" and vacancyID == 0);
 // it is ignored for decided stages and for single-vacancy fetches.
-func listRows(ctx context.Context, database *db.DB, profileID, vacancyID int64, stage, q string, vis candidate.Filter, industries ...string) ([]repoRow, error) {
+func listRows(ctx context.Context, database *db.DB, now time.Time, profileID, vacancyID int64, stage, q string, vis candidate.Filter, f Filters, industries ...string) ([]repoRow, error) {
 	isInbox := stage == "inbox"
 	low := strings.ToLower(strings.TrimSpace(q))
 
@@ -325,6 +502,16 @@ func listRows(ctx context.Context, database *db.DB, profileID, vacancyID int64, 
 		if len(parts) > 0 {
 			where += ` AND (` + strings.Join(parts, " OR ") + `)`
 		}
+	}
+
+	// Apply user filters (collected, hideExpired, remote, leadership, sources,
+	// unread) for list requests only; single-vacancy fetches ignore them.
+	if vacancyID == 0 {
+		fParts, fArgs := filterClauses(now, f, false)
+		for _, p := range fParts {
+			where += ` AND ` + p
+		}
+		args = append(args, fArgs...)
 	}
 
 	sqlRows, err := database.QueryContext(ctx,
