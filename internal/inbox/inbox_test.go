@@ -160,10 +160,27 @@ func post(url, title, company string) listing.Posting {
 	}
 }
 
+// setProfileData writes search fields to profile 1 so the inbox visibility filter
+// selects the vacancies the test expects. Use invented terms only.
+func setProfileData(t *testing.T, d *db.DB, roles, keywords, allOf []string) {
+	t.Helper()
+	type pd struct {
+		Name     string   `json:"name"`
+		Roles    []string `json:"targetRoles,omitempty"`
+		Keywords []string `json:"keywords,omitempty"`
+		AllOf    []string `json:"allOf,omitempty"`
+	}
+	b, _ := json.Marshal(pd{Name: "Profile", Roles: roles, Keywords: keywords, AllOf: allOf})
+	if _, err := d.Exec(`UPDATE profile SET data=? WHERE id=1`, string(b)); err != nil {
+		t.Fatalf("setProfileData: %v", err)
+	}
+}
+
 // --- Rows and fields ---
 
 func TestRows_AllFieldsPresent(t *testing.T) {
 	d := openTestDB(t)
+	setProfileData(t, d, nil, []string{"description"}, nil)
 	add(t, newCat(d), listing.Posting{
 		URL: "https://example.com/jobs/1", Title: "Backend Engineer",
 		Company: "Acme Corp", Location: "Remote · EU",
@@ -208,6 +225,7 @@ func TestPublicationLine_Forms(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			d := openTestDB(t)
+			setProfileData(t, d, nil, []string{"description"}, nil)
 			p := post("https://example.com/jobs/pl-"+tc.name, "Engineer", "Acme")
 			p.Published = tc.pubAt
 			p.PublishedBasis = tc.basis
@@ -227,6 +245,7 @@ func TestPublicationLine_Forms(t *testing.T) {
 
 func TestOrder_ThreeRanks(t *testing.T) {
 	d := openTestDB(t)
+	setProfileData(t, d, nil, []string{"job"}, nil)
 	cat := newCat(d)
 	for _, p := range []listing.Posting{
 		{URL: "https://example.com/jobs/ord1", Title: "Rank2", Company: "Co",
@@ -256,6 +275,7 @@ func TestOrder_ThreeRanks(t *testing.T) {
 
 func TestOrder_TieBreakByFirstSeenThenID(t *testing.T) {
 	d := openTestDB(t)
+	setProfileData(t, d, nil, []string{"description"}, nil)
 	t1 := time.Date(2026, 11, 1, 10, 0, 0, 0, time.UTC)
 	t2 := time.Date(2026, 11, 2, 10, 0, 0, 0, time.UTC)
 	add(t, catalog.New(d, func() time.Time { return t1 }),
@@ -275,6 +295,7 @@ func TestOrder_TieBreakByFirstSeenThenID(t *testing.T) {
 
 func TestSearch(t *testing.T) {
 	d := openTestDB(t)
+	setProfileData(t, d, nil, []string{"backend", "designer", "engineer"}, nil)
 	cat := newCat(d)
 	add(t, cat, listing.Posting{
 		URL: "https://example.com/jobs/s1", Title: "Golang Backend", Company: "Acme Corp",
@@ -404,6 +425,7 @@ func TestExclusions_Preview(t *testing.T) {
 
 func TestExclusions_Filter(t *testing.T) {
 	d := openTestDB(t)
+	setProfileData(t, d, nil, []string{"job"}, nil)
 	cat := newCat(d)
 	add(t, cat, post("https://example.com/jobs/ex1", "Frontend Developer", "Globex"))
 	add(t, cat, post("https://example.com/jobs/ex2", "Backend Engineer", "Acme Corp"))
@@ -445,6 +467,7 @@ func TestExclusions_Filter(t *testing.T) {
 
 func TestExclusions_UnknownPlaceholderNotMatchedByWord(t *testing.T) {
 	d := openTestDB(t)
+	setProfileData(t, d, nil, []string{"description"}, nil)
 	cat := newCat(d)
 	add(t, cat, post("https://example.com/jobs/unk1", "Frontend Developer", ""))
 	add(t, cat, post("https://example.com/jobs/unk2", "Unknown Role", "Nexus"))
@@ -462,6 +485,7 @@ func TestExclusions_UnknownPlaceholderNotMatchedByWord(t *testing.T) {
 
 func TestEmpty(t *testing.T) {
 	d := openTestDB(t)
+	setProfileData(t, d, nil, []string{"description"}, nil)
 	ts := newTestServer(t, d)
 	body := apiGet(t, ts, "/api/vacancies")
 	if empty, _ := body["empty"].(string); empty != "Inbox zero. Collect more jobs in Settings → Sources." {
@@ -494,6 +518,7 @@ func TestEmpty(t *testing.T) {
 
 func TestListStages_CountsAndRows(t *testing.T) {
 	d := openTestDB(t)
+	setProfileData(t, d, nil, []string{"description"}, nil)
 	cat := newCat(d)
 	id1 := add(t, cat, post("https://example.com/jobs/st1", "Alpha", "Co"))
 	id2 := add(t, cat, post("https://example.com/jobs/st2", "Beta", "Co"))
@@ -534,6 +559,7 @@ func TestListStages_CountsAndRows(t *testing.T) {
 
 func TestListStages_AppliedOrder_AndAppliedText(t *testing.T) {
 	d := openTestDB(t)
+	setProfileData(t, d, nil, []string{"description"}, nil)
 	cat := newCat(d)
 	id1 := add(t, cat, post("https://example.com/jobs/ao1", "Older", "Co"))
 	id2 := add(t, cat, post("https://example.com/jobs/ao2", "Newer", "Co"))
@@ -574,6 +600,7 @@ func TestListStages_AppliedOrder_AndAppliedText(t *testing.T) {
 
 func TestListStages_ExclusionsApplyToAllStages(t *testing.T) {
 	d := openTestDB(t)
+	setProfileData(t, d, nil, []string{"description"}, nil)
 	cat := newCat(d)
 	id1 := add(t, cat, post("https://example.com/jobs/ea1", "Kotlin Dev", "Co"))
 	add(t, cat, post("https://example.com/jobs/ea2", "Go Dev", "Co"))
@@ -847,9 +874,10 @@ func TestVacancyView_StageActionsAndStatus(t *testing.T) {
 // the view response and the list row when expires_at is in the past.
 func TestVacancyView_ExpiredVacancy(t *testing.T) {
 	d := openTestDB(t)
+	setProfileData(t, d, nil, []string{"description"}, nil)
 	p := listing.Posting{
 		URL: "https://example.com/jobs/exp1", Title: "R", Company: "Co",
-		Text: "d", TextKind: listing.Plain, TextState: listing.TextFull,
+		Text: "job description", TextKind: listing.Plain, TextState: listing.TextFull,
 		Expires: time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC), // before testNow
 	}
 	id := add(t, newCat(d), p)
@@ -997,5 +1025,323 @@ func TestVacancyView_AliasedVacancyAndNotFound(t *testing.T) {
 	_, status = apiGetRaw(t, ts, fmt.Sprintf("/api/vacancies/%d?profile=99999", keptID))
 	if status != http.StatusNotFound {
 		t.Errorf("unknown profile: status %d, want 404", status)
+	}
+}
+
+// --- Visibility ---
+
+// TestVisibility_RolesOnly checks that target roles filter the inbox by title.
+func TestVisibility_RolesOnly(t *testing.T) {
+	d := openTestDB(t)
+	cat := newCat(d)
+	setProfileData(t, d, []string{"engineer"}, nil, nil)
+	add(t, cat, listing.Posting{
+		URL: "https://example.com/jobs/ro1", Title: "Senior Engineer", Company: "Acme",
+		Text: "job description", TextKind: listing.Plain, TextState: listing.TextFull,
+	})
+	add(t, cat, listing.Posting{
+		URL: "https://example.com/jobs/ro2", Title: "Product Manager", Company: "Acme",
+		Text: "job description", TextKind: listing.Plain, TextState: listing.TextFull,
+	})
+	rs := getRows(apiGet(t, newTestServer(t, d), "/api/vacancies"))
+	if len(rs) != 1 {
+		t.Fatalf("roles only: rows %d, want 1", len(rs))
+	}
+	if got := field(rs[0], "title"); got != "Senior Engineer" {
+		t.Errorf("roles only: title %q, want Senior Engineer", got)
+	}
+}
+
+// TestVisibility_KeywordsOnly checks that keywords filter the inbox by title, tags and text.
+func TestVisibility_KeywordsOnly(t *testing.T) {
+	d := openTestDB(t)
+	cat := newCat(d)
+	setProfileData(t, d, nil, []string{"golang"}, nil)
+	add(t, cat, listing.Posting{
+		URL: "https://example.com/jobs/kw1", Title: "Golang Backend", Company: "Acme",
+		Text: "systems programming", TextKind: listing.Plain, TextState: listing.TextFull,
+	})
+	add(t, cat, listing.Posting{
+		URL: "https://example.com/jobs/kw2", Title: "Python Developer", Company: "Acme",
+		Text: "data science work", TextKind: listing.Plain, TextState: listing.TextFull,
+	})
+	rs := getRows(apiGet(t, newTestServer(t, d), "/api/vacancies"))
+	if len(rs) != 1 {
+		t.Fatalf("keywords only: rows %d, want 1", len(rs))
+	}
+	if got := field(rs[0], "title"); got != "Golang Backend" {
+		t.Errorf("keywords only: title %q, want Golang Backend", got)
+	}
+}
+
+// TestVisibility_RolesAndKeywords checks that both role and keyword must match
+// when the profile has both.
+func TestVisibility_RolesAndKeywords(t *testing.T) {
+	d := openTestDB(t)
+	cat := newCat(d)
+	setProfileData(t, d, []string{"engineer"}, []string{"backend"}, nil)
+	// Matches both: role "engineer" in title and keyword "backend" in title.
+	add(t, cat, listing.Posting{
+		URL: "https://example.com/jobs/rk1", Title: "Backend Engineer", Company: "Acme",
+		Text: "orchestration", TextKind: listing.Plain, TextState: listing.TextFull,
+	})
+	// Role matches, keyword does not appear anywhere.
+	add(t, cat, listing.Posting{
+		URL: "https://example.com/jobs/rk2", Title: "Frontend Engineer", Company: "Acme",
+		Text: "design systems", TextKind: listing.Plain, TextState: listing.TextFull,
+	})
+	// Keyword matches by title, role does not appear anywhere.
+	add(t, cat, listing.Posting{
+		URL: "https://example.com/jobs/rk3", Title: "Backend Specialist", Company: "Acme",
+		Text: "cloud services", TextKind: listing.Plain, TextState: listing.TextFull,
+	})
+	// Neither matches.
+	add(t, cat, listing.Posting{
+		URL: "https://example.com/jobs/rk4", Title: "Product Manager", Company: "Acme",
+		Text: "roadmap planning", TextKind: listing.Plain, TextState: listing.TextFull,
+	})
+	rs := getRows(apiGet(t, newTestServer(t, d), "/api/vacancies"))
+	if len(rs) != 1 {
+		t.Fatalf("roles+keywords: rows %d, want 1", len(rs))
+	}
+	if got := field(rs[0], "title"); got != "Backend Engineer" {
+		t.Errorf("roles+keywords: title %q, want Backend Engineer", got)
+	}
+}
+
+// TestVisibility_NeitherEmpty checks that a profile with no roles and no keywords
+// sees an empty Inbox.
+func TestVisibility_NeitherEmpty(t *testing.T) {
+	d := openTestDB(t)
+	cat := newCat(d)
+	add(t, cat, post("https://example.com/jobs/ne1", "Engineer", "Acme"))
+	add(t, cat, post("https://example.com/jobs/ne2", "Developer", "Acme"))
+	body := apiGet(t, newTestServer(t, d), "/api/vacancies")
+	if rs := getRows(body); len(rs) != 0 {
+		t.Errorf("neither roles nor keywords: rows %d, want 0", len(rs))
+	}
+	if countOf(body, "inbox") != 0 {
+		t.Errorf("neither roles nor keywords: inbox count %v, want 0", countOf(body, "inbox"))
+	}
+}
+
+// TestVisibility_AllOf checks that every "All of these" term must appear in a vacancy
+// for it to be visible in the inbox.
+func TestVisibility_AllOf(t *testing.T) {
+	d := openTestDB(t)
+	cat := newCat(d)
+	setProfileData(t, d, nil, []string{"senior"}, []string{"typescript"})
+	// Keyword "senior" and allOf term "typescript" both present in title.
+	add(t, cat, listing.Posting{
+		URL: "https://example.com/jobs/alof1", Title: "Senior TypeScript Developer", Company: "Acme",
+		Text: "frontend work", TextKind: listing.Plain, TextState: listing.TextFull,
+	})
+	// Keyword matches but allOf term absent everywhere.
+	add(t, cat, listing.Posting{
+		URL: "https://example.com/jobs/alof2", Title: "Senior Python Developer", Company: "Acme",
+		Text: "data work", TextKind: listing.Plain, TextState: listing.TextFull,
+	})
+	// Neither keyword nor allOf term present.
+	add(t, cat, listing.Posting{
+		URL: "https://example.com/jobs/alof3", Title: "Junior Developer", Company: "Acme",
+		Text: "learning path", TextKind: listing.Plain, TextState: listing.TextFull,
+	})
+	rs := getRows(apiGet(t, newTestServer(t, d), "/api/vacancies"))
+	if len(rs) != 1 {
+		t.Fatalf("allOf: rows %d, want 1", len(rs))
+	}
+	if got := field(rs[0], "title"); got != "Senior TypeScript Developer" {
+		t.Errorf("allOf: title %q, want Senior TypeScript Developer", got)
+	}
+}
+
+// TestVisibility_ShortTerm checks that a term shorter than three characters
+// matches as a whole word in the title, tags and text; it does not match a
+// vacancy where the letters appear only inside a longer word.
+func TestVisibility_ShortTerm(t *testing.T) {
+	d := openTestDB(t)
+	cat := newCat(d)
+	setProfileData(t, d, nil, []string{"ai"}, nil) // "ai" is 2 chars: whole-word match
+	// "ai" appears in the title.
+	add(t, cat, listing.Posting{
+		URL: "https://example.com/jobs/sh1", Title: "AI Researcher", Company: "Acme",
+		Text: "language models", TextKind: listing.Plain, TextState: listing.TextFull,
+	})
+	// "ai" appears as a whole word in the body text.
+	add(t, cat, listing.Posting{
+		URL: "https://example.com/jobs/sh2", Title: "Data Scientist", Company: "Acme",
+		Text: "working with ai systems daily", TextKind: listing.Plain, TextState: listing.TextFull,
+	})
+	// "ai" appears only inside longer words; should not match.
+	add(t, cat, listing.Posting{
+		URL: "https://example.com/jobs/sh3", Title: "Engineer", Company: "Acme",
+		Text: "detail-oriented daily work", TextKind: listing.Plain, TextState: listing.TextFull,
+	})
+	rs := getRows(apiGet(t, newTestServer(t, d), "/api/vacancies"))
+	if len(rs) != 2 {
+		t.Fatalf("short term: rows %d, want 2", len(rs))
+	}
+	titles := map[string]bool{field(rs[0], "title"): true, field(rs[1], "title"): true}
+	if !titles["AI Researcher"] || !titles["Data Scientist"] {
+		t.Errorf("short term: titles %v, want AI Researcher and Data Scientist", titles)
+	}
+}
+
+// TestVisibility_PerProfileExclusion checks that a word exclusion scoped to one profile
+// hides a vacancy for that profile only.
+func TestVisibility_PerProfileExclusion(t *testing.T) {
+	d := openTestDB(t)
+	cat := newCat(d)
+	setProfileData(t, d, nil, []string{"role"}, nil)
+	add(t, cat, listing.Posting{
+		URL: "https://example.com/jobs/pe1", Title: "Restricted Role", Company: "Acme",
+		Text: "some work", TextKind: listing.Plain, TextState: listing.TextFull,
+	})
+	add(t, cat, listing.Posting{
+		URL: "https://example.com/jobs/pe2", Title: "Open Role", Company: "Acme",
+		Text: "other work", TextKind: listing.Plain, TextState: listing.TextFull,
+	})
+	// Add a word exclusion for profile 1 only (not all profiles).
+	d.Exec(`INSERT INTO exclusion (kind,value,norm,profile_id,created) VALUES ('word','restricted','restricted',1,'2026-01-01T00:00:00Z')`) //nolint:errcheck
+
+	rs := getRows(apiGet(t, newTestServer(t, d), "/api/vacancies"))
+	if len(rs) != 1 {
+		t.Fatalf("per-profile exclusion: rows %d, want 1", len(rs))
+	}
+	if got := field(rs[0], "title"); got != "Open Role" {
+		t.Errorf("per-profile exclusion: title %q, want Open Role", got)
+	}
+}
+
+// TestVisibility_DecidedVacancyStaysWhenSearchNoLongerFits checks that a vacancy
+// in Shortlist remains there even after the profile search changes so the vacancy
+// no longer matches, and that the inbox count is 0.
+func TestVisibility_DecidedVacancyStaysWhenSearchNoLongerFits(t *testing.T) {
+	d := openTestDB(t)
+	cat := newCat(d)
+	setProfileData(t, d, nil, []string{"golang"}, nil)
+	id1 := add(t, cat, listing.Posting{
+		URL: "https://example.com/jobs/dv1", Title: "Golang Developer", Company: "Acme",
+		Text: "systems programming", TextKind: listing.Plain, TextState: listing.TextFull,
+	})
+	ts := newTestServer(t, d)
+	now := testNow.UTC().Format(time.RFC3339)
+	// Move to Shortlist while the vacancy fits the search.
+	d.Exec(`INSERT INTO decision (profile,vacancy,stage,reason,decided_at) VALUES (1,?,?,?,?)`, //nolint:errcheck
+		id1, "shortlist", "", now)
+
+	// Change profile search so the vacancy no longer fits Inbox.
+	setProfileData(t, d, nil, []string{"python"}, nil)
+
+	// Shortlist still contains the vacancy.
+	if rs := getRows(apiGet(t, ts, "/api/vacancies?stage=shortlist")); len(rs) != 1 {
+		t.Errorf("shortlist after search change: rows %d, want 1", len(rs))
+	}
+	// Inbox is empty (vacancy is decided; no other vacancies match "python").
+	body := apiGet(t, ts, "/api/vacancies?stage=inbox")
+	if countOf(body, "inbox") != 0 {
+		t.Errorf("inbox count after search change: %v, want 0", countOf(body, "inbox"))
+	}
+	if countOf(body, "shortlist") != 1 {
+		t.Errorf("shortlist count after search change: %v, want 1", countOf(body, "shortlist"))
+	}
+}
+
+// --- Whole-word FTS matching tests ---
+
+// TestVisibility_WholeWordRole checks that a target role matches whole words
+// only: "CTO" finds a vacancy titled "Interim CTO (remote)" but not one titled
+// "Director of Sales".
+func TestVisibility_WholeWordRole(t *testing.T) {
+	d := openTestDB(t)
+	cat := newCat(d)
+	setProfileData(t, d, []string{"CTO"}, nil, nil)
+	add(t, cat, listing.Posting{
+		URL: "https://example.com/jobs/wwr1", Title: "Director of Sales", Company: "Acme",
+		Text: "lead the sales team", TextKind: listing.Plain, TextState: listing.TextFull,
+	})
+	id2 := add(t, cat, listing.Posting{
+		URL: "https://example.com/jobs/wwr2", Title: "Interim CTO (remote)", Company: "Acme",
+		Text: "lead the engineering team", TextKind: listing.Plain, TextState: listing.TextFull,
+	})
+	ts := newTestServer(t, d)
+	rs := getRows(apiGet(t, ts, "/api/vacancies"))
+	if len(rs) != 1 || rowID(rs[0]) != float64(id2) {
+		t.Errorf("whole word role: rows %d, want 1 with id %d", len(rs), id2)
+	}
+}
+
+// TestVisibility_ShortTermInText checks that a two-character keyword matches
+// whole words in the text column; "JS" should find a vacancy whose text
+// contains "JS" even though the term is shorter than three characters.
+func TestVisibility_ShortTermInText(t *testing.T) {
+	d := openTestDB(t)
+	cat := newCat(d)
+	setProfileData(t, d, nil, []string{"JS"}, nil)
+	id := add(t, cat, listing.Posting{
+		URL: "https://example.com/jobs/stt1", Title: "Frontend Developer", Company: "Acme",
+		Text: "Experience with JS, React, and Vue", TextKind: listing.Plain, TextState: listing.TextFull,
+	})
+	ts := newTestServer(t, d)
+	rs := getRows(apiGet(t, ts, "/api/vacancies"))
+	if len(rs) != 1 || rowID(rs[0]) != float64(id) {
+		t.Errorf("short term in text: rows %d, want 1 with id %d", len(rs), id)
+	}
+}
+
+// TestVisibility_PhraseWithPunctuation checks that a keyword containing
+// punctuation matches a vacancy where the same words appear without that
+// punctuation: "Web3.js" matches a title "Web3 JS developer".
+func TestVisibility_PhraseWithPunctuation(t *testing.T) {
+	d := openTestDB(t)
+	cat := newCat(d)
+	setProfileData(t, d, nil, []string{"Web3.js"}, nil)
+	id := add(t, cat, listing.Posting{
+		URL: "https://example.com/jobs/pwp1", Title: "Web3 JS developer", Company: "Acme",
+		TextState: listing.TextNotFetched,
+	})
+	ts := newTestServer(t, d)
+	rs := getRows(apiGet(t, ts, "/api/vacancies"))
+	if len(rs) != 1 || rowID(rs[0]) != float64(id) {
+		t.Errorf("phrase with punctuation: rows %d, want 1 with id %d", len(rs), id)
+	}
+}
+
+// TestSearch_NormalizationInText checks that the search query "node.js" is
+// normalised to "node js" before the full-text search, so it finds a vacancy
+// whose text contains "Node.js".
+func TestSearch_NormalizationInText(t *testing.T) {
+	d := openTestDB(t)
+	cat := newCat(d)
+	setProfileData(t, d, nil, []string{"developer"}, nil)
+	id := add(t, cat, listing.Posting{
+		URL: "https://example.com/jobs/sni1", Title: "Backend Developer", Company: "Acme",
+		Text: "Using Node.js for server-side rendering", TextKind: listing.Plain, TextState: listing.TextFull,
+	})
+	ts := newTestServer(t, d)
+	rs := getRows(apiGet(t, ts, "/api/vacancies?q=node.js"))
+	if len(rs) != 1 || rowID(rs[0]) != float64(id) {
+		t.Errorf("search normalisation: rows %d, want 1 with id %d", len(rs), id)
+	}
+}
+
+// TestVisibility_IndexRebuilt checks that vacancies added before the FTS table
+// was cleared are still found after catalog.RebuildFTS restores the index.
+func TestVisibility_IndexRebuilt(t *testing.T) {
+	d := openTestDB(t)
+	cat := newCat(d)
+	setProfileData(t, d, nil, []string{"developer"}, nil)
+	id := add(t, cat, listing.Posting{
+		URL: "https://example.com/jobs/ir1", Title: "Frontend Developer", Company: "Acme",
+		TextState: listing.TextNotFetched,
+	})
+	d.Exec(`DELETE FROM vacancy_fts`) //nolint:errcheck
+	if err := catalog.RebuildFTS(context.Background(), d); err != nil {
+		t.Fatalf("RebuildFTS: %v", err)
+	}
+	ts := newTestServer(t, d)
+	rs := getRows(apiGet(t, ts, "/api/vacancies"))
+	if len(rs) != 1 || rowID(rs[0]) != float64(id) {
+		t.Errorf("after rebuild: rows %d, want 1 with id %d", len(rs), id)
 	}
 }

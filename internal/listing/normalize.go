@@ -4,11 +4,38 @@ import (
 	"bytes"
 	"html"
 	"strings"
+	"unicode"
 
 	"github.com/yuin/goldmark"
 	xhtml "golang.org/x/net/html"
 	"golang.org/x/net/html/atom"
 )
+
+// FTSNorm normalises s for the full-text index: lowercases, replaces every run
+// of non-letter/non-digit characters with a single space, and pads the result
+// with a leading and trailing space. The padding ensures that even a one- or
+// two-character term becomes a phrase of at least three characters when wrapped
+// in its own spaces, so the trigram tokenizer can match it. An empty input
+// returns a single space.
+func FTSNorm(s string) string {
+	s = strings.ToLower(s)
+	var b strings.Builder
+	b.WriteByte(' ')
+	inSpace := true
+	for _, r := range s {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			b.WriteRune(r)
+			inSpace = false
+		} else if !inSpace {
+			b.WriteByte(' ')
+			inSpace = true
+		}
+	}
+	if !inSpace {
+		b.WriteByte(' ')
+	}
+	return b.String()
+}
 
 // Normalize converts raw vacancy text of the given Kind into sanitised HTML.
 //

@@ -4,6 +4,7 @@ Notable changes of Sifty, newest first. Versions follow `MAJOR.MINOR.PATCH`.
 
 ## Unreleased
 
+- Each profile's Inbox shows only the vacancies that fit its search: target roles in the title and keywords in the title, tags or text (both when both are set), every "All of these" term, matched as whole words and phrases; exclusions of one profile hide vacancies in that profile only. `sifty import-v1` brings each profile's name, target roles, keywords, "All of these" terms and except words. In search, punctuation in the text counts as a space.
 - A vacancy text keeps every item of a list nested inside another list; before, such items were dropped or ran together.
 - The web client moved to its own repository, sifty-works/sifty-web; this repository is now sifty-works/sifty-server. A build embeds a pinned web client release, checked by its checksum, and a release refuses a web client built against another interface description. `GET /api/version` gives the build version and the checksum of the interface description.
 - The web client takes its types from the generated interface description and follows the server's actions: the target stage of each decision and the answers of the outcome dialog come from the server.

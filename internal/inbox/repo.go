@@ -4,11 +4,14 @@ package inbox
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"strings"
 
 	"github.com/sifty-works/sifty-server/internal/apperr"
+	"github.com/sifty-works/sifty-server/internal/candidate"
 	"github.com/sifty-works/sifty-server/internal/db"
+	"github.com/sifty-works/sifty-server/internal/listing"
 )
 
 // repoRow is the raw data loaded from a list query.
@@ -78,45 +81,88 @@ func resolveVacancy(ctx context.Context, database *db.DB, id int64) (int64, erro
 	return realID, nil
 }
 
-// stageCounts returns the vacancy count per stage for a profile,
-// applying all-profile exclusions but ignoring the search query.
-func stageCounts(ctx context.Context, database *db.DB, profileID int64) (map[string]int, error) {
-	rows, err := database.QueryContext(ctx, `
-		SELECT CASE WHEN d.stage IS NULL THEN 'inbox' ELSE d.stage END, COUNT(*)
-		FROM vacancy v
-		LEFT JOIN decision d ON d.vacancy=v.id AND d.profile=?
-		WHERE `+notExcluded+`
-		GROUP BY CASE WHEN d.stage IS NULL THEN 'inbox' ELSE d.stage END`,
-		profileID)
-	if err != nil {
-		return nil, fmt.Errorf("inbox: counts: %w", err)
+// loadProfileSearch reads the search fields of a profile from the database.
+func loadProfileSearch(ctx context.Context, database *db.DB, profileID int64) (candidate.Profile, error) {
+	var dataJSON string
+	err := database.QueryRowContext(ctx, `SELECT data FROM profile WHERE id=?`, profileID).Scan(&dataJSON)
+	if err == sql.ErrNoRows {
+		return candidate.Profile{}, nil
 	}
-	defer rows.Close()
+	if err != nil {
+		return candidate.Profile{}, fmt.Errorf("inbox: load profile search: %w", err)
+	}
+	var pd candidate.ProfileData
+	if err := json.Unmarshal([]byte(dataJSON), &pd); err != nil {
+		return candidate.Profile{}, nil
+	}
+	return candidate.Profile{
+		TargetRoles: pd.TargetRoles,
+		Keywords:    pd.Keywords,
+		AllOf:       pd.AllOf,
+	}, nil
+}
+
+// stageCounts returns the vacancy count per stage for a profile.
+// Decided stages (shortlist, applied, dismissed) apply per-profile exclusions.
+// The inbox count also applies the profile's visibility filter.
+func stageCounts(ctx context.Context, database *db.DB, profileID int64, vis candidate.Filter) (map[string]int, error) {
 	out := map[string]int{}
-	for rows.Next() {
+
+	// Count decided stages: apply per-profile exclusions only.
+	decidedRows, err := database.QueryContext(ctx, `
+		SELECT d.stage, COUNT(*)
+		FROM vacancy v
+		JOIN decision d ON d.vacancy=v.id AND d.profile=?
+		WHERE `+notExcludedFor+`
+		GROUP BY d.stage`,
+		profileID, profileID)
+	if err != nil {
+		return nil, fmt.Errorf("inbox: counts decided: %w", err)
+	}
+	defer decidedRows.Close()
+	for decidedRows.Next() {
 		var s string
 		var n int
-		if err := rows.Scan(&s, &n); err != nil {
+		if err := decidedRows.Scan(&s, &n); err != nil {
 			return nil, fmt.Errorf("inbox: counts scan: %w", err)
 		}
 		out[s] = n
 	}
-	return out, rows.Err()
+	if err := decidedRows.Err(); err != nil {
+		return nil, fmt.Errorf("inbox: counts decided: %w", err)
+	}
+
+	// Count inbox: vacancies without a decision for this profile that fit the search.
+	inboxArgs := append([]any{profileID, profileID}, vis.Args...)
+	var inboxCount int
+	if err := database.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM vacancy v
+		LEFT JOIN decision d ON d.vacancy=v.id AND d.profile=?
+		WHERE d.vacancy IS NULL AND `+notExcludedFor+` AND (`+vis.SQL+`)`,
+		inboxArgs...).Scan(&inboxCount); err != nil {
+		return nil, fmt.Errorf("inbox: counts inbox: %w", err)
+	}
+	out["inbox"] = inboxCount
+
+	return out, nil
 }
 
 // listRows returns vacancy rows for the given profile and stage,
 // optionally filtered by query q. When vacancyID is non-zero only that vacancy is returned.
-func listRows(ctx context.Context, database *db.DB, profileID, vacancyID int64, stage, q string) ([]repoRow, error) {
-	inbox := stage == "inbox"
+// vis is applied to inbox listings only (stage == "inbox" and vacancyID == 0);
+// it is ignored for decided stages and for single-vacancy fetches.
+func listRows(ctx context.Context, database *db.DB, profileID, vacancyID int64, stage, q string, vis candidate.Filter) ([]repoRow, error) {
+	isInbox := stage == "inbox"
 	low := strings.ToLower(strings.TrimSpace(q))
 
 	var join, stageWhere, order string
 	var baseArgs []any
-	if inbox {
+	if isInbox {
 		join = `LEFT JOIN decision d ON d.vacancy=v.id AND d.profile=?`
 		stageWhere = `d.vacancy IS NULL AND `
 		order = orderNewest
-		baseArgs = []any{profileID}
+		baseArgs = []any{profileID, profileID} // join arg, then notExcludedFor arg
 	} else {
 		join = `JOIN decision d ON d.vacancy=v.id AND d.profile=? AND d.stage=?`
 		stageWhere = ""
@@ -125,19 +171,32 @@ func listRows(ctx context.Context, database *db.DB, profileID, vacancyID int64, 
 		} else {
 			order = orderDecided
 		}
-		baseArgs = []any{profileID, stage}
+		baseArgs = []any{profileID, stage, profileID} // join args, then notExcludedFor arg
 	}
 
-	where := stageWhere + notExcluded
+	where := stageWhere + notExcludedFor
 	args := baseArgs
+
+	// Apply visibility filter to inbox listings only (not to single-vacancy fetches).
+	if isInbox && vacancyID == 0 && vis.SQL != "" {
+		where += ` AND (` + vis.SQL + `)`
+		args = append(args, vis.Args...)
+	}
+
 	if vacancyID != 0 {
 		where += ` AND v.id=?`
 		args = append(args, vacancyID)
 	}
 	if low != "" {
 		if len([]rune(q)) >= 3 {
-			where += ` AND (instr(lower(v.title),?)>0 OR instr(lower(v.company),?)>0 OR instr(lower(v.tags),?)>0 OR v.id IN (SELECT rowid FROM vacancy_fts WHERE vacancy_fts MATCH ?))`
-			args = append(args, low, low, low, ftsPhrase(q))
+			normQ := strings.TrimSpace(listing.FTSNorm(q))
+			if normQ != "" {
+				where += ` AND (instr(lower(v.title),?)>0 OR instr(lower(v.company),?)>0 OR instr(lower(v.tags),?)>0 OR v.id IN (SELECT rowid FROM vacancy_fts WHERE vacancy_fts MATCH ?))`
+				args = append(args, low, low, low, `text: "`+strings.ReplaceAll(normQ, `"`, `""`)+`"`)
+			} else {
+				where += ` AND (instr(lower(v.title),?)>0 OR instr(lower(v.company),?)>0 OR instr(lower(v.tags),?)>0)`
+				args = append(args, low, low, low)
+			}
 		} else {
 			where += ` AND (instr(lower(v.title),?)>0 OR instr(lower(v.company),?)>0 OR instr(lower(v.tags),?)>0)`
 			args = append(args, low, low, low)
@@ -175,11 +234,6 @@ func scanListRows(stage string, sqlRows *sql.Rows) ([]repoRow, error) {
 		out = append(out, row)
 	}
 	return out, sqlRows.Err()
-}
-
-// ftsPhrase wraps q as a quoted FTS5 phrase, doubling any embedded double quotes.
-func ftsPhrase(q string) string {
-	return `"` + strings.ReplaceAll(q, `"`, `""`) + `"`
 }
 
 // viewData holds the vacancy fields needed for the view endpoint that are

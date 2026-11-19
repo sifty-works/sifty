@@ -70,8 +70,8 @@ type RequirementChecker interface { /* reserved; connected only after it beats c
 
 ### Inbox and vacancy page
 
-- One SQL query builds a list. For Inbox: the profile's visibility (target roles and keywords through the full-text index, "All of these", target industries) over vacancies with no decision in the profile. For Shortlist, Applied and Dismissed: the vacancies with that decision. Exclusions apply to all four. The query joins applications and the `fit` row and sorts on the server; filters (Fit, Collected, Industries, Sources, Unread) are applied in the same query, and their counts are one `GROUP BY` each over the same set.
-- **Search** keeps substring semantics over title, company, tags and text. Title, company and tags are matched in SQL. The text is matched through the trigram full-text index `vacancy_fts`, with the query as one phrase; a query shorter than three characters matches title, company and tags only. Decompressing and scanning the bodies in Go was measured at 235 ms for 2,958 vacancies and replaced; the index answers in under 6 ms.
+- One SQL query builds a list. For Inbox: the profile's visibility (target roles matched as whole words in the `title` column of `vacancy_fts`; keywords and "All of these" terms matched as whole words across `{title tags text}` columns; target industries) over vacancies with no decision in the profile. For Shortlist, Applied and Dismissed: the vacancies with that decision. Exclusions apply to all four. The query joins applications and the `fit` row and sorts on the server; filters (Fit, Collected, Industries, Sources, Unread) are applied in the same query, and their counts are one `GROUP BY` each over the same set.
+- **Search** keeps substring semantics over title, company, tags and text. Title, company and tags are matched in SQL with `instr`. The query is normalised (lowercased, non-word runs to one space) and matched in the `text` column of the full-text index; a query shorter than three characters matches title, company and tags only. Decompressing and scanning the bodies in Go was measured at 235 ms for 2,958 vacancies and replaced; the index answers in under 6 ms.
 - The vacancy view is assembled in one package from the vacancy, its reading and `Score`; it says which actions are available and why.
 
 ### Profiles
@@ -136,7 +136,7 @@ type Response struct { Text string; InTokens, OutTokens int }
 | Table | Holds |
 |---|---|
 | `vacancy` | id, identity, title, company, addresses, location, tags, `source_fields`, dates, first and last seen, `seen_at`, apply address and employer-search state, `content_hash`, `version`, text state, `detail_requested_at`, industries (stored for SQL filtering), `body` (sanitised HTML, compressed) |
-| `vacancy_fts` | contentless full-text index (`content=''`, `contentless_delete=1`, `detail=full` for phrase queries), fed from the plain text at write |
+| `vacancy_fts` | contentless full-text index (`content=''`, `contentless_delete=1`), three columns `title`, `tags`, `text`; each column holds the pre-normalised text (lowercased, non-word runs collapsed to one space, padded with leading and trailing space) so that a phrase query with its own padding matches whole words |
 | `vacancy_source` | where and under which address a vacancy was seen |
 | `vacancy_alias` | old id → id after a merge |
 | `tombstone` | canonical address of a removed vacancy, or a legacy hash |

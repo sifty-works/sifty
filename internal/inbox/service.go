@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/sifty-works/sifty-server/internal/apperr"
+	"github.com/sifty-works/sifty-server/internal/candidate"
 	"github.com/sifty-works/sifty-server/internal/catalog"
 	"github.com/sifty-works/sifty-server/internal/db"
 	"github.com/sifty-works/sifty-server/internal/listing"
@@ -76,44 +77,64 @@ func toRow(rr repoRow, now time.Time) Row {
 	}
 }
 
-// loadCounts returns the per-stage vacancy counts for a profile.
-func loadCounts(ctx context.Context, database *db.DB, profileID int64) (Counts, error) {
-	cm, err := stageCounts(ctx, database, profileID)
+// profileVisibility loads the visibility filter for a profile.
+// Returns Filter{SQL:"1=0"} when the profile cannot be loaded.
+func profileVisibility(ctx context.Context, database *db.DB, profileID int64) candidate.Filter {
+	p, err := loadProfileSearch(ctx, database, profileID)
 	if err != nil {
-		return Counts{}, err
+		return candidate.Filter{SQL: "1=0"}
 	}
+	return candidate.Visibility(p)
+}
+
+// buildCounts converts a stage-count map to a Counts value.
+func buildCounts(cm map[string]int) Counts {
 	return Counts{
 		Inbox:     cm["inbox"],
 		Shortlist: cm["shortlist"],
 		Applied:   cm["applied"],
 		Dismissed: cm["dismissed"],
 		Archive:   cm["applied"] + cm["dismissed"],
-	}, nil
+	}
+}
+
+// loadCounts returns the per-stage vacancy counts for a profile,
+// applying the profile's search visibility to the inbox count.
+func loadCounts(ctx context.Context, database *db.DB, profileID int64) (Counts, error) {
+	vis := profileVisibility(ctx, database, profileID)
+	cm, err := stageCounts(ctx, database, profileID, vis)
+	if err != nil {
+		return Counts{}, err
+	}
+	return buildCounts(cm), nil
 }
 
 // rowAndCounts fetches one vacancy row and the profile counts as a shared tail for decision paths.
 func rowAndCounts(ctx context.Context, database *db.DB, now func() time.Time, profileID, vacancyID int64, stage string) (Row, Counts, error) {
-	raws, err := listRows(ctx, database, profileID, vacancyID, stage, "")
+	vis := profileVisibility(ctx, database, profileID)
+	// Single-vacancy fetch: visibility not applied (vacancyID != 0).
+	raws, err := listRows(ctx, database, profileID, vacancyID, stage, "", vis)
 	if err != nil {
 		return Row{}, Counts{}, err
 	}
 	if len(raws) == 0 {
 		return Row{}, Counts{}, apperr.NotFound{Message: "Role not found."}
 	}
-	counts, err := loadCounts(ctx, database, profileID)
+	cm, err := stageCounts(ctx, database, profileID, vis)
 	if err != nil {
 		return Row{}, Counts{}, err
 	}
-	return toRow(raws[0], now()), counts, nil
+	return toRow(raws[0], now()), buildCounts(cm), nil
 }
 
 // list returns the rows, counts and empty text for the given profile, stage and query.
 func list(ctx context.Context, database *db.DB, now func() time.Time, profileID int64, stage, q string) ([]Row, Counts, error) {
-	counts, err := loadCounts(ctx, database, profileID)
+	vis := profileVisibility(ctx, database, profileID)
+	cm, err := stageCounts(ctx, database, profileID, vis)
 	if err != nil {
 		return nil, Counts{}, err
 	}
-	raw, err := listRows(ctx, database, profileID, 0, stage, q)
+	raw, err := listRows(ctx, database, profileID, 0, stage, q, vis)
 	if err != nil {
 		return nil, Counts{}, err
 	}
@@ -122,7 +143,7 @@ func list(ctx context.Context, database *db.DB, now func() time.Time, profileID 
 	for i, rr := range raw {
 		rows[i] = toRow(rr, t)
 	}
-	return rows, counts, nil
+	return rows, buildCounts(cm), nil
 }
 
 // applyDecision validates and executes a stage transition.
@@ -491,7 +512,8 @@ func vacancyView(ctx context.Context, database *db.DB, now func() time.Time,
 		return VacancyView{}, err
 	}
 
-	raws, err := listRows(ctx, database, profileID, vacancyID, stage, "")
+	// Single-vacancy fetch: visibility not applied (vacancyID != 0).
+	raws, err := listRows(ctx, database, profileID, vacancyID, stage, "", candidate.Filter{})
 	if err != nil {
 		return VacancyView{}, err
 	}

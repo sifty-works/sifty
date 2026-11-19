@@ -96,6 +96,9 @@ func buildFixtureDB(t *testing.T) *db.DB {
 			t.Fatalf("upsert vacancy %d: %v", i, err)
 		}
 	}
+	// Set profile keyword so that all fixture vacancies (titles contain "engineer")
+	// appear in the inbox visibility filter.
+	database.Exec(`UPDATE profile SET data='{"name":"Profile","keywords":["engineer"]}' WHERE id=1`) //nolint:errcheck
 	return database
 }
 

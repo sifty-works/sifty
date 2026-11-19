@@ -84,6 +84,7 @@ CREATE TABLE block_rules(
 CREATE TABLE user_profiles(
   id          TEXT    PRIMARY KEY,
   revision    INTEGER NOT NULL,
+  name        TEXT    NOT NULL DEFAULT '',
   data        TEXT    NOT NULL,
   created_at  TEXT    NOT NULL,
   updated_at  TEXT    NOT NULL,
@@ -1276,18 +1277,19 @@ func TestImport_ExclusionsImported(t *testing.T) {
 	oldDB.Exec(`INSERT INTO block_rules (kind, value, created_at) VALUES ('company', 'Globex', '2024-01-01T00:00:00Z')`) //nolint:errcheck
 	// Source-kind block rule must not be imported.
 	oldDB.Exec(`INSERT INTO block_rules (kind, value, created_at) VALUES ('source', 'example.com', '2024-01-01T00:00:00Z')`) //nolint:errcheck
-	// Per-profile except-words in user_profiles.data.
+	// Per-profile except words in user_profiles: name column is empty (default),
+	// except words come from data JSON.
 	oldDB.Exec(`INSERT INTO user_profiles (id, revision, data, created_at, updated_at) VALUES ('p1', 1, '{"search":{"except":["machine learning","blockchain"]}}', '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z')`) //nolint:errcheck
 
 	targetDir := t.TempDir()
 	report := runImport(t, fromDir, targetDir)
 	newDB := openNewDB(t, targetDir)
 
-	// 2 word exclusions and 1 company exclusion should be written.
+	// 2 global word exclusions + 1 company exclusion + 2 per-profile word exclusions = 5.
 	var n int
 	newDB.QueryRow(`SELECT count(*) FROM exclusion`).Scan(&n) //nolint:errcheck
-	if n != 3 {
-		t.Errorf("exclusion count: got %d, want 3", n)
+	if n != 5 {
+		t.Errorf("exclusion count: got %d, want 5", n)
 	}
 	var kind string
 	newDB.QueryRow(`SELECT kind FROM exclusion WHERE value='Globex'`).Scan(&kind) //nolint:errcheck
@@ -1300,13 +1302,19 @@ func TestImport_ExclusionsImported(t *testing.T) {
 	if cnt != 0 {
 		t.Errorf("source block rule must not be imported: got %d", cnt)
 	}
+	// Per-profile except words are imported with the profile's new id.
+	var profExclCount int
+	newDB.QueryRow(`SELECT count(*) FROM exclusion WHERE profile_id=1`).Scan(&profExclCount) //nolint:errcheck
+	if profExclCount != 2 {
+		t.Errorf("per-profile exclusion count for profile 1: got %d, want 2", profExclCount)
+	}
 	// Report includes exclusion count.
-	if !strings.Contains(report, "Exclusions: 3 written") {
+	if !strings.Contains(report, "Exclusions: 5 written") {
 		t.Errorf("report missing exclusion count: %s", report)
 	}
-	// Report includes per-profile except-words.
-	if !strings.Contains(report, "not imported") {
-		t.Errorf("report missing per-profile except words notice: %s", report)
+	// Report includes the profile search section with the except words.
+	if !strings.Contains(report, "Profile search:") {
+		t.Errorf("report missing profile search section: %s", report)
 	}
 }
 
@@ -1327,7 +1335,8 @@ func insertJob(t *testing.T, db *sql.DB, id int64, url string) {
 	}
 }
 
-// insertProfile inserts a user_profiles row.
+// insertProfile inserts a user_profiles row. The name is stored in the name
+// column; data is left empty ({}) unless a caller sets it directly.
 func insertProfile(t *testing.T, db *sql.DB, id, name, createdAt string, archived bool) {
 	t.Helper()
 	var archivedAt interface{}
@@ -1335,11 +1344,9 @@ func insertProfile(t *testing.T, db *sql.DB, id, name, createdAt string, archive
 		archivedAt = "2024-07-01T00:00:00Z"
 	}
 	_, err := db.Exec(
-		`INSERT INTO user_profiles (id, revision, data, created_at, updated_at, archived_at)
-		 VALUES (?,1,?,?,?,?)`,
-		id,
-		fmt.Sprintf(`{"name":%q}`, name),
-		createdAt, createdAt, archivedAt,
+		`INSERT INTO user_profiles (id, revision, name, data, created_at, updated_at, archived_at)
+		 VALUES (?,1,?,?,?,?,?)`,
+		id, name, `{}`, createdAt, createdAt, archivedAt,
 	)
 	if err != nil {
 		t.Fatalf("insertProfile %q: %v", id, err)
@@ -1678,5 +1685,100 @@ func TestImport_ReadMarksMergedVacancyLatestWins(t *testing.T) {
 	newDB.QueryRow(`SELECT seen_at FROM vacancy WHERE id=10`).Scan(&seenAt) //nolint:errcheck
 	if seenAt != "2024-06-15T00:00:00Z" {
 		t.Errorf("seen_at: got %q, want later date from aliased job", seenAt)
+	}
+}
+
+func TestImport_ProfileNamesCarriedOver(t *testing.T) {
+	fromDir := makeOldDir(t, "")
+	oldDB := openOldDB(t, fromDir)
+
+	// Two profiles with distinct invented names stored in the name column.
+	insertProfile(t, oldDB, "p-m", "Meridian", "2024-01-01T00:00:00Z", false)
+	insertProfile(t, oldDB, "p-s", "Solaris", "2024-02-01T00:00:00Z", false)
+
+	targetDir := t.TempDir()
+	runImport(t, fromDir, targetDir)
+	newDB := openNewDB(t, targetDir)
+
+	var data1, data2 string
+	newDB.QueryRow(`SELECT data FROM profile WHERE id=1`).Scan(&data1) //nolint:errcheck
+	newDB.QueryRow(`SELECT data FROM profile WHERE id=2`).Scan(&data2) //nolint:errcheck
+
+	if !strings.Contains(data1, "Meridian") {
+		t.Errorf("profile 1 data: got %q, want Meridian", data1)
+	}
+	if !strings.Contains(data2, "Solaris") {
+		t.Errorf("profile 2 data: got %q, want Solaris", data2)
+	}
+}
+
+func TestImport_ProfileSearchFieldsImported(t *testing.T) {
+	fromDir := makeOldDir(t, "")
+	oldDB := openOldDB(t, fromDir)
+
+	// Profile 1: target roles, keywords and except words (no expressions).
+	insertProfile(t, oldDB, "p1", "Helio", "2024-01-01T00:00:00Z", false)
+	_, err := oldDB.Exec(`UPDATE user_profiles SET data=? WHERE id='p1'`,
+		`{"targetRoles":["backend","platform"],"search":{"keywords":["distributed","observability"],"except":["gambling"]}}`)
+	if err != nil {
+		t.Fatalf("set p1 data: %v", err)
+	}
+
+	// Profile 2: search.expressions (or-group → keywords, and-group → allOf) and an except word.
+	// expressions take precedence over keywords.
+	insertProfile(t, oldDB, "p2", "Vesper", "2024-02-01T00:00:00Z", false)
+	_, err = oldDB.Exec(`UPDATE user_profiles SET data=? WHERE id='p2'`,
+		`{"search":{"keywords":["ignored"],"expressions":[{"or":["golang","rust"]},{"and":["kubernetes","cloud"]}],"except":["crypto"]}}`)
+	if err != nil {
+		t.Fatalf("set p2 data: %v", err)
+	}
+
+	targetDir := t.TempDir()
+	report := runImport(t, fromDir, targetDir)
+	newDB := openNewDB(t, targetDir)
+
+	// Profile 1: roles and keywords stored in new data JSON.
+	var data1 string
+	newDB.QueryRow(`SELECT data FROM profile WHERE id=1`).Scan(&data1) //nolint:errcheck
+	if !strings.Contains(data1, `"backend"`) {
+		t.Errorf("profile 1 data missing role backend: %s", data1)
+	}
+	if !strings.Contains(data1, `"distributed"`) {
+		t.Errorf("profile 1 data missing keyword distributed: %s", data1)
+	}
+
+	// Profile 2: or-group becomes keywords, and-group becomes allOf; "ignored" keyword is replaced.
+	var data2 string
+	newDB.QueryRow(`SELECT data FROM profile WHERE id=2`).Scan(&data2) //nolint:errcheck
+	if !strings.Contains(data2, `"golang"`) {
+		t.Errorf("profile 2 data missing keyword golang: %s", data2)
+	}
+	if !strings.Contains(data2, `"kubernetes"`) {
+		t.Errorf("profile 2 data missing allOf kubernetes: %s", data2)
+	}
+	if strings.Contains(data2, `"ignored"`) {
+		t.Errorf("profile 2 data should not contain 'ignored' (expressions take precedence): %s", data2)
+	}
+
+	// Except words imported as per-profile exclusions.
+	var excl1, excl2 int
+	newDB.QueryRow(`SELECT count(*) FROM exclusion WHERE profile_id=1`).Scan(&excl1) //nolint:errcheck
+	newDB.QueryRow(`SELECT count(*) FROM exclusion WHERE profile_id=2`).Scan(&excl2) //nolint:errcheck
+	if excl1 != 1 {
+		t.Errorf("profile 1 per-profile exclusions: got %d, want 1", excl1)
+	}
+	if excl2 != 1 {
+		t.Errorf("profile 2 per-profile exclusions: got %d, want 1", excl2)
+	}
+
+	// Report lists search fields for both profiles.
+	if !strings.Contains(report, "Profile search:") {
+		t.Errorf("report missing profile search section: %s", report)
+	}
+	if !strings.Contains(report, "id=1 (Helio)") {
+		t.Errorf("report missing profile 1 search line: %s", report)
+	}
+	if !strings.Contains(report, "id=2 (Vesper)") {
+		t.Errorf("report missing profile 2 search line: %s", report)
 	}
 }

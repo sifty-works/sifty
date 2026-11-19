@@ -98,6 +98,12 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	}
 	defer database.Close()
 
+	// 7a. Rebuild the full-text index if the database was just migrated and the
+	// index is empty. This is a one-off step; subsequent starts skip it.
+	if err := catalog.RebuildFTS(ctx, database); err != nil {
+		logger.Warn("fts rebuild failed", "err", err)
+	}
+
 	// 8. Build the fetcher: replay dir overrides the real client.
 	var fetcher fetch.Fetcher
 	if flags.replayDir != "" {

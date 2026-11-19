@@ -11,19 +11,24 @@ import (
 	"github.com/sifty-works/sifty-server/internal/listing"
 )
 
-// notExcluded is a SQL predicate that holds when a vacancy row is not hidden
-// by any all-profile exclusion. Used in list and count queries.
+// exclInner is the kind/value matching part of an exclusion predicate.
+// It references columns title, company, identity, apply_url from the vacancy table.
 // Word exclusions do not match a vacancy whose company column is empty
 // (the placeholder used before a vacancy's own page is read).
-const notExcluded = `NOT EXISTS (
-	SELECT 1 FROM exclusion e WHERE e.profile_id=0 AND (
-		(e.kind='word' AND (instr(lower(title),e.norm)>0 OR (company!='' AND instr(lower(company),e.norm)>0)))
+const exclInner = `(e.kind='word' AND (instr(lower(title),e.norm)>0 OR (company!='' AND instr(lower(company),e.norm)>0)))
 		OR (e.kind='company' AND (
 			substr(identity,1,instr(identity,'|')-1)=e.norm
 			OR (apply_url!='' AND instr(apply_url,'.greenhouse.io/'||lower(e.value)||'/jobs/')>0)
-		))
-	)
-)`
+		))`
+
+// notExcluded is a SQL predicate that holds when a vacancy row is not hidden
+// by any all-profile exclusion. Used in list and count queries.
+const notExcluded = `NOT EXISTS (SELECT 1 FROM exclusion e WHERE e.profile_id=0 AND (` + exclInner + `))`
+
+// notExcludedFor is a SQL predicate that holds when a vacancy row is not hidden
+// by any exclusion that applies globally (profile_id=0) or to a specific profile.
+// The first ? argument binds the profile id.
+const notExcludedFor = `NOT EXISTS (SELECT 1 FROM exclusion e WHERE (e.profile_id=0 OR e.profile_id=?) AND (` + exclInner + `))`
 
 type exclRow struct {
 	id          int64

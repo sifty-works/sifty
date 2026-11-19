@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sifty-works/sifty-server/internal/candidate"
 	"github.com/sifty-works/sifty-server/internal/catalog"
 	"github.com/sifty-works/sifty-server/internal/config"
 	"github.com/sifty-works/sifty-server/internal/db"
@@ -73,7 +74,7 @@ type importReport struct {
 	LastRunWritten bool
 
 	ExclusionsWritten  int
-	ProfileExceptWords []string // words from per-profile except lists, reported but not imported
+	ProfileSearchLines []string // one line per imported profile: id, name and imported search fields
 
 	NonImportedKeys []string
 
@@ -123,7 +124,8 @@ type oldJob struct {
 
 type oldProfile struct {
 	id         string
-	data       string // JSON: {"name": "…", …}
+	name       string // the name column of the old user_profiles table
+	data       string // JSON: search fields and other profile data
 	createdAt  string
 	archivedAt sql.NullString // non-NULL means archived
 }
@@ -534,10 +536,8 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 		if err != nil {
 			return nil, fmt.Errorf("inserting vacancy %d: %w", j.id, err)
 		}
-		if len(md.body) > 0 {
-			if err := catalog.WriteFTS(ctx, tx, j.id, md.body); err != nil {
-				return nil, fmt.Errorf("fts for vacancy %d: %w", j.id, err)
-			}
+		if err := catalog.WriteFTS(ctx, tx, j.id, j.title, j.tags, md.body); err != nil {
+			return nil, fmt.Errorf("fts for vacancy %d: %w", j.id, err)
 		}
 		report.VacanciesWritten++
 		if md.seenAt != "" {
@@ -751,12 +751,6 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 			report.ExclusionsWritten++
 		}
 	}
-	profileWords, err := readProfileExceptWords(ctx, copyDB)
-	if err != nil {
-		return nil, fmt.Errorf("reading profile except words: %w", err)
-	}
-	report.ProfileExceptWords = profileWords
-
 	// --- Profiles ---
 	//
 	// Sort by created_at ascending (then by id for stability) so the first
@@ -778,8 +772,12 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 	// profileIDMap maps old TEXT profile id → new INTEGER id.
 	profileIDMap := make(map[string]int64)
 	type profileEntry struct {
-		newID int64
-		name  string
+		newID       int64
+		name        string
+		targetRoles []string
+		keywords    []string
+		allOf       []string
+		except      []string // words to become per-profile word exclusions
 	}
 	var profilesByNewID []profileEntry
 
@@ -788,16 +786,16 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 			continue // skip archived
 		}
 		newID := int64(len(profilesByNewID) + 1)
-		var d struct {
-			Name string `json:"name"`
-		}
-		json.Unmarshal([]byte(p.data), &d) //nolint:errcheck
-		name := d.Name
+		name := p.name
 		if name == "" {
 			name = "Profile"
 		}
+		roles, keywords, allOf, except := parseOldProfileData(p.data)
 		profileIDMap[p.id] = newID
-		profilesByNewID = append(profilesByNewID, profileEntry{newID: newID, name: name})
+		profilesByNewID = append(profilesByNewID, profileEntry{
+			newID: newID, name: name,
+			targetRoles: roles, keywords: keywords, allOf: allOf, except: except,
+		})
 		report.ProfilesWritten++
 	}
 
@@ -807,9 +805,12 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 			return nil, fmt.Errorf("deleting default profile: %w", err)
 		}
 		for _, pp := range profilesByNewID {
-			newData, _ := json.Marshal(struct {
-				Name string `json:"name"`
-			}{Name: pp.name})
+			newData, _ := json.Marshal(candidate.ProfileData{
+				Name:        pp.name,
+				TargetRoles: pp.targetRoles,
+				Keywords:    pp.keywords,
+				AllOf:       pp.allOf,
+			})
 			if _, err := tx.ExecContext(ctx,
 				`INSERT INTO profile (id, data) VALUES (?,?)`,
 				pp.newID, string(newData),
@@ -836,6 +837,32 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 					return nil, fmt.Errorf("inserting sqlite_sequence for profile: %w", err)
 				}
 			}
+		}
+
+		// Write per-profile except words as word exclusions with that profile's scope.
+		for _, pp := range profilesByNewID {
+			for _, w := range pp.except {
+				value := strings.TrimSpace(w)
+				if value == "" {
+					continue
+				}
+				norm := strings.ToLower(value)
+				res, err := tx.ExecContext(ctx,
+					`INSERT OR IGNORE INTO exclusion (kind,value,norm,profile_id,created) VALUES ('word',?,?,?,?)`,
+					value, norm, pp.newID, time.Now().UTC().Format(time.RFC3339))
+				if err != nil {
+					return nil, fmt.Errorf("inserting profile %d except word %q: %w", pp.newID, value, err)
+				}
+				if n, _ := res.RowsAffected(); n > 0 {
+					report.ExclusionsWritten++
+				}
+			}
+		}
+
+		// Build per-profile search report lines.
+		for _, pp := range profilesByNewID {
+			report.ProfileSearchLines = append(report.ProfileSearchLines,
+				buildProfileSearchLine(pp.newID, pp.name, pp.targetRoles, pp.keywords, pp.allOf, pp.except))
 		}
 	}
 
@@ -1309,44 +1336,6 @@ func readBlockRules(ctx context.Context, db *sql.DB) ([]oldBlockRule, error) {
 	return out, rows.Err()
 }
 
-// readProfileExceptWords collects the unique except-words from all user profile data blobs.
-func readProfileExceptWords(ctx context.Context, db *sql.DB) ([]string, error) {
-	rows, err := db.QueryContext(ctx, `SELECT data FROM user_profiles`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	seen := make(map[string]string) // lowercase → original
-	for rows.Next() {
-		var data string
-		if err := rows.Scan(&data); err != nil {
-			continue
-		}
-		var d struct {
-			Search struct {
-				Except []string `json:"except"`
-			} `json:"search"`
-		}
-		if err := json.Unmarshal([]byte(data), &d); err != nil {
-			continue
-		}
-		for _, w := range d.Search.Except {
-			if w = strings.TrimSpace(w); w != "" {
-				lower := strings.ToLower(w)
-				if _, ok := seen[lower]; !ok {
-					seen[lower] = w
-				}
-			}
-		}
-	}
-	var out []string
-	for _, v := range seen {
-		out = append(out, v)
-	}
-	sort.Strings(out)
-	return out, rows.Err()
-}
-
 func readJobs(ctx context.Context, db *sql.DB) ([]oldJob, error) {
 	rows, err := db.QueryContext(ctx, `
 		SELECT id, identity, title, company, original_url, apply_url,
@@ -1378,7 +1367,7 @@ func readJobs(ctx context.Context, db *sql.DB) ([]oldJob, error) {
 
 func readProfiles(ctx context.Context, db *sql.DB) ([]oldProfile, error) {
 	rows, err := db.QueryContext(ctx,
-		`SELECT id, data, created_at, archived_at FROM user_profiles ORDER BY created_at ASC, id ASC`)
+		`SELECT id, name, data, created_at, archived_at FROM user_profiles ORDER BY created_at ASC, id ASC`)
 	if err != nil {
 		return nil, err
 	}
@@ -1386,7 +1375,7 @@ func readProfiles(ctx context.Context, db *sql.DB) ([]oldProfile, error) {
 	var out []oldProfile
 	for rows.Next() {
 		var p oldProfile
-		if err := rows.Scan(&p.id, &p.data, &p.createdAt, &p.archivedAt); err != nil {
+		if err := rows.Scan(&p.id, &p.name, &p.data, &p.createdAt, &p.archivedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, p)
@@ -1545,6 +1534,73 @@ func loadOldConfig(path string) (*oldConfig, []string, error) {
 	return &cfg, nonImported, nil
 }
 
+// --- profile search helpers ---
+
+// parseOldProfileData parses the old profile data JSON and returns target roles,
+// keywords, "All of these" terms and except words.
+// When search.expressions is present it takes precedence over search.keywords:
+// or-groups become keywords and and-groups become allOf terms.
+func parseOldProfileData(data string) (targetRoles, keywords, allOf, except []string) {
+	var d struct {
+		TargetRoles []string `json:"targetRoles"`
+		Search      struct {
+			Keywords    []string `json:"keywords"`
+			Except      []string `json:"except"`
+			Expressions []struct {
+				Or  []string `json:"or"`
+				And []string `json:"and"`
+			} `json:"expressions"`
+		} `json:"search"`
+	}
+	if err := json.Unmarshal([]byte(data), &d); err != nil {
+		return nil, nil, nil, nil
+	}
+	targetRoles = filterEmpty(d.TargetRoles)
+	except = filterEmpty(d.Search.Except)
+	if len(d.Search.Expressions) > 0 {
+		for _, expr := range d.Search.Expressions {
+			keywords = append(keywords, filterEmpty(expr.Or)...)
+			allOf = append(allOf, filterEmpty(expr.And)...)
+		}
+	} else {
+		keywords = filterEmpty(d.Search.Keywords)
+	}
+	return
+}
+
+// filterEmpty returns a copy of ss with empty and whitespace-only strings removed.
+func filterEmpty(ss []string) []string {
+	var out []string
+	for _, s := range ss {
+		if s = strings.TrimSpace(s); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// buildProfileSearchLine formats one profile's imported search data for the report.
+func buildProfileSearchLine(newID int64, name string, roles, keywords, allOf, except []string) string {
+	var parts []string
+	if len(roles) > 0 {
+		parts = append(parts, "roles=["+strings.Join(roles, ", ")+"]")
+	}
+	if len(keywords) > 0 {
+		parts = append(parts, "keywords=["+strings.Join(keywords, ", ")+"]")
+	}
+	if len(allOf) > 0 {
+		parts = append(parts, "allOf=["+strings.Join(allOf, ", ")+"]")
+	}
+	if len(except) > 0 {
+		parts = append(parts, "except=["+strings.Join(except, ", ")+"]")
+	}
+	header := fmt.Sprintf("id=%d (%s)", newID, name)
+	if len(parts) == 0 {
+		return header + ": no search fields"
+	}
+	return header + ": " + strings.Join(parts, "; ")
+}
+
 // --- report formatting ---
 
 func formatReport(r *importReport) string {
@@ -1591,9 +1647,12 @@ func formatReport(r *importReport) string {
 	}
 
 	fmt.Fprintf(&sb, "Exclusions: %d written\n", r.ExclusionsWritten)
-	if len(r.ProfileExceptWords) > 0 {
-		fmt.Fprintf(&sb, "Per-profile except words not imported: %s\n",
-			strings.Join(r.ProfileExceptWords, ", "))
+
+	if len(r.ProfileSearchLines) > 0 {
+		fmt.Fprintf(&sb, "Profile search:\n")
+		for _, line := range r.ProfileSearchLines {
+			fmt.Fprintf(&sb, "  %s\n", line)
+		}
 	}
 
 	if len(r.NonImportedKeys) > 0 {

@@ -16,8 +16,8 @@ What the user gets: for the chosen profile, the vacancies that fit its search, i
 ## Which vacancies a profile sees
 
 - **Inbox** shows the vacancies with no decision in this profile that fit its search:
-  - **Target roles and keywords.** When the profile has both, a vacancy fits when a target role is in its title and a keyword is in its title, tags or text. When it has only one of the two, only that one applies. A profile with neither sees an empty Inbox.
-  - **All of these.** Every term listed under "All of these" must be in the vacancy's title, tags or text.
+  - **Target roles and keywords.** When the profile has both, a vacancy fits when a target role is in its title and a keyword is in its title, tags or text. When it has only one of the two, only that one applies. A profile with neither sees an empty Inbox. Terms match whole words and phrases, ignoring case and punctuation.
+  - **All of these.** Every term listed under "All of these" must be in the vacancy's title, tags or text. Terms match whole words and phrases, ignoring case and punctuation.
   - **Target industries**, the profile's own or inherited from the first profile. When there are any, a vacancy fits when it has at least one of them or has no industry at all; a vacancy whose industries are all outside the targets does not fit.
 - **Shortlist, Applied and Dismissed** show every vacancy the profile decided that way, whether or not it still fits the search, so a decision never disappears when the search changes or a vacancy's text is removed.
 - **Exclusions** hide a matching vacancy in every list (see below).
@@ -62,7 +62,7 @@ There is one list of exclusions, managed in Settings.
 
 ## Search, filters and sort
 
-- **Search** ("Search company, role, tech", key `/`) finds a case-insensitive substring in the title, company, tags and text. A vacancy whose text was removed is found by its title, company and tags only. A query shorter than 3 characters matches title, company and tags only.
+- **Search** ("Search company, role, tech", key `/`) finds a case-insensitive substring in the title, company, tags and text; in the text, punctuation counts as a space. A vacancy whose text was removed is found by its title, company and tags only. A query shorter than 3 characters matches title, company and tags only.
 - **Filters**, in a panel with a count of active filters:
   - Fits you: Strong 75+, Partial 55–74, Weak, Not scored; a dimmed result counts as Not scored;
   - Collected: any time, 7 days or 30 days, by first-seen date; "Hide expired";
@@ -159,4 +159,4 @@ Opening a vacancy never makes a network request.
 
 Stages are imported per profile: no decision stays Inbox; shortlisted and saved become Shortlist; rejected becomes Dismissed with its reason; applied becomes Applied; the date of the last change becomes the date of the decision. The old per-vacancy copy of the first profile's stage is not imported; it is compared with the first profile's stages first and every difference is logged. Every old application date becomes an application fact; its profile is taken from the last recorded move to Applied, or the first profile when none is recorded; the history of stage changes is read for this and not imported. The read mark is imported as it is. Global stop words become word exclusions for all profiles, blocked companies become company exclusions for all profiles, and profile except-words become word exclusions of that profile.
 
-Before switch-over, for every profile and every list, the vacancy ids and the counters of the old and new lists are compared (see `settings-and-data.md` for the method). The expected differences are listed beforehand: Dismissed now counted in Archive; applications visible in every profile; blocked companies now hidden in Shortlist and Archive too; merged duplicates keeping the strongest stage in every profile, not only the first; decided vacancies staying in their list when the search no longer fits them; Greenhouse vacancies showing the company name instead of the board's name. Fifty vacancies are checked by hand for stage, reason and application date.
+Before switch-over, for every profile and every list, the vacancy ids and the counters of the old and new lists are compared (see `settings-and-data.md` for the method). The expected differences are listed beforehand: Dismissed now counted in Archive; applications visible in every profile; blocked companies now hidden in Shortlist and Archive too; merged duplicates keeping the strongest stage in every profile, not only the first; decided vacancies staying in their list when the search no longer fits them; Greenhouse vacancies showing the company name instead of the board's name; target roles and keywords each required when a profile has both, so vacancies matching only one are not in the new Inbox; keywords no longer matched in the company name; vacancies with no known company are no longer hidden by a word exclusion, so the previous stop word 'unknown' no longer hides them. Fifty vacancies are checked by hand for stage, reason and application date.
