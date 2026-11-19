@@ -58,7 +58,7 @@ A change applies at once without a restart, except a change of the port. A chang
 
 ## Keeping data
 
-- Vacancies are never deleted automatically. Dismissed vacancies stay, so that collection does not bring them back as new. A vacancy is removed only by "Delete role…" (see `inbox.md`), which leaves a mark of its addresses so collection keeps it away.
+- An expired vacancy is removed automatically once a day when its expiry date has passed by more than a day and no application has been recorded for it, in any profile. A vacancy with an application stays and shows "Listing expired". Dismissed vacancies without an application are removed the same way. Removal leaves a mark of the vacancy's addresses so collection keeps it away. A vacancy is also removed manually by "Delete role…" (see `inbox.md`).
 - **Text retention.** Once a day, the text of a vacancy is removed when the vacancy is in no profile's Shortlist or Applied, was never opened or is dismissed in every profile that decided it, and has not been seen at any source for 60 days. The model's reading of that text goes with it. The row stays: title, company, addresses, dates, industries and decisions. The vacancy page says "Text removed after 60 days unseen; it returns if the source shows the role again", and search finds it only by its title, company and tags. When a source shows it again, its text is fetched again and its decisions stay.
 - A full-text index of vacancy texts is kept for search.
 - Of My data and of each profile only the latest version is kept; there is no history of edits.

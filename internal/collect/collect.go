@@ -36,6 +36,10 @@ type Collector struct {
 	now     func() time.Time
 	log     *slog.Logger
 
+	// OnTick, when set, is called on each five-minute tick after the collect
+	// check. Use it to queue additional periodic jobs on the same ticker.
+	OnTick func(now time.Time)
+
 	mu      sync.Mutex
 	written int64 // catalogue writes counter
 }
@@ -102,6 +106,9 @@ func (c *Collector) Ticker(ctx context.Context) {
 		case now := <-t.C:
 			if !c.blocked && c.Due(now) {
 				c.runner.Enqueue(runner.Spec{Kind: "collect"}) //nolint:errcheck
+			}
+			if c.OnTick != nil {
+				c.OnTick(now)
 			}
 		}
 	}

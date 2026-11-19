@@ -152,14 +152,35 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		},
 	})
 
+	// Register the retention job kind.
+	r.Register(runner.Kind{
+		Name:   "retention",
+		Resume: true,
+		Run: func(runCtx context.Context, j *runner.Job) error {
+			return runRetention(runCtx, j, cat, logger, time.Now())
+		},
+	})
+
 	blocked := offline && flags.replayDir == ""
 	col := collect.New(store, cat, r, fetcher, database, blocked, nil, logger)
 	col.Register()
+
+	// Queue retention daily using the same five-minute ticker as collect.
+	col.OnTick = func(now time.Time) {
+		if retentionDue(now, r) {
+			r.Enqueue(runner.Spec{Kind: "retention"}) //nolint:errcheck
+		}
+	}
 
 	// Queue the initial assign_industries job when no vacancy has been assigned
 	// yet (fresh import of an existing database).
 	if err := queueInitialAssign(ctx, database, r); err != nil {
 		logger.Warn("could not queue initial industry assignment", "err", err)
+	}
+
+	// Queue retention at start when it has not run in the last 24 hours.
+	if retentionDue(time.Now(), r) {
+		r.Enqueue(runner.Spec{Kind: "retention"}) //nolint:errcheck
 	}
 
 	// 10. Listen.
@@ -355,6 +376,56 @@ func queueInitialAssign(ctx context.Context, database *db.DB, r *runner.Runner) 
 		return err
 	}
 	return nil
+}
+
+// runRetention removes expired vacancies that have no application.
+// It permanently deletes each one using catalog.Delete so tombstone keys are
+// written, keeping those addresses away from future collection runs.
+func runRetention(ctx context.Context, j *runner.Job, cat *catalog.Catalog, log *slog.Logger, now time.Time) error {
+	cutoff := now.UTC().Add(-24 * time.Hour) // expired more than one day ago
+
+	total, err := cat.CountExpiredWithoutApplication(ctx, cutoff)
+	if err != nil {
+		return fmt.Errorf("retention: count: %w", err)
+	}
+	j.Progress(0, total, "")
+
+	const batchSize = 200
+	done := 0
+	for {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		ids, err := cat.ExpiredWithoutApplication(ctx, cutoff, batchSize)
+		if err != nil {
+			return fmt.Errorf("retention: load: %w", err)
+		}
+		if len(ids) == 0 {
+			break
+		}
+		for _, id := range ids {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			if err := cat.Delete(ctx, id); err != nil {
+				return fmt.Errorf("retention: delete %d: %w", id, err)
+			}
+			done++
+			j.Progress(done, total, "")
+		}
+	}
+	log.Info("retention: removed expired vacancies", "count", done)
+	return nil
+}
+
+// retentionDue reports whether a retention run should start. It returns true
+// when no retention job was created in the last 24 hours.
+func retentionDue(now time.Time, r *runner.Runner) bool {
+	last, ok := r.Last("retention")
+	if !ok {
+		return true
+	}
+	return now.After(last.Created.Add(24 * time.Hour))
 }
 
 // runAssignIndustries reassigns industries to every vacancy using the current
