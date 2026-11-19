@@ -387,7 +387,8 @@ func (r *Runner) finishJob(ctx context.Context, j *Job, runErr error) {
 	var dbErr error
 	if runErr == nil {
 		j.State = stateDone
-		_, dbErr = r.db.Exec(`UPDATE job SET state='done', updated=? WHERE id=?`, ts, j.ID)
+		finalProg, _ := json.Marshal(progressJSON{Done: j.Done, Total: j.Total, Current: j.Current})
+		_, dbErr = r.db.Exec(`UPDATE job SET state='done', progress=?, updated=? WHERE id=?`, string(finalProg), ts, j.ID)
 	} else if isPermanent(runErr) {
 		j.State = stateFailed
 		j.Error = runErr.Error()

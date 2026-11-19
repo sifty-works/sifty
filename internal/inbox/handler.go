@@ -18,17 +18,19 @@ import (
 
 // ListReq carries the query parameters for GET /api/vacancies.
 type ListReq struct {
-	Stage   Stage  `json:"stage"`
-	Profile int64  `json:"profile"`
-	Q       string `json:"q"`
+	Stage      Stage  `json:"stage"`
+	Profile    int64  `json:"profile"`
+	Q          string `json:"q"`
+	Industries string `json:"industries,omitempty"`
 }
 
 // ListResp is the response body for GET /api/vacancies.
 type ListResp struct {
-	Rows    []Row  `json:"rows"`
-	Counts  Counts `json:"counts"`
-	Empty   string `json:"empty"`
-	Profile int64  `json:"profile"`
+	Rows           []Row           `json:"rows"`
+	Counts         Counts          `json:"counts"`
+	IndustryCounts []IndustryCount `json:"industryCounts"`
+	Empty          string          `json:"empty"`
+	Profile        int64           `json:"profile"`
 }
 
 // VacancyViewReq carries the query parameters for GET /api/vacancies/{id}.
@@ -88,8 +90,20 @@ type PreviewResp struct {
 // RegisterRoutes registers all inbox routes on mux.
 // collectActive reports whether a collect job is queued or running.
 // sourceNames maps source keys (from config.SourceKey) to their display names.
-func RegisterRoutes(mux *http.ServeMux, database *db.DB, now func() time.Time, logger *slog.Logger, collectActive func() bool, sourceNames map[string]string) {
+// getVocabNames returns the current vocabulary's industry names; nil means no
+// vocabulary is configured and target-industry filtering is not applied.
+func RegisterRoutes(mux *http.ServeMux, database *db.DB, now func() time.Time, logger *slog.Logger, collectActive func() bool, sourceNames map[string]string, getVocabNames ...func() []string) {
 	cat := catalog.New(database, now)
+	var vocabNamesFunc func() []string
+	if len(getVocabNames) > 0 {
+		vocabNamesFunc = getVocabNames[0]
+	}
+	vocabNames := func() []string {
+		if vocabNamesFunc == nil {
+			return nil
+		}
+		return vocabNamesFunc()
+	}
 
 	server.Handle(mux, "GET /api/vacancies", logger, func(r *http.Request, req ListReq) (ListResp, error) {
 		stage := strings.TrimSpace(string(req.Stage))
@@ -105,15 +119,27 @@ func RegisterRoutes(mux *http.ServeMux, database *db.DB, now func() time.Time, l
 		if err != nil {
 			return ListResp{}, err
 		}
-		rows, counts, err := list(r.Context(), database, now, pid, stage, strings.TrimSpace(req.Q))
+		var industries []string
+		if req.Industries != "" {
+			for _, ind := range strings.Split(req.Industries, ",") {
+				if s := strings.TrimSpace(ind); s != "" {
+					industries = append(industries, s)
+				}
+			}
+		}
+		rows, counts, indCounts, err := list(r.Context(), database, now, pid, stage, strings.TrimSpace(req.Q), vocabNames(), industries)
 		if err != nil {
 			return ListResp{}, err
 		}
+		if indCounts == nil {
+			indCounts = []IndustryCount{}
+		}
 		return ListResp{
-			Rows:    rows,
-			Counts:  counts,
-			Empty:   emptyText(len(rows), stage, req.Q),
-			Profile: pid,
+			Rows:           rows,
+			Counts:         counts,
+			IndustryCounts: indCounts,
+			Empty:          emptyText(len(rows), stage, req.Q),
+			Profile:        pid,
 		}, nil
 	})
 
@@ -138,7 +164,7 @@ func RegisterRoutes(mux *http.ServeMux, database *db.DB, now func() time.Time, l
 		if err != nil {
 			return DecisionResp{}, err
 		}
-		row, counts, err := applyDecision(r.Context(), database, now, vacancyID, pid, string(req.From), string(req.To), req.Reason, req.Confirmed)
+		row, counts, err := applyDecision(r.Context(), database, now, vacancyID, pid, string(req.From), string(req.To), req.Reason, req.Confirmed, vocabNames())
 		if err != nil {
 			return DecisionResp{}, err
 		}
@@ -181,7 +207,7 @@ func RegisterRoutes(mux *http.ServeMux, database *db.DB, now func() time.Time, l
 		if err := cat.Delete(r.Context(), vacancyID); err != nil {
 			return DeleteVacancyResp{}, err
 		}
-		counts, err := loadCounts(r.Context(), database, pid)
+		counts, err := loadCounts(r.Context(), database, pid, vocabNames())
 		if err != nil {
 			return DeleteVacancyResp{}, err
 		}

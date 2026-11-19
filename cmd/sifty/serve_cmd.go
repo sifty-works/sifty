@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -22,6 +24,8 @@ import (
 	"github.com/sifty-works/sifty-server/internal/fetch"
 	"github.com/sifty-works/sifty-server/internal/fetch/fetchtest"
 	"github.com/sifty-works/sifty-server/internal/inbox"
+	"github.com/sifty-works/sifty-server/internal/industry"
+	"github.com/sifty-works/sifty-server/internal/listing"
 	"github.com/sifty-works/sifty-server/internal/runner"
 	"github.com/sifty-works/sifty-server/internal/server"
 	"github.com/sifty-works/sifty-server/web"
@@ -105,6 +109,14 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		logger.Warn("fts rebuild failed", "err", err)
 	}
 
+	// 7b. Load the industry vocabulary.
+	vocabPath := filepath.Join(dataDir, "vocab", "industries.yaml")
+	vocab, err := industry.LoadOrDefault(vocabPath)
+	if err != nil {
+		logger.Warn("industry vocab load failed; using default", "err", err)
+		vocab = industry.DefaultVocab()
+	}
+
 	// 8. Build the fetcher: replay dir overrides the real client.
 	var fetcher fetch.Fetcher
 	if flags.replayDir != "" {
@@ -121,11 +133,34 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	}
 
 	// 9. Build the catalogue, runner and collector.
-	cat := catalog.New(database, time.Now)
+	// vocabRef holds the active vocabulary; it is replaced atomically when
+	// PUT /api/industries saves a new one so that subsequent Upsert calls and
+	// the assign_industries job always use the latest version.
+	vocabRef := &vocab
+	assignFn := func(title, tags, text string) []string {
+		return industry.Assign(title, tags, text, *vocabRef)
+	}
+	cat := catalog.New(database, time.Now, assignFn)
 	r := runner.New(database, map[string]int{"browser": 1, "net": 4, "cpu": 1}, time.Now, logger)
+
+	// Register the assign_industries job kind.
+	r.Register(runner.Kind{
+		Name:   "assign_industries",
+		Resume: true,
+		Run: func(runCtx context.Context, j *runner.Job) error {
+			return runAssignIndustries(runCtx, j, cat, vocabRef)
+		},
+	})
+
 	blocked := offline && flags.replayDir == ""
 	col := collect.New(store, cat, r, fetcher, database, blocked, nil, logger)
 	col.Register()
+
+	// Queue the initial assign_industries job when no vacancy has been assigned
+	// yet (fresh import of an existing database).
+	if err := queueInitialAssign(ctx, database, r); err != nil {
+		logger.Warn("could not queue initial industry assignment", "err", err)
+	}
 
 	// 10. Listen.
 	addr := fmt.Sprintf("127.0.0.1:%d", cfg.Port)
@@ -153,6 +188,31 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 
 	filesDir := filepath.Join(dataDir, "files")
 
+	getVocab := func() []inbox.IndustryItem {
+		v := *vocabRef
+		items := make([]inbox.IndustryItem, len(v.Industries))
+		for i, ind := range v.Industries {
+			items[i] = inbox.IndustryItem{Name: ind.Name, Keywords: ind.Keywords}
+		}
+		return items
+	}
+	saveVocab := func(items []inbox.IndustryItem) error {
+		inds := make([]industry.Industry, len(items))
+		for i, it := range items {
+			inds[i] = industry.Industry{Name: it.Name, Keywords: it.Keywords}
+		}
+		newVocab := industry.Vocab{Industries: inds}
+		if err := industry.Validate(newVocab); err != nil {
+			return err
+		}
+		if err := industry.Save(vocabPath, newVocab); err != nil {
+			return err
+		}
+		*vocabRef = newVocab
+		r.Enqueue(runner.Spec{Kind: "assign_industries", Subject: "", Priority: 0}) //nolint:errcheck
+		return nil
+	}
+
 	handler := server.New(server.Options{
 		Version:           version,
 		APISha256:         siftyapi.Sha256(),
@@ -164,7 +224,16 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		Status:            col.StatusFunc(),
 		BinaryUploadPaths: []string{"/api/me/photo"},
 	}, func(mux *http.ServeMux) {
-		inbox.RegisterRoutes(mux, database, time.Now, logger, collectActive, sourceNames)
+		getVocabNames := func() []string {
+			v := *vocabRef
+			names := make([]string, len(v.Industries))
+			for i, ind := range v.Industries {
+				names[i] = ind.Name
+			}
+			return names
+		}
+		inbox.RegisterRoutes(mux, database, time.Now, logger, collectActive, sourceNames, getVocabNames)
+		inbox.RegisterIndustryRoutes(mux, logger, getVocab, saveVocab)
 		candidate.RegisterRoutes(mux, database, filesDir, logger)
 		col.RegisterRoutes(mux)
 	})
@@ -264,4 +333,78 @@ func openLog(dataDir string, stderr io.Writer) (*slog.Logger, func(), error) {
 	logger := slog.New(handler)
 
 	return logger, func() { logFile.Close() }, nil
+}
+
+// queueInitialAssign enqueues one assign_industries job when every vacancy in
+// the database has an empty industries column. This handles the first start
+// after migrating a database that pre-dates the industries feature.
+func queueInitialAssign(ctx context.Context, database *db.DB, r *runner.Runner) error {
+	var total, withIndustries int
+	if err := database.QueryRowContext(ctx, `SELECT count(*) FROM vacancy`).Scan(&total); err != nil {
+		return err
+	}
+	if total == 0 {
+		return nil
+	}
+	if err := database.QueryRowContext(ctx,
+		`SELECT count(*) FROM vacancy WHERE industries != '[]'`).Scan(&withIndustries); err != nil {
+		return err
+	}
+	if withIndustries == 0 {
+		_, err := r.Enqueue(runner.Spec{Kind: "assign_industries", Subject: "", Priority: 0})
+		return err
+	}
+	return nil
+}
+
+// runAssignIndustries reassigns industries to every vacancy using the current
+// vocabulary. It runs on the cpu lane and processes vacancies in batches of 200.
+func runAssignIndustries(ctx context.Context, j *runner.Job, cat *catalog.Catalog, vocabRef *industry.Vocab) error {
+	rel, err := j.Lane(ctx, "cpu")
+	if err != nil {
+		return err
+	}
+	defer rel()
+
+	total, err := cat.CountVacancies(ctx)
+	if err != nil {
+		return fmt.Errorf("assign_industries: count: %w", err)
+	}
+
+	const batchSize = 200
+	done := 0
+	for offset := 0; offset < total || (total == 0 && offset == 0); offset += batchSize {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		batch, err := cat.VacanciesForAssign(ctx, offset, batchSize)
+		if err != nil {
+			return fmt.Errorf("assign_industries: load batch: %w", err)
+		}
+		if len(batch) == 0 {
+			break
+		}
+		v := *vocabRef
+		for _, row := range batch {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			var tags []string
+			json.Unmarshal([]byte(row.TagsJSON), &tags) //nolint:errcheck
+			tagsText := strings.Join(tags, " ")
+			var plainText string
+			if len(row.Body) > 0 {
+				if h, err := catalog.Body(row.Body); err == nil {
+					plainText = listing.PlainText(h)
+				}
+			}
+			names := industry.Assign(row.Title, tagsText, plainText, v)
+			if err := cat.SetIndustries(ctx, row.ID, names); err != nil {
+				return fmt.Errorf("assign_industries: set %d: %w", row.ID, err)
+			}
+			done++
+		}
+		j.Progress(done, total, "")
+	}
+	return nil
 }

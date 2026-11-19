@@ -28,6 +28,7 @@ type repoRow struct {
 	publishedBasis string
 	firstSeen      string
 	tags           string
+	industries     string
 	unread         bool
 	stage          string
 	reason         string
@@ -38,6 +39,7 @@ type repoRow struct {
 }
 
 const listCols = `v.id, v.company, v.title, v.location, v.published_at, v.published_basis, v.first_seen, v.tags,
+    v.industries,
     v.seen_at='' AS unread, COALESCE(d.reason,'') AS reason, COALESCE(d.decided_at,'') AS decided_at,
     (SELECT applied_at FROM application WHERE vacancy=v.id ORDER BY applied_at DESC LIMIT 1),
     (SELECT profile_name FROM application WHERE vacancy=v.id ORDER BY applied_at DESC LIMIT 1),
@@ -81,8 +83,10 @@ func resolveVacancy(ctx context.Context, database *db.DB, id int64) (int64, erro
 	return realID, nil
 }
 
-// loadProfileSearch reads the search fields of a profile from the database.
-func loadProfileSearch(ctx context.Context, database *db.DB, profileID int64) (candidate.Profile, error) {
+// loadProfileSearch reads the search and industry fields of a profile from the
+// database. vocabNames restricts target industries to known names when non-nil;
+// nil means no restriction (used by callers that have no vocabulary configured).
+func loadProfileSearch(ctx context.Context, database *db.DB, profileID int64, vocabNames []string) (candidate.Profile, error) {
 	var dataJSON string
 	err := database.QueryRowContext(ctx, `SELECT data FROM profile WHERE id=?`, profileID).Scan(&dataJSON)
 	if err == sql.ErrNoRows {
@@ -95,11 +99,113 @@ func loadProfileSearch(ctx context.Context, database *db.DB, profileID int64) (c
 	if err := json.Unmarshal([]byte(dataJSON), &pd); err != nil {
 		return candidate.Profile{}, nil
 	}
+
+	// For target industries, inherit from profile 1 when the profile's own list
+	// is empty and the profile is not itself the first profile.
+	targetIndustries := pd.TargetIndustries
+	if len(targetIndustries) == 0 && profileID != 1 {
+		var baseJSON string
+		if err2 := database.QueryRowContext(ctx, `SELECT data FROM profile WHERE id=1`).Scan(&baseJSON); err2 == nil {
+			var base candidate.ProfileData
+			if json.Unmarshal([]byte(baseJSON), &base) == nil {
+				targetIndustries = base.TargetIndustries
+			}
+		}
+	}
+
+	// Restrict to current vocabulary names when a vocabulary is configured.
+	if vocabNames != nil && len(targetIndustries) > 0 {
+		allowed := make(map[string]bool, len(vocabNames))
+		for _, n := range vocabNames {
+			allowed[n] = true
+		}
+		filtered := make([]string, 0, len(targetIndustries))
+		for _, n := range targetIndustries {
+			if allowed[n] {
+				filtered = append(filtered, n)
+			}
+		}
+		targetIndustries = filtered
+	}
+
 	return candidate.Profile{
-		TargetRoles: pd.TargetRoles,
-		Keywords:    pd.Keywords,
-		AllOf:       pd.AllOf,
+		TargetRoles:      pd.TargetRoles,
+		Keywords:         pd.Keywords,
+		AllOf:            pd.AllOf,
+		TargetIndustries: targetIndustries,
 	}, nil
+}
+
+// IndustryCount is one entry in the per-industry count returned by the list.
+type IndustryCount struct {
+	Name  string `json:"name"`
+	Count int    `json:"count"`
+}
+
+// industryCounts returns the number of vacancies per industry for the given
+// profile and stage, applying visibility (inbox only), exclusions and the
+// query q — the same filters as the row list — but NOT the industries filter
+// itself. Only industries with at least one vacancy are returned, sorted
+// alphabetically.
+func industryCounts(ctx context.Context, database *db.DB, profileID int64, stage, q string, vis candidate.Filter) ([]IndustryCount, error) {
+	isInbox := stage == "inbox"
+	low := strings.ToLower(strings.TrimSpace(q))
+
+	var join, where string
+	var args []any
+	if isInbox {
+		join = `LEFT JOIN decision d ON d.vacancy=v.id AND d.profile=?`
+		where = `d.vacancy IS NULL AND ` + notExcludedFor
+		args = []any{profileID, profileID}
+		if vis.SQL != "" {
+			where += ` AND (` + vis.SQL + `)`
+			args = append(args, vis.Args...)
+		}
+	} else {
+		join = `JOIN decision d ON d.vacancy=v.id AND d.profile=? AND d.stage=?`
+		where = notExcludedFor
+		args = []any{profileID, stage, profileID}
+	}
+
+	if low != "" {
+		if len([]rune(q)) >= 3 {
+			normQ := strings.TrimSpace(listing.FTSNorm(q))
+			if normQ != "" {
+				where += ` AND (instr(lower(v.title),?)>0 OR instr(lower(v.company),?)>0 OR instr(lower(v.tags),?)>0 OR v.id IN (SELECT rowid FROM vacancy_fts WHERE vacancy_fts MATCH ?))`
+				args = append(args, low, low, low, `text: "`+strings.ReplaceAll(normQ, `"`, `""`)+`"`)
+			} else {
+				where += ` AND (instr(lower(v.title),?)>0 OR instr(lower(v.company),?)>0 OR instr(lower(v.tags),?)>0)`
+				args = append(args, low, low, low)
+			}
+		} else {
+			where += ` AND (instr(lower(v.title),?)>0 OR instr(lower(v.company),?)>0 OR instr(lower(v.tags),?)>0)`
+			args = append(args, low, low, low)
+		}
+	}
+
+	rows, err := database.QueryContext(ctx, `
+		SELECT j.value, COUNT(*)
+		FROM vacancy v
+		`+join+`
+		JOIN json_each(v.industries) j
+		WHERE j.value IS NOT NULL AND `+where+`
+		GROUP BY j.value
+		ORDER BY j.value`,
+		args...,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("inbox: industry counts: %w", err)
+	}
+	defer rows.Close()
+	var out []IndustryCount
+	for rows.Next() {
+		var ic IndustryCount
+		if err := rows.Scan(&ic.Name, &ic.Count); err != nil {
+			return nil, fmt.Errorf("inbox: industry counts scan: %w", err)
+		}
+		out = append(out, ic)
+	}
+	return out, rows.Err()
 }
 
 // stageCounts returns the vacancy count per stage for a profile.
@@ -149,10 +255,11 @@ func stageCounts(ctx context.Context, database *db.DB, profileID int64, vis cand
 }
 
 // listRows returns vacancy rows for the given profile and stage,
-// optionally filtered by query q. When vacancyID is non-zero only that vacancy is returned.
+// optionally filtered by query q and by industry names. When vacancyID is
+// non-zero only that vacancy is returned.
 // vis is applied to inbox listings only (stage == "inbox" and vacancyID == 0);
 // it is ignored for decided stages and for single-vacancy fetches.
-func listRows(ctx context.Context, database *db.DB, profileID, vacancyID int64, stage, q string, vis candidate.Filter) ([]repoRow, error) {
+func listRows(ctx context.Context, database *db.DB, profileID, vacancyID int64, stage, q string, vis candidate.Filter, industries ...string) ([]repoRow, error) {
 	isInbox := stage == "inbox"
 	low := strings.ToLower(strings.TrimSpace(q))
 
@@ -203,6 +310,23 @@ func listRows(ctx context.Context, database *db.DB, profileID, vacancyID int64, 
 		}
 	}
 
+	// Apply industries filter: show only vacancies that have at least one of the
+	// given industry names. Applied to all stages.
+	if vacancyID == 0 && len(industries) > 0 {
+		var parts []string
+		for _, ind := range industries {
+			ind = strings.TrimSpace(ind)
+			if ind == "" {
+				continue
+			}
+			parts = append(parts, "EXISTS (SELECT 1 FROM json_each(v.industries) WHERE value=?)")
+			args = append(args, ind)
+		}
+		if len(parts) > 0 {
+			where += ` AND (` + strings.Join(parts, " OR ") + `)`
+		}
+	}
+
 	sqlRows, err := database.QueryContext(ctx,
 		`SELECT `+listCols+` FROM vacancy v `+join+` WHERE `+where+` `+order,
 		args...)
@@ -222,6 +346,7 @@ func scanListRows(stage string, sqlRows *sql.Rows) ([]repoRow, error) {
 		if err := sqlRows.Scan(
 			&row.id, &row.company, &row.title, &row.location,
 			&row.publishedAt, &row.publishedBasis, &row.firstSeen, &row.tags,
+			&row.industries,
 			&unread, &row.reason, &row.decidedAt,
 			&appliedAt, &appliedName, &row.expiresAt,
 		); err != nil {

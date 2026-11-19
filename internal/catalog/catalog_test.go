@@ -849,3 +849,87 @@ func TestUpsert_DeleteTombstonesAddress(t *testing.T) {
 		t.Errorf("re-upsert after Delete: outcome=%v err=%v, want Tombstoned", out, err)
 	}
 }
+
+// --- Industry assignment ---
+
+// assignOnce is a simple assigner that always returns ["Widgets"].
+func assignOnce(title, tags, text string) []string {
+	if strings.Contains(strings.ToLower(title+" "+tags+" "+text), "solidity") {
+		return []string{"Blockchain"}
+	}
+	return nil
+}
+
+func TestUpsert_AssignsIndustriesOnNew(t *testing.T) {
+	d := openTestDB(t)
+	cat := catalog.New(d, fixedNow(), assignOnce)
+	id, _, err := cat.Upsert(context.Background(), listing.Posting{
+		URL:       "https://example.com/industry/1",
+		Title:     "Solidity Developer",
+		Company:   "ChainCo",
+		Text:      "Write smart contracts.",
+		TextKind:  listing.Plain,
+		TextState: listing.TextFull,
+	}, "src")
+	if err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	var industries string
+	d.QueryRow(`SELECT industries FROM vacancy WHERE id=?`, id).Scan(&industries) //nolint:errcheck
+	if industries != `["Blockchain"]` {
+		t.Errorf("industries: got %q, want %q", industries, `["Blockchain"]`)
+	}
+}
+
+func TestUpsert_ReassignsIndustriesWhenTextChanges(t *testing.T) {
+	d := openTestDB(t)
+	cat := catalog.New(d, fixedNow(), assignOnce)
+	// Insert without solidity → no industry
+	id, _, err := cat.Upsert(context.Background(), listing.Posting{
+		URL:       "https://example.com/industry/reassign",
+		Title:     "Backend Engineer",
+		Company:   "GenericCo",
+		Text:      "Build APIs.",
+		TextKind:  listing.Plain,
+		TextState: listing.TextFull,
+	}, "src")
+	if err != nil {
+		t.Fatalf("upsert new: %v", err)
+	}
+	var before string
+	d.QueryRow(`SELECT industries FROM vacancy WHERE id=?`, id).Scan(&before) //nolint:errcheck
+	if before != `[]` {
+		t.Errorf("before: got %q, want []", before)
+	}
+	// Update with text that includes solidity → industry assigned
+	_, _, err = cat.Upsert(context.Background(), listing.Posting{
+		URL:       "https://example.com/industry/reassign",
+		Title:     "Backend Engineer",
+		Company:   "GenericCo",
+		Text:      "Build APIs using solidity for Web3.",
+		TextKind:  listing.Plain,
+		TextState: listing.TextFull,
+	}, "src")
+	if err != nil {
+		t.Fatalf("upsert update: %v", err)
+	}
+	var after string
+	d.QueryRow(`SELECT industries FROM vacancy WHERE id=?`, id).Scan(&after) //nolint:errcheck
+	if after != `["Blockchain"]` {
+		t.Errorf("after: got %q, want [Blockchain]", after)
+	}
+}
+
+func TestUpsert_NoAssignerLeavesIndustriesEmpty(t *testing.T) {
+	d := openTestDB(t)
+	cat := catalog.New(d, fixedNow()) // no assigner
+	id, _, err := cat.Upsert(context.Background(), posting("https://example.com/industry/none", "Solidity Dev", "Co"), "src")
+	if err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	var industries string
+	d.QueryRow(`SELECT industries FROM vacancy WHERE id=?`, id).Scan(&industries) //nolint:errcheck
+	if industries != `[]` {
+		t.Errorf("no assigner: got %q, want []", industries)
+	}
+}

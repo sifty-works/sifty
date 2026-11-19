@@ -104,9 +104,10 @@ func InheritedFields(p, base ProfileData) []string {
 
 // Profile carries the search configuration of one profile.
 type Profile struct {
-	TargetRoles []string
-	Keywords    []string
-	AllOf       []string
+	TargetRoles      []string
+	Keywords         []string
+	AllOf            []string
+	TargetIndustries []string // restricted to current vocabulary names; empty means no industry filter
 }
 
 // Filter is a SQL predicate fragment with its bound arguments.
@@ -178,6 +179,22 @@ func Visibility(p Profile) Filter {
 		part, termArgs := termClause(term)
 		clauses = append(clauses, part)
 		args = append(args, termArgs...)
+	}
+
+	if len(p.TargetIndustries) > 0 {
+		parts := make([]string, 0, len(p.TargetIndustries)+1)
+		parts = append(parts, "v.industries='[]'")
+		for _, ind := range p.TargetIndustries {
+			ind = strings.TrimSpace(ind)
+			if ind == "" {
+				continue
+			}
+			parts = append(parts, "EXISTS (SELECT 1 FROM json_each(v.industries) WHERE value=?)")
+			args = append(args, ind)
+		}
+		if len(parts) > 1 {
+			clauses = append(clauses, "("+strings.Join(parts, " OR ")+")")
+		}
 	}
 
 	if len(clauses) == 0 {

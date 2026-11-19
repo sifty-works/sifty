@@ -580,7 +580,7 @@ func TestImport_ProfileEngagementAndHours(t *testing.T) {
 	}
 }
 
-func TestImport_ProfileTargetIndustries(t *testing.T) {
+func TestImport_ProfileTargetIndustriesListedNotImported(t *testing.T) {
 	fromDir := makeOldDir(t, "")
 	odb := openOldDB(t, fromDir)
 	insertProfile(t, odb, "p1", "Ind", "2024-01-01T00:00:00Z", false)
@@ -588,11 +588,20 @@ func TestImport_ProfileTargetIndustries(t *testing.T) {
 		`{"targetIndustries":["fintech","healthtech"]}`)
 
 	targetDir := t.TempDir()
-	runImport(t, fromDir, targetDir)
+	report := runImport(t, fromDir, targetDir)
 
+	// Target industries from the previous version are not imported into profiles.
 	pd := readProfileData(t, targetDir, 1)
-	if len(pd.TargetIndustries) != 2 {
-		t.Errorf("TargetIndustries: got %d, want 2", len(pd.TargetIndustries))
+	if len(pd.TargetIndustries) != 0 {
+		t.Errorf("TargetIndustries: got %d, want 0 (not imported)", len(pd.TargetIndustries))
+	}
+
+	// The previous values are listed in the import report.
+	if !strings.Contains(report, "fintech") || !strings.Contains(report, "healthtech") {
+		t.Errorf("report does not list previous target industries; got:\n%s", report)
+	}
+	if !strings.Contains(report, "not imported") {
+		t.Errorf("report does not say 'not imported'; got:\n%s", report)
 	}
 }
 

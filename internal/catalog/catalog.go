@@ -34,14 +34,21 @@ const (
 
 // Catalog owns the vacancy tables.
 type Catalog struct {
-	db  *db.DB
-	now func() time.Time
+	db     *db.DB
+	now    func() time.Time
+	assign func(title, tags, text string) []string // nil means no assignment
 }
 
 // New returns a Catalog backed by the given database.
 // now is called each time the current time is needed; pass time.Now in production.
-func New(database *db.DB, now func() time.Time) *Catalog {
-	return &Catalog{db: database, now: now}
+// assign is an optional function called to derive industry names from a vacancy's
+// title, tags and plain text. When omitted, industries are not assigned.
+func New(database *db.DB, now func() time.Time, assign ...func(title, tags, text string) []string) *Catalog {
+	c := &Catalog{db: database, now: now}
+	if len(assign) > 0 {
+		c.assign = assign[0]
+	}
+	return c
 }
 
 // Encode compresses html and returns the body blob and the content hash.
@@ -262,6 +269,7 @@ func (c *Catalog) Upsert(ctx context.Context, p listing.Posting, src string) (in
 			contentHash:    newHash,
 			version:        1,
 			body:           newBody,
+			industries:     c.computeIndustries(p.Title, tagsJSON, newBody),
 		}
 		if p.Requested {
 			row.detailRequestedAt = nowStr
@@ -351,6 +359,15 @@ func (c *Catalog) Upsert(ctx context.Context, p listing.Posting, src string) (in
 	}
 	upd.lastSeen = nowStr
 
+	// Reassign industries when title, tags or text changed. A vacancy whose
+	// text was removed by the retention job is never updated via Upsert, so
+	// its industries are preserved naturally.
+	titleChanged := p.Title != ex.title
+	tagsChanged := len(p.Tags) > 0 && tagsJSON != ex.tagsJSON
+	if titleChanged || tagsChanged || textChanged {
+		upd.industries = c.computeIndustries(upd.title, upd.tagsJSON, upd.body)
+	}
+
 	if _, err := save(ctx, tx, upd); err != nil {
 		return 0, 0, fmt.Errorf("catalog: upsert: update: %w", err)
 	}
@@ -398,6 +415,7 @@ type vacancyRow struct {
 	version           int
 	body              []byte
 	detailRequestedAt string
+	industries        string // JSON array of industry names
 }
 
 // save inserts or updates a vacancy row. When v.id is 0 an INSERT is performed
@@ -406,19 +424,22 @@ func save(ctx context.Context, tx *sql.Tx, v vacancyRow) (int64, error) {
 	if v.body == nil {
 		v.body = []byte{}
 	}
+	if v.industries == "" {
+		v.industries = "[]"
+	}
 	if v.id == 0 {
 		res, err := tx.ExecContext(ctx, `
 			INSERT INTO vacancy
 				(identity, title, company, url, apply_url, location, tags, source_fields,
 				 published_at, published_basis, expires_at,
 				 first_seen, last_seen, text_state, content_hash, version, body,
-				 detail_requested_at)
-			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+				 detail_requested_at, industries)
+			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 			v.identity, v.title, v.company, v.url, v.applyURL, v.location,
 			v.tagsJSON, v.fieldsJSON,
 			v.publishedAt, v.publishedBasis, v.expiresAt,
 			v.firstSeen, v.lastSeen, v.textState, v.contentHash, v.version, v.body,
-			v.detailRequestedAt)
+			v.detailRequestedAt, v.industries)
 		if err != nil {
 			return 0, err
 		}
@@ -429,12 +450,12 @@ func save(ctx context.Context, tx *sql.Tx, v vacancyRow) (int64, error) {
 			identity=?, title=?, company=?, location=?, tags=?, source_fields=?,
 			apply_url=?, published_at=?, published_basis=?, expires_at=?,
 			last_seen=?, seen_at=?, text_state=?, content_hash=?, version=?, body=?,
-			detail_requested_at=?
+			detail_requested_at=?, industries=?
 		WHERE id=?`,
 		v.identity, v.title, v.company, v.location, v.tagsJSON, v.fieldsJSON,
 		v.applyURL, v.publishedAt, v.publishedBasis, v.expiresAt,
 		v.lastSeen, v.seenAt, v.textState, v.contentHash, v.version, v.body,
-		v.detailRequestedAt, v.id)
+		v.detailRequestedAt, v.industries, v.id)
 	return v.id, err
 }
 
@@ -444,13 +465,13 @@ func loadVacancy(ctx context.Context, tx *sql.Tx, id int64) (vacancyRow, error) 
 		SELECT id, identity, title, company, url, apply_url, location, tags, source_fields,
 		       published_at, published_basis, expires_at,
 		       first_seen, last_seen, seen_at, text_state, content_hash, version, body,
-		       detail_requested_at
+		       detail_requested_at, industries
 		FROM vacancy WHERE id = ?`, id).Scan(
 		&ex.id, &ex.identity, &ex.title, &ex.company, &ex.url, &ex.applyURL, &ex.location,
 		&ex.tagsJSON, &ex.fieldsJSON,
 		&ex.publishedAt, &ex.publishedBasis, &ex.expiresAt,
 		&ex.firstSeen, &ex.lastSeen, &ex.seenAt, &ex.textState, &ex.contentHash, &ex.version, &ex.body,
-		&ex.detailRequestedAt)
+		&ex.detailRequestedAt, &ex.industries)
 	return ex, err
 }
 
@@ -875,6 +896,85 @@ func performMerge(ctx context.Context, tx *sql.Tx, matchIDs []int64) error {
 		}
 	}
 	return nil
+}
+
+// computeIndustries calls the assigner (if set) with the vacancy's title,
+// tags and body text, and returns the JSON-encoded result. When no assigner
+// is configured or the assignment returns nothing, "[]" is returned.
+func (c *Catalog) computeIndustries(title, tagsJSON string, body []byte) string {
+	if c.assign == nil {
+		return "[]"
+	}
+	var tags []string
+	json.Unmarshal([]byte(tagsJSON), &tags) //nolint:errcheck
+	tagsText := strings.Join(tags, " ")
+
+	var plainText string
+	if len(body) > 0 {
+		h, err := Body(body)
+		if err == nil {
+			plainText = listing.PlainText(h)
+		}
+	}
+
+	names := c.assign(title, tagsText, plainText)
+	if len(names) == 0 {
+		return "[]"
+	}
+	b, err := json.Marshal(names)
+	if err != nil {
+		return "[]"
+	}
+	return string(b)
+}
+
+// SetIndustries updates the industries column of a vacancy directly.
+// It is used by the assign_industries background job to reassign all vacancies
+// when the vocabulary changes. An empty or nil names slice is stored as "[]",
+// never as JSON null.
+func (c *Catalog) SetIndustries(ctx context.Context, vacancyID int64, names []string) error {
+	_, err := c.db.ExecContext(ctx,
+		`UPDATE vacancy SET industries=? WHERE id=?`, marshalTags(names), vacancyID)
+	if err != nil {
+		return fmt.Errorf("catalog: set industries: %w", err)
+	}
+	return nil
+}
+
+// VacancyForAssign holds the fields needed to reassign industries for one vacancy.
+type VacancyForAssign struct {
+	ID       int64
+	Title    string
+	TagsJSON string
+	Body     []byte
+}
+
+// VacanciesForAssign returns a page of vacancies for industry reassignment,
+// ordered by id. offset and limit control pagination.
+func (c *Catalog) VacanciesForAssign(ctx context.Context, offset, limit int) ([]VacancyForAssign, error) {
+	rows, err := c.db.QueryContext(ctx,
+		`SELECT id, title, tags, body FROM vacancy ORDER BY id LIMIT ? OFFSET ?`,
+		limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("catalog: vacancies for assign: %w", err)
+	}
+	defer rows.Close()
+	var out []VacancyForAssign
+	for rows.Next() {
+		var r VacancyForAssign
+		if err := rows.Scan(&r.ID, &r.Title, &r.TagsJSON, &r.Body); err != nil {
+			return nil, fmt.Errorf("catalog: vacancies for assign: scan: %w", err)
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// CountVacancies returns the total number of vacancies.
+func (c *Catalog) CountVacancies(ctx context.Context) (int, error) {
+	var n int
+	err := c.db.QueryRowContext(ctx, `SELECT count(*) FROM vacancy`).Scan(&n)
+	return n, err
 }
 
 // pickEarlier returns the earlier of two non-empty UTC RFC 3339 timestamps.

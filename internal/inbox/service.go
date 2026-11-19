@@ -3,6 +3,7 @@ package inbox
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"strings"
@@ -35,16 +36,17 @@ const (
 
 // Row is one vacancy row in the API list response.
 type Row struct {
-	ID        int64  `json:"id"`
-	Company   string `json:"company"`
-	Title     string `json:"title"`
-	Location  string `json:"location"`
-	Published string `json:"published"`
-	Unread    bool   `json:"unread"`
-	Stage     Stage  `json:"stage"`
-	Reason    string `json:"reason,omitempty"`
-	Applied   string `json:"applied,omitempty"`
-	Expired   bool   `json:"expired,omitempty"`
+	ID         int64    `json:"id"`
+	Company    string   `json:"company"`
+	Title      string   `json:"title"`
+	Location   string   `json:"location"`
+	Published  string   `json:"published"`
+	Industries []string `json:"industries"`
+	Unread     bool     `json:"unread"`
+	Stage      Stage    `json:"stage"`
+	Reason     string   `json:"reason,omitempty"`
+	Applied    string   `json:"applied,omitempty"`
+	Expired    bool     `json:"expired,omitempty"`
 }
 
 // Counts holds per-stage vacancy counts for one profile.
@@ -63,24 +65,33 @@ func toRow(rr repoRow, now time.Time) Row {
 		company = "Unknown"
 	}
 	nowStr := now.UTC().Format(time.RFC3339)
+	var industries []string
+	if rr.industries != "" && rr.industries != "[]" {
+		json.Unmarshal([]byte(rr.industries), &industries) //nolint:errcheck
+	}
+	if industries == nil {
+		industries = []string{}
+	}
 	return Row{
-		ID:        rr.id,
-		Company:   company,
-		Title:     rr.title,
-		Location:  locationText(rr.location),
-		Published: publicationLine(rr.publishedAt, rr.publishedBasis, now),
-		Unread:    rr.unread,
-		Stage:     Stage(rr.stage),
-		Reason:    rr.reason,
-		Applied:   appliedText(rr.appliedAt, rr.appliedName, rr.stage, now),
-		Expired:   rr.expiresAt != "" && rr.expiresAt <= nowStr,
+		ID:         rr.id,
+		Company:    company,
+		Title:      rr.title,
+		Location:   locationText(rr.location),
+		Published:  publicationLine(rr.publishedAt, rr.publishedBasis, now),
+		Industries: industries,
+		Unread:     rr.unread,
+		Stage:      Stage(rr.stage),
+		Reason:     rr.reason,
+		Applied:    appliedText(rr.appliedAt, rr.appliedName, rr.stage, now),
+		Expired:    rr.expiresAt != "" && rr.expiresAt <= nowStr,
 	}
 }
 
 // profileVisibility loads the visibility filter for a profile.
+// vocabNames is passed to loadProfileSearch to restrict target industries.
 // Returns Filter{SQL:"1=0"} when the profile cannot be loaded.
-func profileVisibility(ctx context.Context, database *db.DB, profileID int64) candidate.Filter {
-	p, err := loadProfileSearch(ctx, database, profileID)
+func profileVisibility(ctx context.Context, database *db.DB, profileID int64, vocabNames []string) candidate.Filter {
+	p, err := loadProfileSearch(ctx, database, profileID, vocabNames)
 	if err != nil {
 		return candidate.Filter{SQL: "1=0"}
 	}
@@ -100,8 +111,8 @@ func buildCounts(cm map[string]int) Counts {
 
 // loadCounts returns the per-stage vacancy counts for a profile,
 // applying the profile's search visibility to the inbox count.
-func loadCounts(ctx context.Context, database *db.DB, profileID int64) (Counts, error) {
-	vis := profileVisibility(ctx, database, profileID)
+func loadCounts(ctx context.Context, database *db.DB, profileID int64, vocabNames []string) (Counts, error) {
+	vis := profileVisibility(ctx, database, profileID, vocabNames)
 	cm, err := stageCounts(ctx, database, profileID, vis)
 	if err != nil {
 		return Counts{}, err
@@ -110,8 +121,8 @@ func loadCounts(ctx context.Context, database *db.DB, profileID int64) (Counts, 
 }
 
 // rowAndCounts fetches one vacancy row and the profile counts as a shared tail for decision paths.
-func rowAndCounts(ctx context.Context, database *db.DB, now func() time.Time, profileID, vacancyID int64, stage string) (Row, Counts, error) {
-	vis := profileVisibility(ctx, database, profileID)
+func rowAndCounts(ctx context.Context, database *db.DB, now func() time.Time, profileID, vacancyID int64, stage string, vocabNames []string) (Row, Counts, error) {
+	vis := profileVisibility(ctx, database, profileID, vocabNames)
 	// Single-vacancy fetch: visibility not applied (vacancyID != 0).
 	raws, err := listRows(ctx, database, profileID, vacancyID, stage, "", vis)
 	if err != nil {
@@ -127,29 +138,36 @@ func rowAndCounts(ctx context.Context, database *db.DB, now func() time.Time, pr
 	return toRow(raws[0], now()), buildCounts(cm), nil
 }
 
-// list returns the rows, counts and empty text for the given profile, stage and query.
-func list(ctx context.Context, database *db.DB, now func() time.Time, profileID int64, stage, q string) ([]Row, Counts, error) {
-	vis := profileVisibility(ctx, database, profileID)
+// list returns the rows, counts, industry counts and empty text for the given
+// profile, stage, query and optional industries filter. vocabNames is used to
+// restrict the profile's target industries in the visibility filter.
+func list(ctx context.Context, database *db.DB, now func() time.Time, profileID int64, stage, q string, vocabNames []string, industries []string) ([]Row, Counts, []IndustryCount, error) {
+	vis := profileVisibility(ctx, database, profileID, vocabNames)
 	cm, err := stageCounts(ctx, database, profileID, vis)
 	if err != nil {
-		return nil, Counts{}, err
+		return nil, Counts{}, nil, err
 	}
-	raw, err := listRows(ctx, database, profileID, 0, stage, q, vis)
+	indCounts, err := industryCounts(ctx, database, profileID, stage, q, vis)
 	if err != nil {
-		return nil, Counts{}, err
+		return nil, Counts{}, nil, err
+	}
+	raw, err := listRows(ctx, database, profileID, 0, stage, q, vis, industries...)
+	if err != nil {
+		return nil, Counts{}, nil, err
 	}
 	t := now()
 	rows := make([]Row, len(raw))
 	for i, rr := range raw {
 		rows[i] = toRow(rr, t)
 	}
-	return rows, buildCounts(cm), nil
+	return rows, buildCounts(cm), indCounts, nil
 }
 
 // applyDecision validates and executes a stage transition.
 // Returns the updated row and profile counts on success.
+// vocabNames is passed to profileVisibility for the counts refresh.
 func applyDecision(ctx context.Context, database *db.DB, now func() time.Time,
-	vacancyID, profileID int64, from, to, reason string, confirmed bool) (Row, Counts, error) {
+	vacancyID, profileID int64, from, to, reason string, confirmed bool, vocabNames []string) (Row, Counts, error) {
 
 	// Load current stage.
 	var currentStage string
@@ -172,7 +190,7 @@ func applyDecision(ctx context.Context, database *db.DB, now func() time.Time,
 
 	// No-op: same stage.
 	if from == to {
-		return rowAndCounts(ctx, database, now, profileID, vacancyID, from)
+		return rowAndCounts(ctx, database, now, profileID, vacancyID, from, vocabNames)
 	}
 
 	// Validate move.
@@ -211,7 +229,7 @@ func applyDecision(ctx context.Context, database *db.DB, now func() time.Time,
 	if err := tx.Commit(); err != nil {
 		return Row{}, Counts{}, fmt.Errorf("inbox: decision: commit: %w", err)
 	}
-	return rowAndCounts(ctx, database, now, profileID, vacancyID, to)
+	return rowAndCounts(ctx, database, now, profileID, vacancyID, to, vocabNames)
 }
 
 // validateMove returns an error when the stage transition is not allowed.

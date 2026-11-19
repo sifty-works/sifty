@@ -21,6 +21,7 @@ import (
 	"github.com/sifty-works/sifty-server/internal/catalog"
 	"github.com/sifty-works/sifty-server/internal/config"
 	"github.com/sifty-works/sifty-server/internal/db"
+	"github.com/sifty-works/sifty-server/internal/industry"
 	"github.com/sifty-works/sifty-server/internal/listing"
 	"gopkg.in/yaml.v3"
 	_ "modernc.org/sqlite" // driver
@@ -422,8 +423,12 @@ func runImport(ctx context.Context, fromDir, dbPath, settingsPath, dataDir strin
 		nonImportedKeys = nil
 	}
 
-	// Run the import.
-	report, err := doImport(ctx, copyDB, newDB, store, oldCfg)
+	// Run the import, assigning industries using the default vocabulary.
+	defaultVocab := industry.DefaultVocab()
+	assignFn := func(title, tags, text string) []string {
+		return industry.Assign(title, tags, text, defaultVocab)
+	}
+	report, err := doImport(ctx, copyDB, newDB, store, oldCfg, assignFn)
 	if err != nil {
 		return err
 	}
@@ -446,7 +451,9 @@ func runImport(ctx context.Context, fromDir, dbPath, settingsPath, dataDir strin
 }
 
 // doImport runs the full import inside transactions and returns the report.
-func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.Store, oldCfg *oldConfig) (*importReport, error) {
+// assign is called to assign industries to each imported vacancy; nil means no
+// assignment (the assign_industries job will assign them on the next server start).
+func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.Store, oldCfg *oldConfig, assign func(title, tags, text string) []string) (*importReport, error) {
 	report := &importReport{}
 
 	// --- Read old data ---
@@ -715,17 +722,34 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 			}
 		}
 
+		// Assign industries using the vacancy's title, tags and plain text.
+		industriesJSON := "[]"
+		if assign != nil {
+			var plainText string
+			if len(md.body) > 0 {
+				if h, berr := catalog.Body(md.body); berr == nil {
+					plainText = listing.PlainText(h)
+				}
+			}
+			names := assign(j.title, j.tags, plainText)
+			if len(names) > 0 {
+				if b, jerr := json.Marshal(names); jerr == nil {
+					industriesJSON = string(b)
+				}
+			}
+		}
 		_, err := tx.ExecContext(ctx, `
 			INSERT INTO vacancy
 				(id, identity, title, company, url, apply_url, location, tags, source_fields,
 				 published_at, published_basis, expires_at,
-				 first_seen, last_seen, text_state, content_hash, version, body, seen_at)
-			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+				 first_seen, last_seen, text_state, content_hash, version, body, seen_at,
+				 industries)
+			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 			j.id, identity, j.title, company, vj.canonURL, applyURL, location,
 			j.tags, "{}",
 			md.publishedAt, md.publishedBasis, expiresAt,
 			md.firstSeen, md.lastSeen, string(md.textState), md.hash, 1, md.body,
-			md.seenAt,
+			md.seenAt, industriesJSON,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("inserting vacancy %d: %w", j.id, err)
@@ -966,13 +990,14 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 	// profileIDMap maps old TEXT profile id → new INTEGER id.
 	profileIDMap := make(map[string]int64)
 	type profileEntry struct {
-		newID       int64
-		name        string
-		targetRoles []string
-		keywords    []string
-		allOf       []string
-		except      []string // words to become per-profile word exclusions
-		profileData candidate.ProfileData
+		newID            int64
+		name             string
+		targetRoles      []string
+		keywords         []string
+		allOf            []string
+		except           []string // words to become per-profile word exclusions
+		targetIndustries []string // from old data; listed in report, not imported
+		profileData      candidate.ProfileData
 	}
 	var profilesByNewID []profileEntry
 
@@ -1034,13 +1059,20 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 		}
 		pd.Headline = headline
 
+		// Target industries from the old application informed the previous scoring
+		// model and are not used for filtering in the new application. Record them
+		// for the report and do not import them.
+		oldTargetIndustries := pd.TargetIndustries
+		pd.TargetIndustries = nil
+
 		report.LegacyFolded = append(report.LegacyFolded, legacyFolded...)
 		report.LegacyDropped = append(report.LegacyDropped, legacyDropped...)
 
 		profilesByNewID = append(profilesByNewID, profileEntry{
 			newID: newID, name: name,
 			targetRoles: roles, keywords: keywords, allOf: allOf, except: except,
-			profileData: pd,
+			targetIndustries: oldTargetIndustries,
+			profileData:      pd,
 		})
 		report.ProfilesWritten++
 	}
@@ -1105,7 +1137,7 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 		// Build per-profile search report lines.
 		for _, pp := range profilesByNewID {
 			report.ProfileSearchLines = append(report.ProfileSearchLines,
-				buildProfileSearchLine(pp.newID, pp.name, pp.targetRoles, pp.keywords, pp.allOf, pp.except))
+				buildProfileSearchLine(pp.newID, pp.name, pp.targetRoles, pp.keywords, pp.allOf, pp.except, pp.targetIndustries))
 		}
 	}
 
@@ -1983,7 +2015,9 @@ func filterEmpty(ss []string) []string {
 }
 
 // buildProfileSearchLine formats one profile's imported search data for the report.
-func buildProfileSearchLine(newID int64, name string, roles, keywords, allOf, except []string) string {
+// targetIndustries are the previous version's target industries; they are listed
+// but not imported.
+func buildProfileSearchLine(newID int64, name string, roles, keywords, allOf, except, targetIndustries []string) string {
 	var parts []string
 	if len(roles) > 0 {
 		parts = append(parts, "roles=["+strings.Join(roles, ", ")+"]")
@@ -1996,6 +2030,9 @@ func buildProfileSearchLine(newID int64, name string, roles, keywords, allOf, ex
 	}
 	if len(except) > 0 {
 		parts = append(parts, "except=["+strings.Join(except, ", ")+"]")
+	}
+	if len(targetIndustries) > 0 {
+		parts = append(parts, "targetIndustries=["+strings.Join(targetIndustries, ", ")+"] (not imported)")
 	}
 	header := fmt.Sprintf("id=%d (%s)", newID, name)
 	if len(parts) == 0 {

@@ -1802,3 +1802,64 @@ func TestImport_ProfileSearchFieldsImported(t *testing.T) {
 		t.Errorf("report missing profile 2 search line: %s", report)
 	}
 }
+
+func TestImport_IndustriesAssignedFromDefaultVocab(t *testing.T) {
+	// A vacancy whose description contains a Web3 keyword gets "Web3" assigned
+	// by the default vocabulary during import.
+	fromDir := makeOldDir(t, "")
+	oldDB := openOldDB(t, fromDir)
+
+	_, err := oldDB.Exec(`
+		INSERT INTO jobs (id, identity, title, company, original_url,
+		  description, description_status, first_seen, last_seen, description_html)
+		VALUES (1, 'chain|dev', 'Blockchain developer', 'ChainCo',
+		  'https://example.com/jobs/chaindev',
+		  '', 'available', '2024-01-01T00:00:00Z', '2024-01-02T00:00:00Z',
+		  '<p>Write smart contract code using solidity for ethereum protocols.</p>')`)
+	if err != nil {
+		t.Fatalf("insert job: %v", err)
+	}
+
+	targetDir := t.TempDir()
+	runImport(t, fromDir, targetDir)
+	newDB := openNewDB(t, targetDir)
+
+	var industriesJSON string
+	if err := newDB.QueryRowContext(context.Background(), `SELECT industries FROM vacancy WHERE id=1`).Scan(&industriesJSON); err != nil {
+		t.Fatalf("query industries: %v", err)
+	}
+	if !strings.Contains(industriesJSON, "Web3") {
+		t.Errorf("industries: got %q, want JSON array containing Web3", industriesJSON)
+	}
+}
+
+func TestImport_VacancyWithNoMatchingKeywordsKeepsEmptyIndustries(t *testing.T) {
+	// A vacancy whose title and HTML description contain no industry keywords
+	// gets industries='[]' after import.
+	fromDir := makeOldDir(t, "")
+	oldDB := openOldDB(t, fromDir)
+
+	_, err := oldDB.Exec(`
+		INSERT INTO jobs (id, identity, title, company, original_url,
+		  description, description_status, first_seen, last_seen,
+		  description_html)
+		VALUES (1, 'admin|coord', 'Administrative coordinator', 'OfficeOrg',
+		  'https://example.com/jobs/admincoord',
+		  '', 'available', '2024-01-01T00:00:00Z', '2024-01-02T00:00:00Z',
+		  '<p>Coordinate schedules and manage correspondence.</p>')`)
+	if err != nil {
+		t.Fatalf("insert job: %v", err)
+	}
+
+	targetDir := t.TempDir()
+	runImport(t, fromDir, targetDir)
+	newDB := openNewDB(t, targetDir)
+
+	var industriesJSON string
+	if err := newDB.QueryRowContext(context.Background(), `SELECT industries FROM vacancy WHERE id=1`).Scan(&industriesJSON); err != nil {
+		t.Fatalf("query industries: %v", err)
+	}
+	if industriesJSON != "[]" {
+		t.Errorf("vacancy with no keyword matches: got %q, want []", industriesJSON)
+	}
+}

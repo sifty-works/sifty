@@ -348,6 +348,38 @@ components:
                           type: number
                         - type: "null"
             type: object
+        IndustriesResp:
+            properties:
+                industries:
+                    items:
+                        $ref: '#/components/schemas/IndustryItem'
+                    type: array
+            required:
+                - industries
+            type: object
+        IndustryCount:
+            properties:
+                count:
+                    format: int64
+                    type: integer
+                name:
+                    type: string
+            required:
+                - name
+                - count
+            type: object
+        IndustryItem:
+            properties:
+                keywords:
+                    items:
+                        type: string
+                    type: array
+                name:
+                    type: string
+            required:
+                - name
+                - keywords
+            type: object
         Language:
             properties:
                 level:
@@ -376,6 +408,10 @@ components:
                     $ref: '#/components/schemas/Counts'
                 empty:
                     type: string
+                industryCounts:
+                    items:
+                        $ref: '#/components/schemas/IndustryCount'
+                    type: array
                 profile:
                     format: int64
                     type: integer
@@ -386,6 +422,7 @@ components:
             required:
                 - rows
                 - counts
+                - industryCounts
                 - empty
                 - profile
             type: object
@@ -990,6 +1027,10 @@ components:
                 id:
                     format: int64
                     type: integer
+                industries:
+                    items:
+                        type: string
+                    type: array
                 location:
                     type: string
                 published:
@@ -1013,6 +1054,7 @@ components:
                 - title
                 - location
                 - published
+                - industries
                 - unread
                 - stage
             type: object
@@ -1159,6 +1201,10 @@ components:
                 id:
                     format: int64
                     type: integer
+                industries:
+                    items:
+                        type: string
+                    type: array
                 listing:
                     $ref: '#/components/schemas/ListingView'
                 location:
@@ -1192,6 +1238,7 @@ components:
                 - title
                 - location
                 - published
+                - industries
                 - unread
                 - stage
                 - sources
@@ -1380,6 +1427,35 @@ paths:
                         application/json:
                             schema:
                                 $ref: '#/components/schemas/PreviewResp'
+                    description: OK
+    /api/industries:
+        get:
+            operationId: getApiIndustries
+            responses:
+                4XX:
+                    $ref: '#/components/responses/Error'
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/IndustriesResp'
+                    description: OK
+        put:
+            operationId: putApiIndustries
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/IndustriesResp'
+                required: true
+            responses:
+                4XX:
+                    $ref: '#/components/responses/Error'
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/IndustriesResp'
                     description: OK
     /api/me:
         get:
@@ -1688,6 +1764,10 @@ paths:
                 - in: query
                   name: q
                   required: true
+                  schema:
+                    type: string
+                - in: query
+                  name: industries
                   schema:
                     type: string
             responses:
