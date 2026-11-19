@@ -46,10 +46,10 @@ func runRetentionJob(t *testing.T, d *db.DB, cat *catalog.Catalog, now time.Time
 			return runRetention(runCtx, j, cat, slog.Default(), now)
 		},
 	})
-	r.Enqueue(runner.Spec{Kind: "retention"}) //nolint:errcheck
+	r.Enqueue(runner.Spec{Kind: "retention"})
 	rCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go r.Start(rCtx) //nolint:errcheck
+	go r.Start(rCtx)
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
 		if j, ok := r.Last("retention"); ok && j.State == "done" {
@@ -61,11 +61,6 @@ func runRetentionJob(t *testing.T, d *db.DB, cat *catalog.Catalog, now time.Time
 	return runner.Job{}
 }
 
-// TestRetentionExpiredVacanciesWithoutApplicationRemoved verifies that vacancies
-// whose expiry date passed more than a day ago and have no application are
-// deleted and tombstoned, while vacancies with applications, recent expiries,
-// no expiry or future expiry are kept. Shortlisted and dismissed vacancies
-// without an application are removed the same way.
 func TestRetentionExpiredVacanciesWithoutApplicationRemoved(t *testing.T) {
 	d := openRetentionTestDB(t)
 	now := retentionBase
@@ -75,49 +70,41 @@ func TestRetentionExpiredVacanciesWithoutApplicationRemoved(t *testing.T) {
 	cat := catalog.New(d, func() time.Time { return now })
 	ctx := context.Background()
 
-	// expired 2 days ago, no application → removed
 	id1, _, _ := cat.Upsert(ctx, expiryPosting("https://example.com/jobs/e1", twoDaysAgo), "src")
-	// expired 2 days ago, with application → kept
 	id2, _, _ := cat.Upsert(ctx, expiryPosting("https://example.com/jobs/e2", twoDaysAgo), "src")
-	d.Exec(`INSERT INTO application (vacancy,applied_at,profile,profile_name) VALUES (?,?,1,'Tester')`, //nolint:errcheck
+	d.Exec(`INSERT INTO application (vacancy,applied_at,profile,profile_name) VALUES (?,?,1,'Tester')`,
 		id2, now.Format(time.RFC3339))
-	// expired a few hours ago (< 1 day) → kept
 	id3, _, _ := cat.Upsert(ctx, expiryPosting("https://example.com/jobs/e3", fewHoursAgo), "src")
-	// no expiry → kept
 	id4, _, _ := cat.Upsert(ctx, listing.Posting{
 		URL: "https://example.com/jobs/e4", Title: "Analyst", Company: "RetentionCo",
 		TextState: listing.TextFull,
 	}, "src")
-	// future expiry → kept
 	id5, _, _ := cat.Upsert(ctx, expiryPosting("https://example.com/jobs/e5", now.Add(7*24*time.Hour)), "src")
-	// shortlisted, no application → removed
-	d.Exec(`INSERT INTO profile (id,data) VALUES (1,'{"name":"P1"}') ON CONFLICT DO NOTHING`) //nolint:errcheck
+	d.Exec(`INSERT INTO profile (id,data) VALUES (1,'{"name":"P1"}') ON CONFLICT DO NOTHING`)
 	id6, _, _ := cat.Upsert(ctx, expiryPosting("https://example.com/jobs/e6", twoDaysAgo), "src")
-	d.Exec(`INSERT OR REPLACE INTO decision (profile,vacancy,stage,reason,decided_at) VALUES (1,?,'shortlist','',?)`, //nolint:errcheck
+	d.Exec(`INSERT OR REPLACE INTO decision (profile,vacancy,stage,reason,decided_at) VALUES (1,?,'shortlist','',?)`,
 		id6, now.Format(time.RFC3339))
-	// dismissed, no application → removed
 	id7, _, _ := cat.Upsert(ctx, expiryPosting("https://example.com/jobs/e7", twoDaysAgo), "src")
-	d.Exec(`INSERT OR REPLACE INTO decision (profile,vacancy,stage,reason,decided_at) VALUES (1,?,'dismissed','',?)`, //nolint:errcheck
+	d.Exec(`INSERT OR REPLACE INTO decision (profile,vacancy,stage,reason,decided_at) VALUES (1,?,'dismissed','',?)`,
 		id7, now.Format(time.RFC3339))
 
 	runRetentionJob(t, d, cat, now)
 
 	for _, id := range []int64{id1, id6, id7} {
 		var cnt int
-		d.QueryRow(`SELECT count(*) FROM vacancy WHERE id=?`, id).Scan(&cnt) //nolint:errcheck
+		d.QueryRow(`SELECT count(*) FROM vacancy WHERE id=?`, id).Scan(&cnt)
 		if cnt != 0 {
 			t.Errorf("vacancy %d should be removed, still present", id)
 		}
 	}
 	for _, id := range []int64{id2, id3, id4, id5} {
 		var cnt int
-		d.QueryRow(`SELECT count(*) FROM vacancy WHERE id=?`, id).Scan(&cnt) //nolint:errcheck
+		d.QueryRow(`SELECT count(*) FROM vacancy WHERE id=?`, id).Scan(&cnt)
 		if cnt != 1 {
 			t.Errorf("vacancy %d should be kept, not found", id)
 		}
 	}
 
-	// A later upsert of a removed address is tombstoned and kept away.
 	_, out, err := cat.Upsert(ctx, expiryPosting("https://example.com/jobs/e1", twoDaysAgo), "src")
 	if err != nil {
 		t.Fatalf("re-upsert after removal: %v", err)
@@ -127,15 +114,13 @@ func TestRetentionExpiredVacanciesWithoutApplicationRemoved(t *testing.T) {
 	}
 }
 
-// TestRetentionSecondRunRemovesNothing verifies that a second retention run
-// is a no-op when all eligible vacancies were already removed.
 func TestRetentionSecondRunRemovesNothing(t *testing.T) {
 	d := openRetentionTestDB(t)
 	now := retentionBase
 	cat := catalog.New(d, func() time.Time { return now })
 	ctx := context.Background()
 
-	cat.Upsert(ctx, expiryPosting("https://example.com/jobs/once", now.Add(-48*time.Hour)), "src") //nolint:errcheck
+	cat.Upsert(ctx, expiryPosting("https://example.com/jobs/once", now.Add(-48*time.Hour)), "src")
 
 	j1 := runRetentionJob(t, d, cat, now)
 	if j1.Done != 1 {
@@ -147,8 +132,6 @@ func TestRetentionSecondRunRemovesNothing(t *testing.T) {
 	}
 }
 
-// TestRetentionJobResumesAfterRestart verifies that a retention job left in
-// the running state (e.g. after a crash) is re-queued when the server restarts.
 func TestRetentionJobResumesAfterRestart(t *testing.T) {
 	d := openRetentionTestDB(t)
 	ts := retentionBase.UTC().Format(time.RFC3339)
@@ -164,9 +147,9 @@ func TestRetentionJobResumesAfterRestart(t *testing.T) {
 	r.Register(runner.Kind{Name: "retention", Resume: true, Run: func(_ context.Context, _ *runner.Job) error { return nil }})
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	r.Start(ctx) //nolint:errcheck
+	r.Start(ctx)
 	var state string
-	d.QueryRow(`SELECT state FROM job WHERE kind='retention'`).Scan(&state) //nolint:errcheck
+	d.QueryRow(`SELECT state FROM job WHERE kind='retention'`).Scan(&state)
 	if state != "queued" {
 		t.Errorf("after restart: state=%q, want queued", state)
 	}

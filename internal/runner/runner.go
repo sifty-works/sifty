@@ -1,6 +1,3 @@
-// Package runner runs background jobs dispatched by priority and age.
-// Lanes throttle concurrent access to shared resources; they are taken
-// per stage inside a Run function, not per job.
 package runner
 
 import (
@@ -18,7 +15,6 @@ import (
 	"github.com/sifty-works/sifty-server/internal/db"
 )
 
-// Job states.
 const (
 	stateQueued      = "queued"
 	stateRunning     = "running"
@@ -27,32 +23,26 @@ const (
 	stateInterrupted = "interrupted"
 )
 
-// retryDelays are the pauses before the 1st and 2nd retry.
 var retryDelays = [2]time.Duration{30 * time.Second, 2 * time.Minute}
 
-// Spec describes a job to enqueue.
 type Spec struct {
 	Kind, Subject string
 	Priority      int
 	Params        json.RawMessage
 }
 
-// Kind describes how to run jobs of a particular name.
 type Kind struct {
 	Name   string
 	Run    func(ctx context.Context, j *Job) error
-	Resume bool // re-queue after restart when attempts < 3
+	Resume bool
 }
 
-// progressJSON is the shape stored in the progress column.
 type progressJSON struct {
 	Done    int    `json:"done"`
 	Total   int    `json:"total"`
 	Current string `json:"current,omitempty"`
 }
 
-// Job is the record callers read (via Last, Active) and the handle
-// passed to Kind.Run. The r field is set only on a job passed to Run.
 type Job struct {
 	ID        int64
 	Kind      string
@@ -69,34 +59,24 @@ type Job struct {
 	Created   time.Time
 	Updated   time.Time
 
-	r *Runner // non-nil only on a job passed to Kind.Run
+	r *Runner
 }
 
-// Progress updates the job's progress. Writes to the database at most once
-// per second.
 func (j *Job) Progress(done, total int, current string) {
 	j.r.writeProgress(j, done, total, current)
 }
 
-// Lane acquires one slot of the named lane and returns a release function.
-// The caller must release when the stage is done. Unknown lanes are treated
-// as unlimited. If ctx is cancelled before a slot is available, an error is
-// returned and release is a no-op.
 func (j *Job) Lane(ctx context.Context, name string) (func(), error) {
 	return j.r.acquireLane(ctx, name)
 }
 
-// permanentError wraps an error to signal that the job must not be retried.
 type permanentError struct{ err error }
 
 func (p permanentError) Error() string { return p.err.Error() }
 func (p permanentError) Unwrap() error { return p.err }
 
-// Permanent wraps err so that runner treats the failure as final and does
-// not retry the job.
 func Permanent(err error) error { return permanentError{err: err} }
 
-// lane is a counting semaphore backed by a buffered channel.
 type lane struct {
 	ch chan struct{}
 }
@@ -125,16 +105,12 @@ func (l *lane) release() {
 	}
 }
 
-// jobState holds mutable progress state for a currently running job.
-// It is kept in the Runner's active map, not in Job, to avoid embedding
-// a sync.Mutex in a value type.
 type jobState struct {
 	mu     sync.Mutex
 	progAt time.Time
 	job    *Job
 }
 
-// Runner dispatches background jobs stored in the job table.
 type Runner struct {
 	db    *db.DB
 	now   func() time.Time
@@ -143,14 +119,11 @@ type Runner struct {
 	lanes map[string]*lane
 
 	mu     sync.Mutex
-	active map[int64]*jobState // jobs currently executing
+	active map[int64]*jobState
 
 	wake chan struct{}
 }
 
-// New creates a Runner. lanes maps lane names to their capacity; unknown
-// names in Lane calls are treated as unlimited. now is called for every
-// time-sensitive operation and can be replaced in tests.
 func New(database *db.DB, lanes map[string]int, now func() time.Time, log *slog.Logger) *Runner {
 	ls := make(map[string]*lane, len(lanes))
 	for name, size := range lanes {
@@ -167,13 +140,10 @@ func New(database *db.DB, lanes map[string]int, now func() time.Time, log *slog.
 	}
 }
 
-// Register adds a Kind to the runner. It must be called before Start.
 func (r *Runner) Register(k Kind) {
 	r.kinds[k.Name] = k
 }
 
-// Start cleans up jobs left over from a previous run, then dispatches
-// queued jobs until ctx is cancelled. It blocks until ctx is done.
 func (r *Runner) Start(ctx context.Context) error {
 	r.deleteOldJobs()
 	r.recoverInterrupted()
@@ -192,8 +162,6 @@ func (r *Runner) Start(ctx context.Context) error {
 	}
 }
 
-// Enqueue adds a job or returns the id of an existing queued/running job
-// with the same (kind, subject).
 func (r *Runner) Enqueue(s Spec) (int64, error) {
 	var id int64
 	err := r.db.QueryRow(
@@ -228,7 +196,6 @@ func (r *Runner) Enqueue(s Spec) (int64, error) {
 	return id, nil
 }
 
-// Last returns the most recently created job of the given kind.
 func (r *Runner) Last(kind string) (Job, bool) {
 	row := r.db.QueryRow(
 		`SELECT id, kind, subject, priority, state, attempts, not_before,
@@ -243,7 +210,6 @@ func (r *Runner) Last(kind string) (Job, bool) {
 	return j, true
 }
 
-// Active returns all queued and running jobs ordered by priority then age.
 func (r *Runner) Active() []Job {
 	rows, err := r.db.Query(
 		`SELECT id, kind, subject, priority, state, attempts, not_before,
@@ -266,8 +232,6 @@ func (r *Runner) Active() []Job {
 	return out
 }
 
-// --- internal ---
-
 func (r *Runner) signal() {
 	select {
 	case r.wake <- struct{}{}:
@@ -275,8 +239,6 @@ func (r *Runner) signal() {
 	}
 }
 
-// dispatch picks all currently runnable jobs of registered kinds and starts
-// each in a goroutine.
 func (r *Runner) dispatch(ctx context.Context) {
 	for {
 		if ctx.Err() != nil {
@@ -289,7 +251,7 @@ func (r *Runner) dispatch(ctx context.Context) {
 		if err := r.markRunning(j); err != nil {
 			return
 		}
-		kind := r.kinds[j.Kind] // safe: pickOne only returns registered kinds
+		kind := r.kinds[j.Kind]
 		j.r = r
 		state := &jobState{job: j}
 		r.mu.Lock()
@@ -300,9 +262,6 @@ func (r *Runner) dispatch(ctx context.Context) {
 	}
 }
 
-// pickOne returns the highest-priority runnable job of a registered kind,
-// or nil when none exist. Jobs of unregistered kinds are never selected;
-// they remain queued until a runner that knows their kind is started.
 func (r *Runner) pickOne() (*Job, error) {
 	if len(r.kinds) == 0 {
 		return nil, nil
@@ -374,9 +333,6 @@ func (r *Runner) finishJob(ctx context.Context, j *Job, runErr error) {
 	delete(r.active, j.ID)
 	r.mu.Unlock()
 
-	// When the application is shutting down and the job returned an error
-	// (usually ctx.Err()), leave the row as running so the next Start
-	// applies restart rules. Do not count the interrupted run as an attempt.
 	if runErr != nil && ctx.Err() != nil {
 		return
 	}
@@ -490,7 +446,7 @@ func (r *Runner) recoverInterrupted() {
 		}
 		jobs = append(jobs, inf)
 	}
-	rows.Close() // release connection before making further queries
+	rows.Close()
 
 	now := r.now().UTC().Format(time.RFC3339)
 	for _, inf := range jobs {
@@ -514,14 +470,11 @@ func (r *Runner) recoverInterrupted() {
 	}
 }
 
-// --- helpers ---
-
 func isPermanent(err error) bool {
 	var pe permanentError
 	return errors.As(err, &pe)
 }
 
-// scanner abstracts *sql.Row and *sql.Rows.
 type scanner interface {
 	Scan(dest ...any) error
 }
@@ -546,7 +499,7 @@ func scanJob(s scanner) (Job, error) {
 
 	var prog progressJSON
 	if progress != "" && progress != "{}" {
-		json.Unmarshal([]byte(progress), &prog) //nolint:errcheck
+		json.Unmarshal([]byte(progress), &prog)
 	}
 	j.Done = prog.Done
 	j.Total = prog.Total

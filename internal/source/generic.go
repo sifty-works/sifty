@@ -15,7 +15,6 @@ import (
 	"github.com/sifty-works/sifty-server/internal/listing"
 )
 
-// genericSource is the fallback Source: XML feed, JSON-LD, Getro, links.
 type genericSource struct{}
 
 func (s *genericSource) Match(_ *url.URL) bool { return true }
@@ -58,12 +57,6 @@ func (s *genericSource) List(ctx context.Context, f fetch.Fetcher, cfg SiteConfi
 	return nil, ErrNothingRecognised
 }
 
-// Detail fetches p.URL once and fills text and empty fields. JSON-LD on the
-// page is matched by address or unique title; an ambiguous page (multiple
-// items share p's title) leaves text and company empty. With SkipJSONLD,
-// matched JSON-LD still fills empty fields but its description is ignored and
-// body/Content is used for text instead. When company is still absent after
-// all JSON-LD attempts, the page <title> is searched for "<role> at <company>".
 func Detail(ctx context.Context, f fetch.Fetcher, p listing.Posting, s SiteConfig) (listing.Posting, error) {
 	s = mergeConfig(s)
 	resp, err := f.Get(ctx, p.URL, fetch.Opt{})
@@ -75,8 +68,6 @@ func Detail(ctx context.Context, f fetch.Fetcher, p listing.Posting, s SiteConfi
 		base = p.URL
 	}
 	useBody := s.SkipJSONLD
-	// tryPageTitle is set when no JSON-LD match was found and the page was not
-	// ambiguous, so we can still recover the company from the page <title>.
 	tryPageTitle := false
 	if cs := jsonldPostings(resp.Body, base, true); len(cs) > 0 {
 		if m, ok, ambig := matchJSONLD(cs, p); ok {
@@ -156,11 +147,6 @@ func isXMLContent(ct string, body []byte) bool {
 		bytes.HasPrefix(b, []byte("<?xml")) || bytes.HasPrefix(b, []byte("<rss")) || bytes.HasPrefix(b, []byte("<feed"))
 }
 
-// ── JSON-LD ───────────────────────────────────────────────────────────────────
-
-// jsonldPostings parses JSON-LD JobPosting items from body and returns postings
-// whose URL can be determined. When keepNoURL is true, items without a url
-// field receive pageURL as their address (used by Detail for title matching).
 func jsonldPostings(body []byte, pageURL string, keepNoURL bool) []listing.Posting {
 	doc, _ := xhtml.Parse(bytes.NewReader(body))
 	var items []map[string]any
@@ -265,9 +251,6 @@ func jsonldToPosting(o map[string]any, pageURL string, nItems int, keepNoURL boo
 	return p, true
 }
 
-// matchJSONLD returns the JSON-LD item that uniquely matches p (by address or
-// title), ok=true when found. When ok is false and ambiguous is true, more
-// than one item shares p's title so the page cannot be attributed to p.
 func matchJSONLD(cs []listing.Posting, p listing.Posting) (listing.Posting, bool, bool) {
 	if pc, _ := listing.Canonical(p.URL); pc != "" {
 		var ms []listing.Posting
@@ -313,9 +296,6 @@ func ldSalaryText(v any) string {
 	return ""
 }
 
-// ── Getro ────────────────────────────────────────────────────────────────────
-
-// ndJob is the job shape inside Getro's __NEXT_DATA__ initialState.jobs.found.
 type ndJob struct {
 	Title     string   `json:"title"`
 	Slug      string   `json:"slug"`
@@ -328,7 +308,6 @@ type ndJob struct {
 	} `json:"organization"`
 }
 
-// findScript returns the text content of the first <script> whose markup contains marker.
 func findScript(body []byte, marker string) string {
 	s := string(body)
 	i := strings.Index(s, marker)
@@ -390,8 +369,6 @@ func getroPostings(body []byte, base string) []listing.Posting {
 	return out
 }
 
-// ── Link extraction ───────────────────────────────────────────────────────────
-
 var vacancyPathRE = regexp.MustCompile(`(?i)/(?:job|jobs|career|position)/[^/?]+`)
 
 func linkPostings(body []byte, base, pattern string) []listing.Posting {
@@ -401,7 +378,7 @@ func linkPostings(body []byte, base, pattern string) []listing.Posting {
 	}
 	doc, _ := xhtml.Parse(bytes.NewReader(body))
 	seen := map[string]bool{}
-	keyToIdx := map[string]int{} // address → index in out, for company backfill
+	keyToIdx := map[string]int{}
 	var out []listing.Posting
 	htmlWalk(doc, func(n *xhtml.Node) bool {
 		if n.Type != xhtml.ElementNode || n.Data != "a" {
@@ -439,9 +416,6 @@ func linkPostings(body []byte, base, pattern string) []listing.Posting {
 			return true
 		}
 		if seen[key] {
-			// A second link to the same address may carry the company in an h3
-			// when the first link only held the title (e.g. listing rows where
-			// title is in a first link's h2 and company in a second link's h3).
 			if idx, ok := keyToIdx[key]; ok && out[idx].Company == "" {
 				if co := firstText(n, func(c *xhtml.Node) bool {
 					return c.Type == xhtml.ElementNode && c.Data == "h3"
@@ -486,8 +460,6 @@ func linkPostings(body []byte, base, pattern string) []listing.Posting {
 	})
 	return out
 }
-
-// ── Body/content extraction ───────────────────────────────────────────────────
 
 func extractBodyText(body []byte, attrs []Attr) string {
 	doc, _ := xhtml.Parse(bytes.NewReader(body))
@@ -536,8 +508,6 @@ func extractBodyText(body []byte, attrs []Attr) string {
 	return ""
 }
 
-// ── a16z ─────────────────────────────────────────────────────────────────────
-
 type a16zCompany struct {
 	Jobs []struct {
 		Title, URL, CompanyName, CreatedAt string
@@ -546,7 +516,6 @@ type a16zCompany struct {
 	}
 }
 
-// a16zPostings reads the script array varName: companies, each with its jobs.
 func a16zPostings(body []byte, base, varName string) []listing.Posting {
 	content := findScript(body, varName)
 	_, rest, ok := strings.Cut(content, varName)
@@ -574,8 +543,6 @@ func a16zPostings(body []byte, base, varName string) []listing.Posting {
 	return out
 }
 
-// ── HTML utilities ────────────────────────────────────────────────────────────
-
 func htmlWalk(n *xhtml.Node, fn func(*xhtml.Node) bool) {
 	if n != nil && fn(n) {
 		for c := n.FirstChild; c != nil; c = c.NextSibling {
@@ -584,9 +551,6 @@ func htmlWalk(n *xhtml.Node, fn func(*xhtml.Node) bool) {
 	}
 }
 
-// companyFromPageTitle extracts the company name from the page <title> element
-// when the title follows the pattern "<role> at <company>" (with an optional
-// site suffix after " | " or " - "). Returns "" when the pattern is not found.
 func companyFromPageTitle(body []byte) string {
 	doc, _ := xhtml.Parse(bytes.NewReader(body))
 	var text string
@@ -610,7 +574,6 @@ func companyFromPageTitle(body []byte) string {
 	if text == "" {
 		return ""
 	}
-	// Strip common site suffixes before the " at " split.
 	for _, sep := range []string{" | ", " - "} {
 		if i := strings.Index(text, sep); i >= 0 {
 			text = text[:i]
@@ -623,9 +586,6 @@ func companyFromPageTitle(body []byte) string {
 	return ""
 }
 
-// firstText returns the text content of the first descendant of n that
-// satisfies pred. Text is gathered by collecting all text-node descendants
-// of that node and joining them with a single space.
 func firstText(n *xhtml.Node, pred func(*xhtml.Node) bool) string {
 	var out string
 	htmlWalk(n, func(c *xhtml.Node) bool {

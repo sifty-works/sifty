@@ -1,7 +1,3 @@
-// Package places is the one resolver of countries, regions, remote restrictions
-// and time-zone bands. Every list lives in the embedded vocabulary places.yaml;
-// this file only looks things up. There is no city table: a part of a label the
-// vocabulary does not know is kept as free text.
 package places
 
 import (
@@ -19,14 +15,11 @@ import (
 //go:embed places.yaml
 var vocabYAML []byte
 
-// ReferenceCountry, ReferenceRegion and ReferenceTimeZoneBand are what
-// GET /api/reference shows; their names are those of the API description.
 type ReferenceCountry struct {
 	Code string `json:"code"`
 	Name string `json:"name"`
 }
 
-// ReferenceRegion is a region with its member countries.
 type ReferenceRegion struct {
 	Code      string   `json:"code"`
 	Name      string   `json:"name"`
@@ -35,7 +28,6 @@ type ReferenceRegion struct {
 	Countries []string `json:"countries"`
 }
 
-// ReferenceTimeZoneBand is one of the six UTC bands.
 type ReferenceTimeZoneBand struct {
 	Code  string `json:"code"`
 	Label string `json:"label"`
@@ -60,7 +52,7 @@ type vocabulary struct {
 
 var (
 	vocab     = mustLoad()
-	index     = map[string][]string{} // lower-case name, code or alias → countries; empty: worldwide
+	index     = map[string][]string{}
 	ignored   = map[string]bool{}
 	bandsOf   = map[string][]string{}
 	splitRe   *regexp.Regexp
@@ -127,28 +119,20 @@ func init() {
 	}
 }
 
-// Countries returns every country of the vocabulary.
 func Countries() []ReferenceCountry { return countries }
 
-// Regions returns every region with its member countries.
 func Regions() []ReferenceRegion { return regions }
 
-// Bands returns the six time-zone bands.
 func Bands() []ReferenceTimeZoneBand { return bands }
 
-// Place is what one location label names.
 type Place struct {
-	Worldwide bool     // names no restriction ("Anywhere", "Remote")
-	Countries []string // ISO codes of the countries and regions it names
-	Cities    []string // parts the vocabulary does not know, as written
+	Worldwide bool
+	Countries []string
+	Cities    []string
 }
 
-// Known reports whether the vocabulary knows what the label names.
 func (p Place) Known() bool { return p.Worldwide || len(p.Countries) > 0 }
 
-// Resolve reads one label such as "Remote (EU only)" or "Berlin, Germany". A
-// part the vocabulary does not know is kept as a city; a label that names no
-// country, region or worldwide word is unknown.
 func Resolve(label string) Place {
 	if cs, ok := lookup(label); ok {
 		return Place{Worldwide: len(cs) == 0, Countries: cs}
@@ -181,14 +165,11 @@ func Resolve(label string) Place {
 	return p
 }
 
-// Codes returns the countries a country or region code, name or alias names,
-// or nil when the vocabulary does not know it.
 func Codes(name string) []string {
 	cs, _ := lookup(name)
 	return cs
 }
 
-// BandsOf returns the bands the given countries span, in band order.
 func BandsOf(cs []string) []string {
 	has := map[string]bool{}
 	for _, c := range cs {
@@ -205,8 +186,6 @@ func BandsOf(cs []string) []string {
 	return out
 }
 
-// ZoneBands reads a stated time zone ("UTC+2", "CET ± 3 hours", "EST") and
-// returns the bands its offsets touch, or nil when it states no offset.
 func ZoneBands(text string) []string {
 	widen := 0.0
 	if m := widenRe.FindStringSubmatch(text); m != nil {
@@ -235,8 +214,6 @@ func ZoneBands(text string) []string {
 	return out
 }
 
-// lookup finds a part in the vocabulary, also with a leading word such as
-// "Remote" or a trailing qualifier such as " only" removed.
 func lookup(part string) ([]string, bool) {
 	s := strings.TrimSpace(part)
 	var forms []string
@@ -266,8 +243,6 @@ func stripPrefixes(s string) []string {
 	return out
 }
 
-// splitLabel splits a label on the separators, reading each bracketed group
-// on its own: "Remote (US only) or NYC" gives "US only", "Remote", "NYC".
 func splitLabel(label string) []string {
 	var groups []string
 	var outside strings.Builder

@@ -7,8 +7,6 @@ import (
 	"github.com/sifty-works/sifty-server/internal/listing"
 )
 
-// --- Normalize HTML ---
-
 func TestNormalize_HTML(t *testing.T) {
 	cases := []struct {
 		name string
@@ -69,8 +67,6 @@ func TestNormalize_HTMLDeterministic(t *testing.T) {
 		t.Errorf("output is not deterministic: %q != %q", a, b)
 	}
 }
-
-// --- PlainText ---
 
 func TestPlainText(t *testing.T) {
 	cases := []struct {

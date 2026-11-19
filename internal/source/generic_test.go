@@ -13,7 +13,6 @@ import (
 	"github.com/sifty-works/sifty-server/internal/source"
 )
 
-// listGeneric calls List on For(u) and returns the result.
 func listGeneric(t *testing.T, m *fetchtest.Map, addr string) ([]listing.Posting, error) {
 	t.Helper()
 	u, err := url.Parse(addr)
@@ -22,8 +21,6 @@ func listGeneric(t *testing.T, m *fetchtest.Map, addr string) ([]listing.Posting
 	}
 	return source.For(u).List(context.Background(), m, source.SiteConfig{URL: addr})
 }
-
-// ── JSON-LD ───────────────────────────────────────────────────────────────────
 
 func TestList_jsonld_single_maps_all_fields(t *testing.T) {
 	body := mustReadFile(t, "testdata/jsonld_single.html")
@@ -128,8 +125,6 @@ func TestList_jsonld_no_url_single_takes_page_address(t *testing.T) {
 }
 
 func TestList_jsonld_no_url_multiple_dropped(t *testing.T) {
-	// Two JSON-LD items without URL fields on the same page: both are dropped.
-	// No other recognisable content → ErrNothingRecognised.
 	const body = `<html><head><script type="application/ld+json">
 [
   {"@type":"JobPosting","title":"A","hiringOrganization":{"name":"C"}},
@@ -144,8 +139,6 @@ func TestList_jsonld_no_url_multiple_dropped(t *testing.T) {
 		t.Errorf("error = %v, want ErrNothingRecognised (items without url dropped)", err)
 	}
 }
-
-// ── Getro ─────────────────────────────────────────────────────────────────────
 
 func TestList_getro_next_data(t *testing.T) {
 	body := mustReadFile(t, "testdata/getro.html")
@@ -173,8 +166,6 @@ func TestList_getro_next_data(t *testing.T) {
 		t.Errorf("text state = %q, want not_fetched", p.TextState)
 	}
 }
-
-// ── Link extraction ───────────────────────────────────────────────────────────
 
 func TestList_links_heuristic(t *testing.T) {
 	body := mustReadFile(t, "testdata/links_heuristic.html")
@@ -208,8 +199,6 @@ func TestList_links_pattern_web3career_config(t *testing.T) {
 	}
 }
 
-// ── XML feed ──────────────────────────────────────────────────────────────────
-
 func TestList_xml_feed_via_generic(t *testing.T) {
 	body := mustReadFile(t, "testdata/rss.xml")
 	addr := "https://feeds.example.com/jobs.xml"
@@ -220,8 +209,6 @@ func TestList_xml_feed_via_generic(t *testing.T) {
 		t.Fatalf("List err=%v len=%d, want feed postings", err, len(ps))
 	}
 }
-
-// ── a16z script source ────────────────────────────────────────────────────────
 
 func TestList_a16z_portfolio_jobs(t *testing.T) {
 	body := mustReadFile(t, "testdata/a16z.html")
@@ -253,8 +240,6 @@ func TestList_a16z_portfolio_jobs(t *testing.T) {
 	}
 }
 
-// ── Nothing recognised ────────────────────────────────────────────────────────
-
 func TestList_nothing_recognised(t *testing.T) {
 	const body = `<!DOCTYPE html><html><body><p>No jobs here.</p></body></html>`
 	addr := "https://empty.example.com/"
@@ -266,10 +251,7 @@ func TestList_nothing_recognised(t *testing.T) {
 	}
 }
 
-// ── Site config by host ───────────────────────────────────────────────────────
-
 func TestList_site_config_uses_list_url(t *testing.T) {
-	// Each site address is read at its configured list address; www. is stripped.
 	feedBody := mustReadFile(t, "testdata/rss.xml")
 	for _, tc := range []struct{ site, feed string }{
 		{"https://remote3.co/", "https://remote3.co/api/rss"},
@@ -302,13 +284,10 @@ func TestList_web3career_skips_jsonld_uses_link_pattern(t *testing.T) {
 	if err != nil || len(ps) == 0 {
 		t.Fatalf("List err=%v len=%d", err, len(ps))
 	}
-	// Exactly one request (the listing page).
 	if reqs := m.Requests(); len(reqs) != 1 {
 		t.Errorf("requests = %v, want exactly 1", reqs)
 	}
 }
-
-// ── SkipJSONLD honoured ───────────────────────────────────────────────────────
 
 func TestList_skipJSONLD_falls_to_links(t *testing.T) {
 	const body = `<html><head><script type="application/ld+json">
@@ -325,26 +304,21 @@ func TestList_skipJSONLD_falls_to_links(t *testing.T) {
 	if err != nil || len(ps) == 0 {
 		t.Fatalf("List err=%v len=%d, want links", err, len(ps))
 	}
-	// Should have come from the link, not from JSON-LD (title from anchor text).
 	if ps[0].Title != "Analyst" {
 		t.Errorf("title = %q (should be from link text)", ps[0].Title)
 	}
 }
-
-// ── Exactly one request per List ─────────────────────────────────────────────
 
 func TestList_generic_one_request(t *testing.T) {
 	body := mustReadFile(t, "testdata/jsonld_single.html")
 	addr := "https://jobs.example.com/"
 	m := fetchtest.NewMap()
 	m.Set(addr, fetchtest.MapEntry{Response: fetch.Response{URL: addr, Status: 200, Body: body}})
-	listGeneric(t, m, addr) //nolint:errcheck
+	listGeneric(t, m, addr)
 	if reqs := m.Requests(); len(reqs) != 1 {
 		t.Errorf("requests = %v, want exactly 1", reqs)
 	}
 }
-
-// ── Detail ────────────────────────────────────────────────────────────────────
 
 func TestDetail_match_by_address(t *testing.T) {
 	body := mustReadFile(t, "testdata/detail_jsonld.html")
@@ -362,11 +336,9 @@ func TestDetail_match_by_address(t *testing.T) {
 	if !strings.Contains(result.Text, "protocol") {
 		t.Errorf("text %q does not contain expected content", result.Text)
 	}
-	// Fields filled from JSON-LD.
 	if result.Fields["employment_type"] != "FULL_TIME" {
 		t.Errorf("employment_type = %q", result.Fields["employment_type"])
 	}
-	// ATS link on the page becomes ApplyURL.
 	if result.ApplyURL == "" {
 		t.Errorf("ApplyURL empty, want ATS link from page")
 	}
@@ -374,7 +346,6 @@ func TestDetail_match_by_address(t *testing.T) {
 
 func TestDetail_match_by_title_and_company(t *testing.T) {
 	body := mustReadFile(t, "testdata/detail_jsonld.html")
-	// Use a URL that differs from the JSON-LD url (simulates aggregator link).
 	pageURL := "https://careers.example.com/jobs/proto-42"
 	altURL := "https://aggregator.example.com/post/999"
 	m := fetchtest.NewMap()
@@ -489,13 +460,11 @@ func TestDetail_one_request(t *testing.T) {
 	m := fetchtest.NewMap()
 	m.Set(pageURL, fetchtest.MapEntry{Response: fetch.Response{URL: pageURL, Status: 200, Body: body}})
 	p := listing.Posting{URL: pageURL, Title: "Auditor"}
-	source.Detail(context.Background(), m, p, source.SiteConfig{URL: pageURL}) //nolint:errcheck
+	source.Detail(context.Background(), m, p, source.SiteConfig{URL: pageURL})
 	if reqs := m.Requests(); len(reqs) != 1 {
 		t.Errorf("requests = %v, want exactly 1", reqs)
 	}
 }
-
-// ── Link title extraction ─────────────────────────────────────────────────────
 
 func TestList_links_title_extraction(t *testing.T) {
 	addr := "https://board.example.com/"

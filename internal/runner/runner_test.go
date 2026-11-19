@@ -73,8 +73,6 @@ func waitJob(t *testing.T, r *runner.Runner, kind string) runner.Job {
 	}
 }
 
-// --- dispatch and deduplication ---
-
 func TestDispatchRunsAllQueuedJobs(t *testing.T) {
 	d := openDB(t)
 	done := make(chan string, 3)
@@ -84,7 +82,7 @@ func TestDispatchRunsAllQueuedJobs(t *testing.T) {
 		return nil
 	}})
 	for _, s := range []string{"a", "b", "c"} {
-		r.Enqueue(runner.Spec{Kind: "noop", Subject: s}) //nolint:errcheck
+		r.Enqueue(runner.Spec{Kind: "noop", Subject: s})
 	}
 	cancel := startRunner(t, r)
 	defer cancel()
@@ -106,9 +104,9 @@ func TestFutureNotBeforeJobWaits(t *testing.T) {
 	ran := make(chan string, 2)
 	r := newRunner(d, nil, cl)
 	r.Register(runner.Kind{Name: "nb", Run: func(_ context.Context, j *runner.Job) error { ran <- j.Subject; return nil }})
-	r.Enqueue(runner.Spec{Kind: "nb", Subject: "ready"}) //nolint:errcheck
+	r.Enqueue(runner.Spec{Kind: "nb", Subject: "ready"})
 	cl.Advance(time.Hour)
-	r.Enqueue(runner.Spec{Kind: "nb", Subject: "future"}) //nolint:errcheck
+	r.Enqueue(runner.Spec{Kind: "nb", Subject: "future"})
 	cl.Set(base.Add(30 * time.Minute))
 	cancel := startRunner(t, r)
 	defer cancel()
@@ -121,7 +119,7 @@ func TestFutureNotBeforeJobWaits(t *testing.T) {
 		t.Fatal("ready job did not run")
 	}
 	var state string
-	d.QueryRow(`SELECT state FROM job WHERE subject='future'`).Scan(&state) //nolint:errcheck
+	d.QueryRow(`SELECT state FROM job WHERE subject='future'`).Scan(&state)
 	if state != "queued" {
 		t.Errorf("future job state: got %q, want queued", state)
 	}
@@ -138,7 +136,6 @@ func TestDeduplicationReturnsExistingID(t *testing.T) {
 	}
 	cancel := startRunner(t, r)
 	defer cancel()
-	// Poll until the job is running (it blocks on hold).
 	deadline := time.After(5 * time.Second)
 	for {
 		if j, ok := r.Last("dedup"); ok && j.State == "running" {
@@ -174,7 +171,7 @@ func TestUnregisteredKindStaysQueued(t *testing.T) {
 	noop := make(chan struct{})
 	r := newRunner(d, nil, nil)
 	r.Register(runner.Kind{Name: "noop", Run: func(_ context.Context, _ *runner.Job) error { close(noop); return nil }})
-	r.Enqueue(runner.Spec{Kind: "noop", Subject: "1"}) //nolint:errcheck
+	r.Enqueue(runner.Spec{Kind: "noop", Subject: "1"})
 	cancel := startRunner(t, r)
 	defer cancel()
 	select {
@@ -183,13 +180,11 @@ func TestUnregisteredKindStaysQueued(t *testing.T) {
 		t.Fatal("noop job did not run")
 	}
 	var state string
-	d.QueryRow(`SELECT state FROM job WHERE kind='unknown'`).Scan(&state) //nolint:errcheck
+	d.QueryRow(`SELECT state FROM job WHERE kind='unknown'`).Scan(&state)
 	if state != "queued" {
 		t.Errorf("unregistered kind state: got %q, want queued", state)
 	}
 }
-
-// --- lanes ---
 
 func TestLaneLimitsParallelism(t *testing.T) {
 	d := openDB(t)
@@ -210,7 +205,7 @@ func TestLaneLimitsParallelism(t *testing.T) {
 		return nil
 	}})
 	for i := 0; i < 3; i++ {
-		r.Enqueue(runner.Spec{Kind: "net-job", Subject: fmt.Sprintf("%d", i)}) //nolint:errcheck
+		r.Enqueue(runner.Spec{Kind: "net-job", Subject: fmt.Sprintf("%d", i)})
 	}
 	cancel := startRunner(t, r)
 	defer cancel()
@@ -249,8 +244,8 @@ func TestJobWaitingForLaneDoesNotBlockOtherLane(t *testing.T) {
 		close(cpuDone)
 		return nil
 	}})
-	r.Enqueue(runner.Spec{Kind: "net-job", Subject: "1", Priority: 1}) //nolint:errcheck
-	r.Enqueue(runner.Spec{Kind: "cpu-job", Subject: "1"})              //nolint:errcheck
+	r.Enqueue(runner.Spec{Kind: "net-job", Subject: "1", Priority: 1})
+	r.Enqueue(runner.Spec{Kind: "cpu-job", Subject: "1"})
 	cancel := startRunner(t, r)
 	defer cancel()
 	select {
@@ -260,8 +255,6 @@ func TestJobWaitingForLaneDoesNotBlockOtherLane(t *testing.T) {
 	}
 	close(holdNet)
 }
-
-// --- retries, permanent, panic ---
 
 func TestRetryNotBeforeIsSetCorrectly(t *testing.T) {
 	d := openDB(t)
@@ -285,7 +278,7 @@ func TestRetryNotBeforeIsSetCorrectly(t *testing.T) {
 	}
 	time.Sleep(50 * time.Millisecond)
 	var notBefore string
-	d.QueryRow(`SELECT not_before FROM job WHERE id=?`, id).Scan(&notBefore) //nolint:errcheck
+	d.QueryRow(`SELECT not_before FROM job WHERE id=?`, id).Scan(&notBefore)
 	want := base.Add(30 * time.Second).UTC().Format(time.RFC3339)
 	if notBefore != want {
 		t.Errorf("not_before: got %q, want %q", notBefore, want)
@@ -298,7 +291,7 @@ func TestPermanentErrorFailsImmediately(t *testing.T) {
 	r.Register(runner.Kind{Name: "perm", Run: func(_ context.Context, _ *runner.Job) error {
 		return runner.Permanent(errors.New("done"))
 	}})
-	r.Enqueue(runner.Spec{Kind: "perm", Subject: "1"}) //nolint:errcheck
+	r.Enqueue(runner.Spec{Kind: "perm", Subject: "1"})
 	cancel := startRunner(t, r)
 	defer cancel()
 	j := waitJob(t, r, "perm")
@@ -312,7 +305,7 @@ func TestThirdFailureMarksFailed(t *testing.T) {
 	cl := newClock(base)
 	r := newRunner(d, nil, cl)
 	r.Register(runner.Kind{Name: "retry3", Run: func(_ context.Context, _ *runner.Job) error { return errors.New("always fails") }})
-	r.Enqueue(runner.Spec{Kind: "retry3", Subject: "1"}) //nolint:errcheck
+	r.Enqueue(runner.Spec{Kind: "retry3", Subject: "1"})
 	cancel := startRunner(t, r)
 	defer cancel()
 	timeout := time.After(10 * time.Second)
@@ -336,11 +329,9 @@ func TestPanicRecoveredAsError(t *testing.T) {
 	d := openDB(t)
 	r := newRunner(d, nil, nil)
 	r.Register(runner.Kind{Name: "panic", Run: func(_ context.Context, _ *runner.Job) error { panic("test panic") }})
-	r.Enqueue(runner.Spec{Kind: "panic", Subject: "1"}) //nolint:errcheck
+	r.Enqueue(runner.Spec{Kind: "panic", Subject: "1"})
 	cancel := startRunner(t, r)
 	defer cancel()
-	// The panic is recovered as an error; the job is re-queued for retry.
-	// Wait for attempts > 0, which confirms the panic did not crash the runner.
 	deadline := time.After(5 * time.Second)
 	for {
 		if j, ok := r.Last("panic"); ok && j.Attempts > 0 {
@@ -366,13 +357,13 @@ func TestShutdownLeavesJobRunningForRestart(t *testing.T) {
 	}})
 	id, _ := r1.Enqueue(runner.Spec{Kind: "slow", Subject: "1"})
 	ctx1, cancel1 := context.WithCancel(context.Background())
-	go r1.Start(ctx1) //nolint:errcheck
+	go r1.Start(ctx1)
 	<-started
 	cancel1()
 	time.Sleep(50 * time.Millisecond)
 	var state string
 	var attempts int
-	d.QueryRow(`SELECT state, attempts FROM job WHERE id=?`, id).Scan(&state, &attempts) //nolint:errcheck
+	d.QueryRow(`SELECT state, attempts FROM job WHERE id=?`, id).Scan(&state, &attempts)
 	if state != "running" {
 		t.Errorf("after shutdown: state=%q, want running", state)
 	}
@@ -380,8 +371,6 @@ func TestShutdownLeavesJobRunningForRestart(t *testing.T) {
 		t.Errorf("after shutdown: attempts=%d, want 1", attempts)
 	}
 }
-
-// --- restart ---
 
 func TestRestart(t *testing.T) {
 	cases := []struct {
@@ -410,9 +399,9 @@ func TestRestart(t *testing.T) {
 			r.Register(runner.Kind{Name: "k", Resume: tc.resume, Run: func(_ context.Context, _ *runner.Job) error { return nil }})
 			ctx, cancel := context.WithCancel(context.Background())
 			cancel()
-			r.Start(ctx) //nolint:errcheck
+			r.Start(ctx)
 			var state string
-			d.QueryRow(`SELECT state FROM job WHERE kind='k' AND subject='x'`).Scan(&state) //nolint:errcheck
+			d.QueryRow(`SELECT state FROM job WHERE kind='k' AND subject='x'`).Scan(&state)
 			if state != tc.want {
 				t.Errorf("state: got %q, want %q", state, tc.want)
 			}
@@ -420,31 +409,27 @@ func TestRestart(t *testing.T) {
 	}
 }
 
-// --- clean-up ---
-
 func TestOldFinishedJobsDeletedAtStart(t *testing.T) {
 	d := openDB(t)
 	old := base.Add(-91 * 24 * time.Hour).UTC().Format(time.RFC3339)
 	now := base.UTC().Format(time.RFC3339)
 	insert := `INSERT INTO job (kind,subject,priority,state,attempts,not_before,progress,error,params,created,updated) VALUES (?,'x',0,'done',1,?,'{}','',NULL,?,?)`
-	d.Exec(insert, "old", now, old, now)    //nolint:errcheck
-	d.Exec(insert, "recent", now, now, now) //nolint:errcheck
+	d.Exec(insert, "old", now, old, now)
+	d.Exec(insert, "recent", now, now, now)
 	r := newRunner(d, nil, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	r.Start(ctx) //nolint:errcheck
+	r.Start(ctx)
 	var n int
-	d.QueryRow(`SELECT count(*) FROM job WHERE kind='old'`).Scan(&n) //nolint:errcheck
+	d.QueryRow(`SELECT count(*) FROM job WHERE kind='old'`).Scan(&n)
 	if n != 0 {
 		t.Errorf("old job not deleted: count=%d", n)
 	}
-	d.QueryRow(`SELECT count(*) FROM job WHERE kind='recent'`).Scan(&n) //nolint:errcheck
+	d.QueryRow(`SELECT count(*) FROM job WHERE kind='recent'`).Scan(&n)
 	if n != 1 {
 		t.Errorf("recent job deleted: count=%d", n)
 	}
 }
-
-// --- stable ordering ---
 
 func TestStableOrderWithinOneSec(t *testing.T) {
 	d := openDB(t)
@@ -461,18 +446,15 @@ func TestStableOrderWithinOneSec(t *testing.T) {
 	}
 }
 
-// --- Last and Active ---
-
 func TestLastAndActive(t *testing.T) {
 	d := openDB(t)
 	hold := make(chan struct{})
 	r := newRunner(d, nil, nil)
 	r.Register(runner.Kind{Name: "q", Run: func(ctx context.Context, _ *runner.Job) error { <-hold; return nil }})
-	r.Enqueue(runner.Spec{Kind: "q", Subject: "a"}) //nolint:errcheck
-	r.Enqueue(runner.Spec{Kind: "q", Subject: "b"}) //nolint:errcheck
+	r.Enqueue(runner.Spec{Kind: "q", Subject: "a"})
+	r.Enqueue(runner.Spec{Kind: "q", Subject: "b"})
 	cancel := startRunner(t, r)
 	defer cancel()
-	// Poll until at least one job is running or queued.
 	deadline := time.After(5 * time.Second)
 	for {
 		if len(r.Active()) > 0 {

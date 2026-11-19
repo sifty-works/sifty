@@ -10,7 +10,6 @@ import (
 	"golang.org/x/net/context"
 )
 
-// cmdImportV1 implements 'sifty import-v1'.
 func cmdImportV1(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("import-v1", flag.ContinueOnError)
 	fs.SetOutput(stderr)

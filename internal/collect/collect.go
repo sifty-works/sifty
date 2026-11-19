@@ -1,5 +1,3 @@
-// Package collect implements the collection background job, the sources
-// management API, and the POST /api/collect trigger endpoint.
 package collect
 
 import (
@@ -24,28 +22,22 @@ import (
 	"github.com/sifty-works/sifty-server/internal/source"
 )
 
-// Collector orchestrates collection runs and the sources management API.
 type Collector struct {
 	store   *config.Store
 	catalog *catalog.Catalog
 	runner  *runner.Runner
 	fetcher fetch.Fetcher
 	db      *db.DB
-	blocked bool // offline without replay: suppress automatic runs
+	blocked bool
 	now     func() time.Time
 	log     *slog.Logger
 
-	// OnTick, when set, is called on each five-minute tick after the collect
-	// check. Use it to queue additional periodic jobs on the same ticker.
 	OnTick func(now time.Time)
 
 	mu      sync.Mutex
-	written int64 // catalogue writes counter
+	written int64
 }
 
-// New returns a Collector. blocked must be true when the application is offline
-// without a replay fetcher: automatic collection and force=false do nothing.
-// now is used for Due checks; pass nil to use time.Now.
 func New(
 	store *config.Store,
 	cat *catalog.Catalog,
@@ -71,15 +63,10 @@ func New(
 	}
 }
 
-// Register registers the collect kind with the runner. Call before runner.Start.
 func (c *Collector) Register() {
 	c.runner.Register(runner.Kind{Name: "collect", Run: c.run, Resume: false})
 }
 
-// Due reports whether a collection run should be started automatically now.
-// Returns false when automatic collection is off or the interval since the
-// last run has not elapsed. Active-job deduplication is handled by
-// runner.Enqueue, which rejects a second queued or running collect job.
 func (c *Collector) Due(now time.Time) bool {
 	cfg := c.store.Get()
 	if !cfg.Collection.Auto {
@@ -93,8 +80,6 @@ func (c *Collector) Due(now time.Time) bool {
 	return true
 }
 
-// Ticker enqueues a collect run every five minutes when Due. It blocks
-// until ctx is cancelled and must be called in its own goroutine.
 func (c *Collector) Ticker(ctx context.Context) {
 	t := time.NewTicker(5 * time.Minute)
 	defer t.Stop()
@@ -104,7 +89,7 @@ func (c *Collector) Ticker(ctx context.Context) {
 			return
 		case now := <-t.C:
 			if !c.blocked && c.Due(now) {
-				c.runner.Enqueue(runner.Spec{Kind: "collect"}) //nolint:errcheck
+				c.runner.Enqueue(runner.Spec{Kind: "collect"})
 			}
 			if c.OnTick != nil {
 				c.OnTick(now)
@@ -113,10 +98,8 @@ func (c *Collector) Ticker(ctx context.Context) {
 	}
 }
 
-// run is called by the runner for each collect job. When it ends, Fits you
-// is recomputed for what the run changed.
 func (c *Collector) run(ctx context.Context, j *runner.Job) error {
-	defer c.runner.Enqueue(runner.Spec{Kind: "recompute_fit"}) //nolint:errcheck
+	defer c.runner.Enqueue(runner.Spec{Kind: "recompute_fit"})
 	cfg := c.store.Get()
 	var enabled []config.SourceConfig
 	for _, s := range cfg.Sources {
@@ -130,9 +113,6 @@ func (c *Collector) run(ctx context.Context, j *runner.Job) error {
 		return nil
 	}
 
-	// Group sources by the API host they contact so that sources sharing an
-	// API host (Greenhouse, Lever, Ashby) are read sequentially within one
-	// goroutine, holding one net lane slot for the whole group.
 	type grp struct{ sources []config.SourceConfig }
 	var groups []grp
 	groupIdx := make(map[string]int)
@@ -210,7 +190,6 @@ func (c *Collector) run(ctx context.Context, j *runner.Job) error {
 							cntRemoved++
 							continue
 						}
-						// Skip Detail but still upsert if the posting matches an exclusion.
 						excluded := false
 						if excl, exclErr := catalog.Excluded(ctx, c.db, p.Title, p.Company, p.ApplyURL); exclErr != nil {
 							c.log.Warn("collect: exclusion check", "error", exclErr)
@@ -275,12 +254,10 @@ func (c *Collector) run(ctx context.Context, j *runner.Job) error {
 	return nil
 }
 
-// StatusFunc returns a function suitable for server.Options.Status.
 func (c *Collector) StatusFunc() func() server.StatusExtra {
 	return c.buildStatusExtra
 }
 
-// buildStatusExtra assembles the collection-specific status fields.
 func (c *Collector) buildStatusExtra() server.StatusExtra {
 	var collecting *server.CollectProgress
 	for _, j := range c.runner.Active() {
@@ -344,15 +321,11 @@ func (c *Collector) buildStatusExtra() server.StatusExtra {
 	}
 }
 
-// --- Sources API types -------------------------------------------------------
-
-// SourceStatus describes the last run result for one source.
 type SourceStatus struct {
 	Text      string `json:"text"`
 	Attention bool   `json:"attention"`
 }
 
-// Source is one entry in the sources list.
 type Source struct {
 	Key     string        `json:"key"`
 	Name    string        `json:"name"`
@@ -361,43 +334,35 @@ type Source struct {
 	Status  *SourceStatus `json:"status,omitempty"`
 }
 
-// SourcesResp is the response body for all /api/sources endpoints and
-// PUT /api/sources/schedule.
 type SourcesResp struct {
 	Sources  []Source `json:"sources"`
 	Auto     bool     `json:"auto"`
 	Interval string   `json:"interval"`
 }
 
-// addSourceReq is the request body for POST /api/sources.
 type addSourceReq struct {
 	Name string `json:"name"`
 	URL  string `json:"url"`
 }
 
-// toggleSourceReq is the request body for PATCH /api/sources.
 type toggleSourceReq struct {
 	Key     string `json:"key"`
 	Enabled bool   `json:"enabled"`
 }
 
-// removeSourceReq is the request body for DELETE /api/sources.
 type removeSourceReq struct {
 	Key string `json:"key"`
 }
 
-// scheduleReq is the request body for PUT /api/sources/schedule.
 type scheduleReq struct {
 	Auto     bool   `json:"auto"`
 	Interval string `json:"interval"`
 }
 
-// collectReq is the request body for POST /api/collect.
 type collectReq struct {
 	Force bool `json:"force"`
 }
 
-// updateSources applies update to the config and returns the sources response.
 func (c *Collector) updateSources(update func(*config.Config) error) (SourcesResp, error) {
 	if err := c.store.Update(update); err != nil {
 		return SourcesResp{}, err
@@ -405,7 +370,6 @@ func (c *Collector) updateSources(update func(*config.Config) error) (SourcesRes
 	return c.buildSourcesResp(), nil
 }
 
-// RegisterRoutes registers all collect-related routes on mux.
 func (c *Collector) RegisterRoutes(mux *http.ServeMux) {
 	server.Handle(mux, "GET /api/sources", c.log, func(r *http.Request, _ struct{}) (SourcesResp, error) {
 		return c.buildSourcesResp(), nil
@@ -462,15 +426,12 @@ func (c *Collector) RegisterRoutes(mux *http.ServeMux) {
 
 	server.Handle(mux, "POST /api/collect", c.log, func(r *http.Request, req collectReq) (server.StatusExtra, error) {
 		if req.Force || (!c.blocked && c.Due(c.now())) {
-			c.runner.Enqueue(runner.Spec{Kind: "collect"}) //nolint:errcheck
+			c.runner.Enqueue(runner.Spec{Kind: "collect"})
 		}
 		return c.buildStatusExtra(), nil
 	})
 }
 
-// --- Source run helpers ------------------------------------------------------
-
-// sourceRunStatus returns the run status and user-facing error text for a source.
 func sourceRunStatus(listErr error, found int) (string, string) {
 	if listErr != nil {
 		if errors.Is(listErr, source.ErrNothingRecognised) {
@@ -484,7 +445,6 @@ func sourceRunStatus(listErr error, found int) (string, string) {
 	return "ok", ""
 }
 
-// writeSourceRun inserts a source_run row for the given job and source key.
 func (c *Collector) writeSourceRun(jobID int64, key string, started, finished time.Time,
 	status, errText string, found, newCount, updated, unchanged, excluded, removed int) {
 	_, err := c.db.Exec(
@@ -500,7 +460,6 @@ func (c *Collector) writeSourceRun(jobID int64, key string, started, finished ti
 	}
 }
 
-// sourceRunRec is one row from the source_run table.
 type sourceRunRec struct {
 	started time.Time
 	status  string
@@ -509,7 +468,6 @@ type sourceRunRec struct {
 	errText string
 }
 
-// querySourceRuns returns runs for the given source key, newest first.
 func (c *Collector) querySourceRuns(key string) []sourceRunRec {
 	rows, err := c.db.Query(
 		`SELECT started, status, found, new, error
@@ -533,8 +491,6 @@ func (c *Collector) querySourceRuns(key string) []sourceRunRec {
 	return out
 }
 
-// attentionSources returns the set of source keys whose last three runs
-// (at least three) all ended in error or empty.
 func (c *Collector) attentionSources() map[string]bool {
 	rows, err := c.db.Query(`SELECT source FROM (SELECT source, status, ROW_NUMBER() OVER (PARTITION BY source ORDER BY started DESC) rn FROM source_run) WHERE rn<=3 GROUP BY source HAVING COUNT(*)=3 AND SUM(status='ok')=0`)
 	if err != nil {
@@ -551,7 +507,6 @@ func (c *Collector) attentionSources() map[string]bool {
 	return out
 }
 
-// buildSourceStatus returns the status for a source, or nil if it never ran.
 func (c *Collector) buildSourceStatus(key string) *SourceStatus {
 	history := c.querySourceRuns(key)
 	if len(history) == 0 {
@@ -596,8 +551,6 @@ func (c *Collector) buildSourceStatus(key string) *SourceStatus {
 	return &SourceStatus{Text: text, Attention: needsAttention(history)}
 }
 
-// needsAttention reports whether the source's last three runs (at least three)
-// all ended in error or empty, using the history already read for the status.
 func needsAttention(history []sourceRunRec) bool {
 	if len(history) < 3 {
 		return false
@@ -610,15 +563,11 @@ func needsAttention(history []sourceRunRec) bool {
 	return true
 }
 
-// listSource fetches the posting list from one source.
 func (c *Collector) listSource(ctx context.Context, s config.SourceConfig) ([]listing.Posting, error) {
 	u, _ := url.Parse(s.URL)
 	return source.For(u).List(ctx, c.fetcher, source.SiteConfig{Name: s.Name, URL: s.URL})
 }
 
-// addVacancyPage fetches the vacancy's own page, fills text and empty fields,
-// and re-checks exclusions on the updated fields. It returns the updated
-// posting and whether it is excluded after the re-check.
 func (c *Collector) addVacancyPage(ctx context.Context, p listing.Posting, s config.SourceConfig, excluded bool) (listing.Posting, bool) {
 	det, detErr := source.Detail(ctx, c.fetcher, p, source.SiteConfig{Name: s.Name, URL: p.URL})
 	switch {
@@ -638,9 +587,6 @@ func (c *Collector) addVacancyPage(ctx context.Context, p listing.Posting, s con
 	return p, excluded
 }
 
-// --- Helpers -----------------------------------------------------------------
-
-// buildSourcesResp assembles the response for all /api/sources endpoints.
 func (c *Collector) buildSourcesResp() SourcesResp {
 	cfg := c.store.Get()
 	sources := make([]Source, len(cfg.Sources))

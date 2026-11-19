@@ -1,5 +1,3 @@
-// Package industry provides the vocabulary of industries and the assignment
-// function that maps vacancy text to a list of industry names.
 package industry
 
 import (
@@ -16,18 +14,15 @@ import (
 //go:embed vocab.yaml
 var defaultVocabYAML []byte
 
-// Industry is one entry in the vocabulary: a name and its matching keywords.
 type Industry struct {
 	Name     string   `yaml:"name" json:"name"`
 	Keywords []string `yaml:"keywords" json:"keywords"`
 }
 
-// Vocab is the full vocabulary of industries.
 type Vocab struct {
 	Industries []Industry `yaml:"industries" json:"industries"`
 }
 
-// DefaultVocab returns the starting vocabulary embedded in the binary.
 func DefaultVocab() Vocab {
 	var v Vocab
 	if err := yaml.Unmarshal(defaultVocabYAML, &v); err != nil {
@@ -36,8 +31,6 @@ func DefaultVocab() Vocab {
 	return v
 }
 
-// LoadOrDefault loads the vocabulary from path. When the file does not exist,
-// DefaultVocab is returned. Any other error is returned to the caller.
 func LoadOrDefault(path string) (Vocab, error) {
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
@@ -53,8 +46,6 @@ func LoadOrDefault(path string) (Vocab, error) {
 	return v, nil
 }
 
-// Save marshals v to YAML and writes it to path, creating parent directories
-// as needed.
 func Save(path string, v Vocab) error {
 	data, err := yaml.Marshal(v)
 	if err != nil {
@@ -71,8 +62,6 @@ func Save(path string, v Vocab) error {
 	return nil
 }
 
-// Validate reports the first error in v: empty name, duplicate name,
-// or empty keyword list.
 func Validate(v Vocab) error {
 	if len(v.Industries) == 0 {
 		return fmt.Errorf("vocabulary must contain at least one industry")
@@ -99,10 +88,6 @@ func Validate(v Vocab) error {
 	return nil
 }
 
-// Assign returns the names of industries whose keywords appear as whole words
-// or phrases in the normalised title, tags or text. The same FTSNorm
-// normalisation is used as for the full-text index, so a keyword matches only
-// on a word boundary.
 func Assign(title, tags, text string, v Vocab) []string {
 	normTitle := listing.FTSNorm(title)
 	normTags := listing.FTSNorm(tags)
@@ -117,8 +102,6 @@ func Assign(title, tags, text string, v Vocab) []string {
 	return out
 }
 
-// matchesAny reports whether any keyword in kws appears as a whole word or
-// phrase in any of the normalised strings normTitle, normTags, normText.
 func matchesAny(kws []string, normTitle, normTags, normText string) bool {
 	for _, kw := range kws {
 		norm := listing.FTSNorm(kw)

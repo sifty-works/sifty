@@ -12,8 +12,6 @@ import (
 	"github.com/sifty-works/sifty-server/internal/db"
 )
 
-// fixtureFS builds an in-memory FS with the given SQL migration files.
-// keys are filenames like "001_create_foo.sql".
 func fixtureFS(files map[string]string) fs.FS {
 	m := make(fstest.MapFS)
 	for name, content := range files {
@@ -39,7 +37,6 @@ func TestPendingMigrationsRunInOrder(t *testing.T) {
 		t.Errorf("version: got %d, want 2", d.Version)
 	}
 
-	// Both tables must exist.
 	for _, table := range []string{"t1", "t2"} {
 		var n int
 		if err := d.QueryRow("SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?", table).Scan(&n); err != nil || n == 0 {
@@ -86,7 +83,6 @@ func TestBackupWrittenBeforeMigratingExistingDatabase(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "test.db")
 
-	// First open: create the database at version 1 with a table (not "new").
 	fsys1 := fixtureFS(map[string]string{
 		"001_first.sql": "CREATE TABLE t1 (id INTEGER PRIMARY KEY);",
 	})
@@ -96,7 +92,6 @@ func TestBackupWrittenBeforeMigratingExistingDatabase(t *testing.T) {
 	}
 	d1.Close()
 
-	// Second open: add a migration to trigger a backup of an existing database.
 	fsys2 := fixtureFS(map[string]string{
 		"001_first.sql":  "CREATE TABLE t1 (id INTEGER PRIMARY KEY);",
 		"002_second.sql": "CREATE TABLE t2 (id INTEGER PRIMARY KEY);",
@@ -121,7 +116,6 @@ func TestOnlyLastFiveBackupsKept(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "test.db")
 
-	// Build 7 versions incrementally.
 	for i := 1; i <= 7; i++ {
 		fsys := fixtureFS(makeMigrations(i))
 		d, err := db.Open(dbPath, fsys)
@@ -145,7 +139,6 @@ func TestNewerDatabaseIsRefused(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "test.db")
 
-	// Open with three migrations.
 	fsys1 := fixtureFS(makeMigrations(3))
 	d, err := db.Open(dbPath, fsys1)
 	if err != nil {
@@ -153,7 +146,6 @@ func TestNewerDatabaseIsRefused(t *testing.T) {
 	}
 	d.Close()
 
-	// Try to open with an older migration set (version 1 < 3).
 	fsys2 := fixtureFS(makeMigrations(1))
 	_, err = db.Open(dbPath, fsys2)
 	if err == nil {
@@ -168,7 +160,6 @@ func TestFailingMigrationLeavesVersionUnchanged(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "test.db")
 
-	// First, create the database at version 1 (non-new, so it has a table).
 	fsys1 := fixtureFS(makeMigrations(1))
 	d1, err := db.Open(dbPath, fsys1)
 	if err != nil {
@@ -176,7 +167,6 @@ func TestFailingMigrationLeavesVersionUnchanged(t *testing.T) {
 	}
 	d1.Close()
 
-	// Now try to run a failing migration.
 	fsys2 := fixtureFS(map[string]string{
 		"001_base.sql":   fmt.Sprintf("CREATE TABLE IF NOT EXISTS m%d (id INTEGER PRIMARY KEY);", 1),
 		"002_broken.sql": "THIS IS NOT VALID SQL;",
@@ -186,7 +176,6 @@ func TestFailingMigrationLeavesVersionUnchanged(t *testing.T) {
 		t.Fatal("failing migration should return an error")
 	}
 
-	// The database should still be at version 1 (rollback happened).
 	fsys3 := fixtureFS(makeMigrations(1))
 	d3, err := db.Open(dbPath, fsys3)
 	if err != nil {
@@ -198,9 +187,6 @@ func TestFailingMigrationLeavesVersionUnchanged(t *testing.T) {
 	}
 }
 
-// TestMigrationsFS_VacancyTableExists opens a fresh database using the
-// embedded db.Migrations FS and checks that the vacancy table exists and
-// that user_version is 1.
 func TestEmbeddedMigrationsRunOnAnEmptyFolder(t *testing.T) {
 	dir := t.TempDir()
 	d, err := db.Open(filepath.Join(dir, "test.db"), db.Migrations)
@@ -225,7 +211,6 @@ func TestEmbeddedMigrationsRunOnAnEmptyFolder(t *testing.T) {
 	}
 }
 
-// makeMigrations generates n SQL migration files numbered 001..n.
 func makeMigrations(n int) map[string]string {
 	out := make(map[string]string, n)
 	for i := 1; i <= n; i++ {

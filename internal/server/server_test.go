@@ -31,8 +31,6 @@ func newTestServer(t *testing.T, routes func(*http.ServeMux)) *httptest.Server {
 	return ts
 }
 
-// portRewriteTransport rewrites the Host header so the server accepts requests
-// from the test client.
 type portRewriteTransport struct {
 	base http.RoundTripper
 	host string
@@ -58,7 +56,7 @@ func getJSON(t *testing.T, ts *httptest.Server, path string) (int, map[string]an
 	}
 	defer resp.Body.Close()
 	var body map[string]any
-	json.NewDecoder(resp.Body).Decode(&body) //nolint:errcheck
+	json.NewDecoder(resp.Body).Decode(&body)
 	return resp.StatusCode, body
 }
 
@@ -102,7 +100,7 @@ func TestCredentialRefusedWithJSON(t *testing.T) {
 				t.Errorf("%s: got %d, want 403", tc.name, resp.StatusCode)
 			}
 			var body map[string]string
-			json.NewDecoder(resp.Body).Decode(&body) //nolint:errcheck
+			json.NewDecoder(resp.Body).Decode(&body)
 			if body["error"] == "" {
 				t.Errorf("%s: response must have 'error' key", tc.name)
 			}
@@ -159,7 +157,7 @@ func TestPostContentTypeEnforced(t *testing.T) {
 func TestBodyOverOneMBRefused(t *testing.T) {
 	ts := newTestServer(t, func(mux *http.ServeMux) {
 		mux.HandleFunc("POST /api/test", func(w http.ResponseWriter, r *http.Request) {
-			io.Copy(io.Discard, r.Body) //nolint:errcheck
+			io.Copy(io.Discard, r.Body)
 			w.WriteHeader(http.StatusNoContent)
 		})
 	})
@@ -275,7 +273,7 @@ func TestErrorTypesMapToCorrectStatusCodes(t *testing.T) {
 				t.Errorf("MapError(%T): got %d, want %d", tc.err, w.Code, tc.wantStatus)
 			}
 			var body map[string]string
-			json.NewDecoder(w.Body).Decode(&body) //nolint:errcheck
+			json.NewDecoder(w.Body).Decode(&body)
 			if _, ok := body["error"]; !ok {
 				t.Error("MapError: response has no 'error' key")
 			}

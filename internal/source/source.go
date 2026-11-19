@@ -1,4 +1,3 @@
-// Package source turns a source address into postings through one fetch.Fetcher.
 package source
 
 import (
@@ -13,12 +12,8 @@ import (
 	"github.com/sifty-works/sifty-server/internal/listing"
 )
 
-// ErrNothingRecognised is returned when a feed or page is not in a recognised format.
-// User text: "Nothing recognised on the page".
 var ErrNothingRecognised = errors.New("nothing recognised on the page")
 
-// fetchJSON fetches apiURL and unmarshals the JSON body into dst.
-// It returns ErrNothingRecognised when the body is not valid JSON.
 func fetchJSON(ctx context.Context, f fetch.Fetcher, apiURL string, dst any) error {
 	resp, err := f.Get(ctx, apiURL, fetch.Opt{})
 	if err != nil {
@@ -30,27 +25,18 @@ func fetchJSON(ctx context.Context, f fetch.Fetcher, apiURL string, dst any) err
 	return nil
 }
 
-// Attr selects page elements by attribute substring: every element whose named
-// attribute value contains Substr, in document order.
 type Attr struct{ Attr, Substr string }
 
-// SiteConfig holds the user-configured settings for one source.
-// Content, LinkPattern, ListURL and SkipJSONLD are set from the built-in site
-// table when the source URL's host matches a known entry; the user's yaml never
-// sets these four fields.
 type SiteConfig struct {
 	Name        string
 	URL         string
-	Content     []Attr // content block selector(s) for Detail body extraction
-	LinkPattern string // regexp for vacancy link paths (generic List)
-	ListURL     string // list address read instead of URL (a feed or a page)
-	ScriptVar   string // JS variable name holding the jobs array (a16z)
-	SkipJSONLD  bool   // skip JSON-LD extraction on this source
+	Content     []Attr
+	LinkPattern string
+	ListURL     string
+	ScriptVar   string
+	SkipJSONLD  bool
 }
 
-// mergeConfig returns the site-table entry for the host of s.URL with Name and
-// URL copied from s, or s unchanged when no entry exists. A leading "www." is
-// stripped before lookup.
 func mergeConfig(s SiteConfig) SiteConfig {
 	u, _ := url.Parse(s.URL)
 	host := strings.TrimPrefix(strings.ToLower(u.Host), "www.")
@@ -71,7 +57,6 @@ func mergeConfig(s SiteConfig) SiteConfig {
 	return s
 }
 
-// Source reads postings from one kind of job site.
 type Source interface {
 	Match(u *url.URL) bool
 	List(ctx context.Context, f fetch.Fetcher, s SiteConfig) ([]listing.Posting, error)
@@ -84,10 +69,6 @@ var (
 	srcGeneric    Source = &genericSource{}
 )
 
-// Host returns the key that groups sources read one after another.
-// Greenhouse, Lever and Ashby boards are requested at a shared API host that
-// differs from the board's host; the key is that API host. Any other "jobs."
-// host gets an "api." key too, which only groups it with a sibling host.
 func Host(u *url.URL) string {
 	h := strings.ToLower(u.Host)
 	if strings.HasSuffix(h, ".greenhouse.io") {
@@ -99,7 +80,6 @@ func Host(u *url.URL) string {
 	return h
 }
 
-// For returns the first Source that matches u, or the generic source for any other address.
 func For(u *url.URL) Source {
 	for _, s := range []Source{srcGreenhouse, srcLever, srcAshby, srcHN} {
 		if s.Match(u) {
@@ -109,16 +89,13 @@ func For(u *url.URL) Source {
 	return srcGeneric
 }
 
-// trim returns s with leading and trailing whitespace removed.
 func trim(s string) string { return strings.TrimSpace(s) }
 
-// boardSlug returns the first path segment of u (the board or site slug).
 func boardSlug(u *url.URL) string {
 	p, _, _ := strings.Cut(strings.TrimPrefix(strings.TrimSuffix(u.Path, "/"), "/"), "/")
 	return p
 }
 
-// isRoot reports whether u points to a board root (exactly one path segment).
 func isRoot(u *url.URL) bool {
 	p := strings.TrimSuffix(u.Path, "/")
 	if p == "" || p[0] != '/' {
@@ -127,7 +104,6 @@ func isRoot(u *url.URL) bool {
 	return p[1:] != "" && !strings.Contains(p[1:], "/")
 }
 
-// dateFormats tried in order by parseDate.
 var dateFormats = []string{
 	time.RFC3339Nano,
 	time.RFC3339,
@@ -139,8 +115,6 @@ var dateFormats = []string{
 	"2006-01-02",
 }
 
-// parseDate tries to parse s using common date formats.
-// Returns the zero Time and false when s cannot be parsed.
 func parseDate(s string) (time.Time, bool) {
 	if s = trim(s); s == "" {
 		return time.Time{}, false
@@ -153,8 +127,6 @@ func parseDate(s string) (time.Time, bool) {
 	return time.Time{}, false
 }
 
-// resolveURL resolves href against base, returning an absolute URL.
-// href is returned unchanged if it is already absolute, empty, or base is empty.
 func resolveURL(href, base string) string {
 	if href == "" || base == "" {
 		return href
@@ -169,8 +141,6 @@ func resolveURL(href, base string) string {
 	return href
 }
 
-// setFields returns a map with the given key/value pairs, omitting empty values.
-// kvs must be alternating key, value strings.
 func setFields(kvs ...string) map[string]string {
 	var m map[string]string
 	for i := 0; i+1 < len(kvs); i += 2 {
@@ -184,9 +154,6 @@ func setFields(kvs ...string) map[string]string {
 	return m
 }
 
-// finalise trims all string fields of p, resolves URL and ApplyURL against base,
-// drops empty tags, sets TextState from whether text is present, and reports
-// whether the posting is kept. A posting is dropped when title or URL is empty.
 func finalise(p listing.Posting, base string) (listing.Posting, bool) {
 	p.URL = resolveURL(trim(p.URL), base)
 	p.ApplyURL = resolveURL(trim(p.ApplyURL), base)

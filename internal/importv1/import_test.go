@@ -19,7 +19,6 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// oldSchema is the schema of the previous application's database.
 const oldSchema = `
 CREATE TABLE jobs(
   id INTEGER PRIMARY KEY,
@@ -129,8 +128,6 @@ CREATE TABLE app_settings(
 );
 `
 
-// makeOldDB creates a fresh old-schema SQLite database at path and sets its
-// user_version to v.
 func makeOldDB(t *testing.T, dir, name string, v int) *sql.DB {
 	t.Helper()
 	path := filepath.Join(dir, name)
@@ -148,13 +145,11 @@ func makeOldDB(t *testing.T, dir, name string, v int) *sql.DB {
 	return oldDB
 }
 
-// makeOldDir creates the layout of the old application's data folder:
-// store.sqlite and config/search.yaml with given YAML content.
 func makeOldDir(t *testing.T, yamlContent string) string {
 	t.Helper()
 	dir := t.TempDir()
 	oldDB := makeOldDB(t, dir, oldDBFile, 43)
-	_ = oldDB // returned for callers that want to insert rows
+	_ = oldDB
 
 	cfgDir := filepath.Join(dir, "config")
 	if err := os.MkdirAll(cfgDir, 0700); err != nil {
@@ -168,7 +163,6 @@ func makeOldDir(t *testing.T, yamlContent string) string {
 	return dir
 }
 
-// openOldDB opens the old database in a test-created directory for adding rows.
 func openOldDB(t *testing.T, dir string) *sql.DB {
 	t.Helper()
 	path := filepath.Join(dir, oldDBFile)
@@ -182,7 +176,6 @@ func openOldDB(t *testing.T, dir string) *sql.DB {
 
 const oldDBFile = "store.sqlite"
 
-// runImport runs the import and returns the stdout text.
 func runImport(t *testing.T, fromDir, targetDir string) string {
 	t.Helper()
 	dbPath := filepath.Join(targetDir, "sifty.db")
@@ -194,7 +187,6 @@ func runImport(t *testing.T, fromDir, targetDir string) string {
 	return buf.String()
 }
 
-// openNewDB opens the new database in targetDir.
 func openNewDB(t *testing.T, targetDir string) *db.DB {
 	t.Helper()
 	newDB, err := db.Open(filepath.Join(targetDir, "sifty.db"), db.Migrations)
@@ -204,8 +196,6 @@ func openNewDB(t *testing.T, targetDir string) *db.DB {
 	t.Cleanup(func() { newDB.Close() })
 	return newDB
 }
-
-// --- Tests ---
 
 func TestImport_AllFieldsCarriedOver(t *testing.T) {
 	fromDir := makeOldDir(t, `
@@ -219,7 +209,6 @@ preferences: {}
 `)
 	oldDB := openOldDB(t, fromDir)
 
-	// Insert one full vacancy with HTML description and a sighting.
 	_, err := oldDB.Exec(`
 		INSERT INTO jobs (id, identity, title, company, original_url, apply_url,
 		  description, description_status, location, published_at, published_basis,
@@ -270,7 +259,6 @@ preferences: {}
 	if company != "Acme Corp" {
 		t.Errorf("company: got %q, want %q", company, "Acme Corp")
 	}
-	// Canonical URL strips www, lowercase, etc.
 	if !strings.HasPrefix(url, "https://boards.greenhouse.io") {
 		t.Errorf("url: got %q", url)
 	}
@@ -397,7 +385,6 @@ func TestImport_PlainTextDescription(t *testing.T) {
 		t.Fatalf("query: %v", err)
 	}
 
-	// Verify that catalog.Encode of the same normalized text gives identical body and hash.
 	normalized := listing.Normalize(importv1.PlainToHTML(plainText))
 	wantBody, wantHash, err := catalog.Encode(normalized)
 	if err != nil {
@@ -412,7 +399,6 @@ func TestImport_PlainTextDescription(t *testing.T) {
 }
 
 func TestImport_EncodeConsistencyWithUpsert(t *testing.T) {
-	// A later Upsert of the same text should return Unchanged.
 	fromDir := makeOldDir(t, "")
 	oldDB := openOldDB(t, fromDir)
 
@@ -486,31 +472,31 @@ func TestImport_PublicationRules(t *testing.T) {
 	}
 	read := func(id int) row {
 		var r row
-		newDB.QueryRow(`SELECT published_at, published_basis FROM vacancy WHERE id=?`, id).Scan(&r.publishedAt, &r.publishedBasis) //nolint:errcheck
+		newDB.QueryRow(`SELECT published_at, published_basis FROM vacancy WHERE id=?`, id).Scan(&r.publishedAt, &r.publishedBasis)
 		return r
 	}
 
-	r1 := read(1) // datePosted → keep with basis
+	r1 := read(1)
 	if r1.publishedAt != "2024-03-15T00:00:00Z" || r1.publishedBasis != "datePosted" {
 		t.Errorf("id=1: got published_at=%q basis=%q", r1.publishedAt, r1.publishedBasis)
 	}
-	r2 := read(2) // pubDate → keep with basis
+	r2 := read(2)
 	if r2.publishedAt != "2024-03-15T00:00:00Z" || r2.publishedBasis != "pubDate" {
 		t.Errorf("id=2: got published_at=%q basis=%q", r2.publishedAt, r2.publishedBasis)
 	}
-	r3 := read(3) // updatedAt → keep date without basis
+	r3 := read(3)
 	if r3.publishedAt != "2024-03-15T00:00:00Z" || r3.publishedBasis != "" {
 		t.Errorf("id=3: got published_at=%q basis=%q", r3.publishedAt, r3.publishedBasis)
 	}
-	r4 := read(4) // future date → dropped
+	r4 := read(4)
 	if r4.publishedAt != "" {
 		t.Errorf("id=4: future date not dropped; got %q", r4.publishedAt)
 	}
-	r5 := read(5) // bad date → dropped
+	r5 := read(5)
 	if r5.publishedAt != "" {
 		t.Errorf("id=5: bad date not dropped; got %q", r5.publishedAt)
 	}
-	r6 := read(6) // NULL basis → keep date without basis
+	r6 := read(6)
 	if r6.publishedAt != "2024-03-15T00:00:00Z" || r6.publishedBasis != "" {
 		t.Errorf("id=6: got published_at=%q basis=%q", r6.publishedAt, r6.publishedBasis)
 	}
@@ -534,7 +520,7 @@ func TestImport_EmptyCompanyStoredEmpty(t *testing.T) {
 	newDB := openNewDB(t, targetDir)
 
 	var company string
-	newDB.QueryRow(`SELECT company FROM vacancy WHERE id=1`).Scan(&company) //nolint:errcheck
+	newDB.QueryRow(`SELECT company FROM vacancy WHERE id=1`).Scan(&company)
 	if company != "" {
 		t.Errorf("company: got %q, want %q (the old placeholder is stored as empty)", company, "")
 	}
@@ -563,8 +549,8 @@ func TestImport_ApplyURLKeptOnlyConcrete(t *testing.T) {
 	newDB := openNewDB(t, targetDir)
 
 	var apply1, apply2 string
-	newDB.QueryRow(`SELECT apply_url FROM vacancy WHERE id=1`).Scan(&apply1) //nolint:errcheck
-	newDB.QueryRow(`SELECT apply_url FROM vacancy WHERE id=2`).Scan(&apply2) //nolint:errcheck
+	newDB.QueryRow(`SELECT apply_url FROM vacancy WHERE id=1`).Scan(&apply1)
+	newDB.QueryRow(`SELECT apply_url FROM vacancy WHERE id=2`).Scan(&apply2)
 	if apply1 == "" {
 		t.Errorf("id=1 apply_url: empty, want concrete ATS")
 	}
@@ -577,7 +563,6 @@ func TestImport_DuplicateCanonicalAddress(t *testing.T) {
 	fromDir := makeOldDir(t, "")
 	oldDB := openOldDB(t, fromDir)
 
-	// Two jobs with URLs that canonicalise to the same address.
 	_, err := oldDB.Exec(`
 		INSERT INTO jobs (id, identity, title, company, original_url,
 		  description, description_status, first_seen, last_seen)
@@ -594,32 +579,28 @@ func TestImport_DuplicateCanonicalAddress(t *testing.T) {
 	report := runImport(t, fromDir, targetDir)
 	newDB := openNewDB(t, targetDir)
 
-	// Only one vacancy should be written.
 	var n int
-	newDB.QueryRow(`SELECT count(*) FROM vacancy`).Scan(&n) //nolint:errcheck
+	newDB.QueryRow(`SELECT count(*) FROM vacancy`).Scan(&n)
 	if n != 1 {
 		t.Errorf("vacancy count: got %d, want 1", n)
 	}
 
-	// Lower id (1) is kept; higher id (2) becomes an alias.
 	var keptID, aliasedID int64
-	newDB.QueryRow(`SELECT id FROM vacancy`).Scan(&keptID) //nolint:errcheck
+	newDB.QueryRow(`SELECT id FROM vacancy`).Scan(&keptID)
 	if keptID != 1 {
 		t.Errorf("kept id: got %d, want 1", keptID)
 	}
-	newDB.QueryRow(`SELECT old_id FROM vacancy_alias WHERE new_id=1`).Scan(&aliasedID) //nolint:errcheck
+	newDB.QueryRow(`SELECT old_id FROM vacancy_alias WHERE new_id=1`).Scan(&aliasedID)
 	if aliasedID != 2 {
 		t.Errorf("aliased id: got %d, want 2", aliasedID)
 	}
 
-	// Report lists the duplicate pair.
 	if !strings.Contains(report, "kept=1 aliased=2") {
 		t.Errorf("report missing duplicate pair: %s", report)
 	}
 
-	// Merge: last_seen should be the latest (from id=2).
 	var lastSeen string
-	newDB.QueryRow(`SELECT last_seen FROM vacancy WHERE id=1`).Scan(&lastSeen) //nolint:errcheck
+	newDB.QueryRow(`SELECT last_seen FROM vacancy WHERE id=1`).Scan(&lastSeen)
 	if lastSeen != "2024-01-10T00:00:00Z" {
 		t.Errorf("last_seen: got %q, want 2024-01-10T00:00:00Z", lastSeen)
 	}
@@ -659,17 +640,15 @@ sites:
 	runImport(t, fromDir, targetDir)
 	newDB := openNewDB(t, targetDir)
 
-	// Source for id=1 should be the SourceKey of the config URL.
 	expectedKey, _ := config.SourceKey("https://boards.greenhouse.io/acmeco")
 	var src1 string
-	newDB.QueryRow(`SELECT source FROM vacancy_source WHERE vacancy_id=1`).Scan(&src1) //nolint:errcheck
+	newDB.QueryRow(`SELECT source FROM vacancy_source WHERE vacancy_id=1`).Scan(&src1)
 	if src1 != expectedKey {
 		t.Errorf("id=1 source: got %q, want %q (SourceKey)", src1, expectedKey)
 	}
 
-	// Source for id=2 should be "name:Unknown Source".
 	var src2 string
-	newDB.QueryRow(`SELECT source FROM vacancy_source WHERE vacancy_id=2`).Scan(&src2) //nolint:errcheck
+	newDB.QueryRow(`SELECT source FROM vacancy_source WHERE vacancy_id=2`).Scan(&src2)
 	if src2 != "name:Unknown Source" {
 		t.Errorf("id=2 source: got %q, want name:Unknown Source", src2)
 	}
@@ -687,7 +666,6 @@ func TestImport_OwnAddressRowInsertedFirst(t *testing.T) {
 	if err != nil {
 		t.Fatalf("insert job: %v", err)
 	}
-	// No sightings — own-address row uses "name:import".
 	targetDir := t.TempDir()
 	runImport(t, fromDir, targetDir)
 	newDB := openNewDB(t, targetDir)
@@ -700,7 +678,6 @@ func TestImport_OwnAddressRowInsertedFirst(t *testing.T) {
 	if src != "name:import" {
 		t.Errorf("source: got %q, want name:import", src)
 	}
-	// seenAt should be last_seen of the vacancy.
 	if seenAt != "2024-01-05T00:00:00Z" {
 		t.Errorf("seen_at: got %q", seenAt)
 	}
@@ -718,7 +695,6 @@ func TestImport_SightingsDuplicateCanonicalSkipped(t *testing.T) {
 	if err != nil {
 		t.Fatalf("insert job: %v", err)
 	}
-	// Two sightings with URLs that canonicalise to the same address.
 	_, err = oldDB.Exec(`
 		INSERT INTO sightings (job_id, source, url, seen)
 		VALUES
@@ -733,9 +709,7 @@ func TestImport_SightingsDuplicateCanonicalSkipped(t *testing.T) {
 	newDB := openNewDB(t, targetDir)
 
 	var n int
-	newDB.QueryRow(`SELECT count(*) FROM vacancy_source WHERE vacancy_id=1`).Scan(&n) //nolint:errcheck
-	// Only the own-address row (which is the canonical URL = same as the sightings) + 0 duplicates.
-	// The sightings both canonicalise to the same URL as the vacancy, so only one row.
+	newDB.QueryRow(`SELECT count(*) FROM vacancy_source WHERE vacancy_id=1`).Scan(&n)
 	if n != 1 {
 		t.Errorf("vacancy_source count: got %d, want 1", n)
 	}
@@ -748,7 +722,6 @@ func TestImport_AliasesFollowed(t *testing.T) {
 	fromDir := makeOldDir(t, "")
 	oldDB := openOldDB(t, fromDir)
 
-	// Job 10 is a live vacancy; jobs 20 and 30 are aliases.
 	_, err := oldDB.Exec(`
 		INSERT INTO jobs (id, identity, title, company, original_url,
 		  description, description_status, first_seen, last_seen)
@@ -757,8 +730,6 @@ func TestImport_AliasesFollowed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("insert job: %v", err)
 	}
-	// 20 → 10 (direct alias to imported vacancy).
-	// 30 → 20 → 10 (chain through another alias).
 	_, err = oldDB.Exec(`INSERT INTO job_aliases (old_id, new_id) VALUES (20, 10), (30, 20)`)
 	if err != nil {
 		t.Fatalf("insert aliases: %v", err)
@@ -768,10 +739,9 @@ func TestImport_AliasesFollowed(t *testing.T) {
 	runImport(t, fromDir, targetDir)
 	newDB := openNewDB(t, targetDir)
 
-	// Both 20 and 30 should point to 10.
 	var target20, target30 int64
-	newDB.QueryRow(`SELECT new_id FROM vacancy_alias WHERE old_id=20`).Scan(&target20) //nolint:errcheck
-	newDB.QueryRow(`SELECT new_id FROM vacancy_alias WHERE old_id=30`).Scan(&target30) //nolint:errcheck
+	newDB.QueryRow(`SELECT new_id FROM vacancy_alias WHERE old_id=20`).Scan(&target20)
+	newDB.QueryRow(`SELECT new_id FROM vacancy_alias WHERE old_id=30`).Scan(&target30)
 	if target20 != 10 {
 		t.Errorf("alias 20→: got %d, want 10", target20)
 	}
@@ -792,9 +762,6 @@ func TestImport_AliasesBadCasesDropped(t *testing.T) {
 	if err != nil {
 		t.Fatalf("insert job: %v", err)
 	}
-	// 20 → 999 (dangling: 999 not imported and not aliased).
-	// 10 → 20 → 10 would be a loop — but 10 IS in keepIDs.
-	// 50 → 10 is old_id=50 and 50 is a kept vacancy... actually let's test old_id = imported vacancy.
 	_, err = oldDB.Exec(`
 		INSERT INTO job_aliases (old_id, new_id) VALUES
 		  (20, 999),
@@ -806,11 +773,9 @@ func TestImport_AliasesBadCasesDropped(t *testing.T) {
 	targetDir := t.TempDir()
 	report := runImport(t, fromDir, targetDir)
 
-	// alias 20 → 999 is dangling (999 not imported).
 	if !strings.Contains(report, "dropped alias id=20") {
 		t.Errorf("report missing dangling alias drop: %s", report)
 	}
-	// alias 10 → 20: old_id=10 is an imported vacancy, should be dropped.
 	if !strings.Contains(report, "dropped alias id=10") {
 		t.Errorf("report missing self-colliding alias drop: %s", report)
 	}
@@ -828,7 +793,6 @@ func TestImport_LoopingAlias(t *testing.T) {
 	if err != nil {
 		t.Fatalf("insert job: %v", err)
 	}
-	// Create a loop: 20 → 30 → 20 (without 10 or 30 being an imported vacancy).
 	_, err = oldDB.Exec(`INSERT INTO job_aliases (old_id, new_id) VALUES (20, 30), (30, 20)`)
 	if err != nil {
 		t.Fatalf("insert aliases: %v", err)
@@ -867,7 +831,6 @@ func TestImport_TombstonedAddressBlocksUpsert(t *testing.T) {
 	fromDir := makeOldDir(t, "")
 	oldDB := openOldDB(t, fromDir)
 
-	// Insert a vacancy whose URL hashes to a known legacy key.
 	removedURL := "https://example.com/removed/42"
 	legacyHash := listing.LegacyKey(removedURL)
 	_, err := oldDB.Exec(`INSERT INTO deleted_listings (hash) VALUES (?)`, legacyHash)
@@ -914,7 +877,6 @@ preferences: {}
 `)
 	oldDB := openOldDB(t, fromDir)
 
-	// Insert vacancies with sightings for Greenhouse Acme and Lever Beta.
 	_, err := oldDB.Exec(`
 		INSERT INTO jobs (id, identity, title, company, original_url,
 		  description, description_status, first_seen, last_seen)
@@ -955,7 +917,6 @@ preferences: {}
 		t.Errorf("sources[1] enabled: got true, want false")
 	}
 
-	// "Never Seen" should be in the dropped list.
 	if !strings.Contains(report, "Never Seen") {
 		t.Errorf("report missing dropped source: %s", report)
 	}
@@ -1062,7 +1023,6 @@ func TestImport_LastRunWritten(t *testing.T) {
 	if kind != "collect" || state != "done" || attempts != 1 || subject != "" {
 		t.Errorf("job fields: kind=%q state=%q attempts=%d subject=%q", kind, state, attempts, subject)
 	}
-	// The time should match the latest started, without fractions.
 	if notBefore != startTime {
 		t.Errorf("not_before: got %q, want %q", notBefore, startTime)
 	}
@@ -1079,7 +1039,6 @@ func TestImport_NextIDAboveAll(t *testing.T) {
 	fromDir := makeOldDir(t, "")
 	oldDB := openOldDB(t, fromDir)
 
-	// Job IDs: 5, 15; alias old_id: 25; id_sequence value: 50 (highest used = 49).
 	_, err := oldDB.Exec(`
 		INSERT INTO jobs (id, identity, title, company, original_url,
 		  description, description_status, first_seen, last_seen)
@@ -1102,7 +1061,6 @@ func TestImport_NextIDAboveAll(t *testing.T) {
 	runImport(t, fromDir, targetDir)
 	newDB := openNewDB(t, targetDir)
 
-	// Insert a new vacancy to get the next autoincrement id.
 	cat := catalog.New(newDB, time.Now)
 	p := listing.Posting{
 		URL:       "https://example.com/jobs/new",
@@ -1115,7 +1073,6 @@ func TestImport_NextIDAboveAll(t *testing.T) {
 	if err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
-	// Max of 15, 25, 49 = 49; next id should be > 49.
 	if newID <= 49 {
 		t.Errorf("next id: got %d, want > 49", newID)
 	}
@@ -1123,11 +1080,11 @@ func TestImport_NextIDAboveAll(t *testing.T) {
 
 func TestImport_UnknownVersionRefused(t *testing.T) {
 	dir := t.TempDir()
-	oldDB := makeOldDB(t, dir, oldDBFile, 42) // wrong version
+	oldDB := makeOldDB(t, dir, oldDBFile, 42)
 	_ = oldDB
 
 	cfgDir := filepath.Join(dir, "config")
-	os.MkdirAll(cfgDir, 0700) //nolint:errcheck
+	os.MkdirAll(cfgDir, 0700)
 
 	targetDir := filepath.Join(t.TempDir(), "new-data")
 	dbPath := filepath.Join(targetDir, "sifty.db")
@@ -1141,7 +1098,6 @@ func TestImport_UnknownVersionRefused(t *testing.T) {
 	if !strings.Contains(err.Error(), "42") {
 		t.Errorf("error: %v", err)
 	}
-	// Target folder must be cleaned up.
 	if _, statErr := os.Stat(targetDir); !os.IsNotExist(statErr) {
 		t.Errorf("target folder should not exist after failed import")
 	}
@@ -1150,7 +1106,6 @@ func TestImport_UnknownVersionRefused(t *testing.T) {
 func TestImport_NonEmptyTargetRefused(t *testing.T) {
 	fromDir := makeOldDir(t, "")
 
-	// Create a non-empty target directory.
 	targetDir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(targetDir, "existing.txt"), []byte("x"), 0600); err != nil {
 		t.Fatal(err)
@@ -1182,7 +1137,6 @@ func TestImport_OldFileUnchangedAfterImport(t *testing.T) {
 	}
 	oldDB.Close()
 
-	// Read bytes of old database before import.
 	oldPath := filepath.Join(fromDir, oldDBFile)
 	beforeBytes, err := os.ReadFile(oldPath)
 	if err != nil {
@@ -1219,7 +1173,6 @@ func TestImport_ReportContainsCountsAndIDsOnly(t *testing.T) {
 	targetDir := t.TempDir()
 	report := runImport(t, fromDir, targetDir)
 
-	// No URL, company, title or description text should appear.
 	if strings.Contains(report, "secret") {
 		t.Errorf("report contains text that should not be there: %s", report)
 	}
@@ -1229,7 +1182,6 @@ func TestImport_DateWithoutZoneReadAsUTC(t *testing.T) {
 	fromDir := makeOldDir(t, "")
 	oldDB := openOldDB(t, fromDir)
 
-	// Date without timezone.
 	_, err := oldDB.Exec(`
 		INSERT INTO jobs (id, identity, title, company, original_url,
 		  description, description_status, published_at, published_basis, first_seen, last_seen)
@@ -1244,9 +1196,8 @@ func TestImport_DateWithoutZoneReadAsUTC(t *testing.T) {
 	newDB := openNewDB(t, targetDir)
 
 	var firstSeen, publishedAt string
-	newDB.QueryRow(`SELECT first_seen, published_at FROM vacancy WHERE id=1`).Scan(&firstSeen, &publishedAt) //nolint:errcheck
+	newDB.QueryRow(`SELECT first_seen, published_at FROM vacancy WHERE id=1`).Scan(&firstSeen, &publishedAt)
 
-	// Without zone, treated as UTC, should be normalised.
 	if firstSeen != "2024-05-10T14:30:00Z" {
 		t.Errorf("first_seen: got %q, want 2024-05-10T14:30:00Z", firstSeen)
 	}
@@ -1259,7 +1210,6 @@ func TestImport_VacancyDroppedWhenCanonicalFails(t *testing.T) {
 	fromDir := makeOldDir(t, "")
 	oldDB := openOldDB(t, fromDir)
 
-	// Use a URL with an unsupported scheme.
 	_, err := oldDB.Exec(`
 		INSERT INTO jobs (id, identity, title, company, original_url,
 		  description, description_status, first_seen, last_seen)
@@ -1274,7 +1224,7 @@ func TestImport_VacancyDroppedWhenCanonicalFails(t *testing.T) {
 	newDB := openNewDB(t, targetDir)
 
 	var n int
-	newDB.QueryRow(`SELECT count(*) FROM vacancy`).Scan(&n) //nolint:errcheck
+	newDB.QueryRow(`SELECT count(*) FROM vacancy`).Scan(&n)
 	if n != 0 {
 		t.Errorf("vacancy count: got %d, want 0", n)
 	}
@@ -1287,57 +1237,44 @@ func TestImport_ExclusionsImported(t *testing.T) {
 	fromDir := makeOldDir(t, "")
 	oldDB := openOldDB(t, fromDir)
 
-	// Word exclusions from stop_words.
-	oldDB.Exec(`INSERT INTO stop_words (word, created_at) VALUES ('rust', '2024-01-01T00:00:00Z')`)   //nolint:errcheck
-	oldDB.Exec(`INSERT INTO stop_words (word, created_at) VALUES ('crypto', '2024-01-02T00:00:00Z')`) //nolint:errcheck
-	// Company exclusions from block_rules.
-	oldDB.Exec(`INSERT INTO block_rules (kind, value, created_at) VALUES ('company', 'Globex', '2024-01-01T00:00:00Z')`) //nolint:errcheck
-	// Source-kind block rule must not be imported.
-	oldDB.Exec(`INSERT INTO block_rules (kind, value, created_at) VALUES ('source', 'example.com', '2024-01-01T00:00:00Z')`) //nolint:errcheck
-	// Per-profile except words in user_profiles: name column is empty (default),
-	// except words come from data JSON.
-	oldDB.Exec(`INSERT INTO user_profiles (id, revision, data, created_at, updated_at) VALUES ('p1', 1, '{"search":{"except":["machine learning","blockchain"]}}', '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z')`) //nolint:errcheck
+	oldDB.Exec(`INSERT INTO stop_words (word, created_at) VALUES ('rust', '2024-01-01T00:00:00Z')`)
+	oldDB.Exec(`INSERT INTO stop_words (word, created_at) VALUES ('crypto', '2024-01-02T00:00:00Z')`)
+	oldDB.Exec(`INSERT INTO block_rules (kind, value, created_at) VALUES ('company', 'Globex', '2024-01-01T00:00:00Z')`)
+	oldDB.Exec(`INSERT INTO block_rules (kind, value, created_at) VALUES ('source', 'example.com', '2024-01-01T00:00:00Z')`)
+	oldDB.Exec(`INSERT INTO user_profiles (id, revision, data, created_at, updated_at) VALUES ('p1', 1, '{"search":{"except":["machine learning","blockchain"]}}', '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z')`)
 
 	targetDir := t.TempDir()
 	report := runImport(t, fromDir, targetDir)
 	newDB := openNewDB(t, targetDir)
 
-	// 2 global word exclusions + 1 company exclusion + 2 per-profile word exclusions = 5.
 	var n int
-	newDB.QueryRow(`SELECT count(*) FROM exclusion`).Scan(&n) //nolint:errcheck
+	newDB.QueryRow(`SELECT count(*) FROM exclusion`).Scan(&n)
 	if n != 5 {
 		t.Errorf("exclusion count: got %d, want 5", n)
 	}
 	var kind string
-	newDB.QueryRow(`SELECT kind FROM exclusion WHERE value='Globex'`).Scan(&kind) //nolint:errcheck
+	newDB.QueryRow(`SELECT kind FROM exclusion WHERE value='Globex'`).Scan(&kind)
 	if kind != "company" {
 		t.Errorf("Globex: kind=%q, want company", kind)
 	}
-	// Source block_rules must not appear.
 	var cnt int
-	newDB.QueryRow(`SELECT count(*) FROM exclusion WHERE value='example.com'`).Scan(&cnt) //nolint:errcheck
+	newDB.QueryRow(`SELECT count(*) FROM exclusion WHERE value='example.com'`).Scan(&cnt)
 	if cnt != 0 {
 		t.Errorf("source block rule must not be imported: got %d", cnt)
 	}
-	// Per-profile except words are imported with the profile's new id.
 	var profExclCount int
-	newDB.QueryRow(`SELECT count(*) FROM exclusion WHERE profile_id=1`).Scan(&profExclCount) //nolint:errcheck
+	newDB.QueryRow(`SELECT count(*) FROM exclusion WHERE profile_id=1`).Scan(&profExclCount)
 	if profExclCount != 2 {
 		t.Errorf("per-profile exclusion count for profile 1: got %d, want 2", profExclCount)
 	}
-	// Report includes exclusion count.
 	if !strings.Contains(report, "Exclusions: 5 written") {
 		t.Errorf("report missing exclusion count: %s", report)
 	}
-	// Report includes the profile search section with the except words.
 	if !strings.Contains(report, "Profile search:") {
 		t.Errorf("report missing profile search section: %s", report)
 	}
 }
 
-// --- Profile, decision and application tests ---
-
-// insertJob is a helper to insert a minimal job row.
 func insertJob(t *testing.T, db *sql.DB, id int64, url string) {
 	t.Helper()
 	_, err := db.Exec(`
@@ -1352,8 +1289,6 @@ func insertJob(t *testing.T, db *sql.DB, id int64, url string) {
 	}
 }
 
-// insertProfile inserts a user_profiles row. The name is stored in the name
-// column; data is left empty ({}) unless a caller sets it directly.
 func insertProfile(t *testing.T, db *sql.DB, id, name, createdAt string, archived bool) {
 	t.Helper()
 	var archivedAt interface{}
@@ -1370,7 +1305,6 @@ func insertProfile(t *testing.T, db *sql.DB, id, name, createdAt string, archive
 	}
 }
 
-// insertStage inserts a profile_job_stages row.
 func insertStage(t *testing.T, db *sql.DB, profileID string, jobID int64, status, reason, updatedAt string) {
 	t.Helper()
 	var r interface{}
@@ -1391,7 +1325,6 @@ func TestImport_ProfilesNonArchivedImported(t *testing.T) {
 	fromDir := makeOldDir(t, "")
 	oldDB := openOldDB(t, fromDir)
 
-	// Three profiles: two active, one archived.
 	insertProfile(t, oldDB, "pa", "Alice", "2024-01-01T00:00:00Z", false)
 	insertProfile(t, oldDB, "pb", "Bob", "2024-02-01T00:00:00Z", false)
 	insertProfile(t, oldDB, "pc", "Charlie", "2024-03-01T00:00:00Z", true)
@@ -1400,28 +1333,24 @@ func TestImport_ProfilesNonArchivedImported(t *testing.T) {
 	report := runImport(t, fromDir, targetDir)
 	newDB := openNewDB(t, targetDir)
 
-	// Two profiles written (Charlie is archived).
 	var n int
-	newDB.QueryRow(`SELECT count(*) FROM profile`).Scan(&n) //nolint:errcheck
+	newDB.QueryRow(`SELECT count(*) FROM profile`).Scan(&n)
 	if n != 2 {
 		t.Errorf("profile count: got %d, want 2", n)
 	}
 
-	// First profile by creation order gets new id 1.
 	var data1 string
-	newDB.QueryRow(`SELECT data FROM profile WHERE id=1`).Scan(&data1) //nolint:errcheck
+	newDB.QueryRow(`SELECT data FROM profile WHERE id=1`).Scan(&data1)
 	if !strings.Contains(data1, "Alice") {
 		t.Errorf("profile 1 data: got %q, want Alice", data1)
 	}
 
-	// Second profile gets new id 2.
 	var data2 string
-	newDB.QueryRow(`SELECT data FROM profile WHERE id=2`).Scan(&data2) //nolint:errcheck
+	newDB.QueryRow(`SELECT data FROM profile WHERE id=2`).Scan(&data2)
 	if !strings.Contains(data2, "Bob") {
 		t.Errorf("profile 2 data: got %q, want Bob", data2)
 	}
 
-	// Report counts.
 	if !strings.Contains(report, "Profiles: 3 read, 2 written, 1 dropped") {
 		t.Errorf("report profiles line: %s", report)
 	}
@@ -1437,7 +1366,6 @@ func TestImport_DecisionStageKinds(t *testing.T) {
 	insertJob(t, oldDB, 4, "https://example.com/jobs/4")
 	insertProfile(t, oldDB, "pa", "Alice", "2024-01-01T00:00:00Z", false)
 
-	// All four stage kinds.
 	insertStage(t, oldDB, "pa", 1, "new", "", "2024-06-01T10:00:00Z")
 	insertStage(t, oldDB, "pa", 2, "saved", "", "2024-06-02T10:00:00Z")
 	insertStage(t, oldDB, "pa", 3, "rejected", "not a fit", "2024-06-03T10:00:00Z")
@@ -1447,23 +1375,20 @@ func TestImport_DecisionStageKinds(t *testing.T) {
 	runImport(t, fromDir, targetDir)
 	newDB := openNewDB(t, targetDir)
 
-	// Job 1 (new) → no decision row.
 	var cnt int
-	newDB.QueryRow(`SELECT count(*) FROM decision WHERE vacancy=1`).Scan(&cnt) //nolint:errcheck
+	newDB.QueryRow(`SELECT count(*) FROM decision WHERE vacancy=1`).Scan(&cnt)
 	if cnt != 0 {
 		t.Errorf("vacancy 1 (new): want no decision, got %d", cnt)
 	}
 
-	// Job 2 (saved) → shortlist.
 	var stage2 string
-	newDB.QueryRow(`SELECT stage FROM decision WHERE vacancy=2`).Scan(&stage2) //nolint:errcheck
+	newDB.QueryRow(`SELECT stage FROM decision WHERE vacancy=2`).Scan(&stage2)
 	if stage2 != "shortlist" {
 		t.Errorf("vacancy 2: got stage %q, want shortlist", stage2)
 	}
 
-	// Job 3 (rejected) → dismissed with reason.
 	var stage3, reason3 string
-	newDB.QueryRow(`SELECT stage, reason FROM decision WHERE vacancy=3`).Scan(&stage3, &reason3) //nolint:errcheck
+	newDB.QueryRow(`SELECT stage, reason FROM decision WHERE vacancy=3`).Scan(&stage3, &reason3)
 	if stage3 != "dismissed" {
 		t.Errorf("vacancy 3: got stage %q, want dismissed", stage3)
 	}
@@ -1471,9 +1396,8 @@ func TestImport_DecisionStageKinds(t *testing.T) {
 		t.Errorf("vacancy 3: got reason %q, want 'not a fit'", reason3)
 	}
 
-	// Job 4 (applied) → applied.
 	var stage4 string
-	newDB.QueryRow(`SELECT stage FROM decision WHERE vacancy=4`).Scan(&stage4) //nolint:errcheck
+	newDB.QueryRow(`SELECT stage FROM decision WHERE vacancy=4`).Scan(&stage4)
 	if stage4 != "applied" {
 		t.Errorf("vacancy 4: got stage %q, want applied", stage4)
 	}
@@ -1483,19 +1407,16 @@ func TestImport_DecisionOnMergedVacancy(t *testing.T) {
 	fromDir := makeOldDir(t, "")
 	oldDB := openOldDB(t, fromDir)
 
-	// Two jobs with the same canonical URL (duplicates) — lower id kept.
 	insertJob(t, oldDB, 10, "https://example.com/jobs/merge?utm_source=a")
 	insertJob(t, oldDB, 20, "https://example.com/jobs/merge?utm_source=b")
 	insertProfile(t, oldDB, "pa", "Alice", "2024-01-01T00:00:00Z", false)
 
-	// Stage is on the aliased job (20).
 	insertStage(t, oldDB, "pa", 20, "saved", "", "2024-06-01T00:00:00Z")
 
 	targetDir := t.TempDir()
 	runImport(t, fromDir, targetDir)
 	newDB := openNewDB(t, targetDir)
 
-	// Decision must be on the kept vacancy (10).
 	var stage string
 	err := newDB.QueryRow(`SELECT stage FROM decision WHERE vacancy=10 AND profile=1`).Scan(&stage)
 	if err != nil {
@@ -1505,9 +1426,8 @@ func TestImport_DecisionOnMergedVacancy(t *testing.T) {
 		t.Errorf("stage: got %q, want shortlist", stage)
 	}
 
-	// No decision on the aliased vacancy (20 — not a vacancy row).
 	var cnt int
-	newDB.QueryRow(`SELECT count(*) FROM decision WHERE vacancy=20`).Scan(&cnt) //nolint:errcheck
+	newDB.QueryRow(`SELECT count(*) FROM decision WHERE vacancy=20`).Scan(&cnt)
 	if cnt != 0 {
 		t.Errorf("decision on aliased vacancy: want 0, got %d", cnt)
 	}
@@ -1517,12 +1437,10 @@ func TestImport_MergedVacancyStrongestStageWins(t *testing.T) {
 	fromDir := makeOldDir(t, "")
 	oldDB := openOldDB(t, fromDir)
 
-	// Two jobs with the same canonical URL (UTM params are stripped).
 	insertJob(t, oldDB, 10, "https://example.com/jobs/merge?utm_source=a")
 	insertJob(t, oldDB, 20, "https://example.com/jobs/merge?utm_source=b")
 	insertProfile(t, oldDB, "pa", "Alice", "2024-01-01T00:00:00Z", false)
 
-	// Kept job (10): dismissed; aliased job (20): applied. Applied wins.
 	insertStage(t, oldDB, "pa", 10, "rejected", "stale", "2024-06-01T00:00:00Z")
 	insertStage(t, oldDB, "pa", 20, "applied", "", "2024-06-02T00:00:00Z")
 
@@ -1548,13 +1466,11 @@ func TestImport_ApplicationWithRecordedMoveToApplied(t *testing.T) {
 	insertProfile(t, oldDB, "pa", "Alice", "2024-01-01T00:00:00Z", false)
 	insertProfile(t, oldDB, "pb", "Bob", "2024-02-01T00:00:00Z", false)
 
-	// Set applied_at on job 1.
 	_, err := oldDB.Exec(`UPDATE jobs SET applied_at='2024-07-15T12:00:00Z' WHERE id=1`)
 	if err != nil {
 		t.Fatalf("set applied_at: %v", err)
 	}
 
-	// History: Bob moved job 1 to applied.
 	_, err = oldDB.Exec(`
 		INSERT INTO profile_workflow_history (profile_id, job_id, created, from_stage, to_stage)
 		VALUES ('pb', 1, '2024-07-15T12:00:00Z', 'saved', 'applied')`)
@@ -1578,7 +1494,6 @@ func TestImport_ApplicationWithRecordedMoveToApplied(t *testing.T) {
 	if appliedAt != "2024-07-15T12:00:00Z" {
 		t.Errorf("applied_at: got %q", appliedAt)
 	}
-	// Bob's new id is 2 (second by creation).
 	if appProfile != 2 {
 		t.Errorf("profile: got %d, want 2 (Bob)", appProfile)
 	}
@@ -1594,7 +1509,6 @@ func TestImport_ApplicationFallsBackToFirstProfile(t *testing.T) {
 	insertJob(t, oldDB, 1, "https://example.com/jobs/1")
 	insertProfile(t, oldDB, "pa", "Alice", "2024-01-01T00:00:00Z", false)
 
-	// applied_at set, but no history row.
 	_, err := oldDB.Exec(`UPDATE jobs SET applied_at='2024-08-01T00:00:00Z' WHERE id=1`)
 	if err != nil {
 		t.Fatalf("set applied_at: %v", err)
@@ -1605,7 +1519,7 @@ func TestImport_ApplicationFallsBackToFirstProfile(t *testing.T) {
 	newDB := openNewDB(t, targetDir)
 
 	var appProfile int64
-	newDB.QueryRow(`SELECT profile FROM application WHERE vacancy=1`).Scan(&appProfile) //nolint:errcheck
+	newDB.QueryRow(`SELECT profile FROM application WHERE vacancy=1`).Scan(&appProfile)
 	if appProfile != 1 {
 		t.Errorf("profile: got %d, want 1 (Alice, the first profile)", appProfile)
 	}
@@ -1618,7 +1532,6 @@ func TestImport_ReadMarksImported(t *testing.T) {
 	insertJob(t, oldDB, 1, "https://example.com/jobs/1")
 	insertJob(t, oldDB, 2, "https://example.com/jobs/2")
 
-	// Job 1 has been seen; job 2 has not.
 	_, err := oldDB.Exec(`UPDATE jobs SET seen_at='2024-06-10T08:00:00Z' WHERE id=1`)
 	if err != nil {
 		t.Fatalf("set seen_at: %v", err)
@@ -1629,8 +1542,8 @@ func TestImport_ReadMarksImported(t *testing.T) {
 	newDB := openNewDB(t, targetDir)
 
 	var seenAt1, seenAt2 string
-	newDB.QueryRow(`SELECT seen_at FROM vacancy WHERE id=1`).Scan(&seenAt1) //nolint:errcheck
-	newDB.QueryRow(`SELECT seen_at FROM vacancy WHERE id=2`).Scan(&seenAt2) //nolint:errcheck
+	newDB.QueryRow(`SELECT seen_at FROM vacancy WHERE id=1`).Scan(&seenAt1)
+	newDB.QueryRow(`SELECT seen_at FROM vacancy WHERE id=2`).Scan(&seenAt2)
 
 	if seenAt1 != "2024-06-10T08:00:00Z" {
 		t.Errorf("vacancy 1 seen_at: got %q, want 2024-06-10T08:00:00Z", seenAt1)
@@ -1652,14 +1565,12 @@ func TestImport_StageDifferenceReported(t *testing.T) {
 	insertJob(t, oldDB, 2, "https://example.com/jobs/2")
 	insertProfile(t, oldDB, "pa", "Alice", "2024-01-01T00:00:00Z", false)
 
-	// Job 1: jobs.status = 'saved' (shortlist), profile stage = 'applied' → difference.
 	_, err := oldDB.Exec(`UPDATE jobs SET status='saved' WHERE id=1`)
 	if err != nil {
 		t.Fatalf("update status: %v", err)
 	}
 	insertStage(t, oldDB, "pa", 1, "applied", "", "2024-06-01T00:00:00Z")
 
-	// Job 2: jobs.status = 'new' (inbox), profile stage = 'new' → no difference.
 	insertStage(t, oldDB, "pa", 2, "new", "", "2024-06-01T00:00:00Z")
 
 	targetDir := t.TempDir()
@@ -1680,11 +1591,9 @@ func TestImport_ReadMarksMergedVacancyLatestWins(t *testing.T) {
 	fromDir := makeOldDir(t, "")
 	oldDB := openOldDB(t, fromDir)
 
-	// Two jobs with the same canonical URL (UTM params are stripped) — lower id is kept.
 	insertJob(t, oldDB, 10, "https://example.com/jobs/mark?utm_medium=email")
 	insertJob(t, oldDB, 20, "https://example.com/jobs/mark?utm_medium=social")
 
-	// Aliased job (20) has a later seen_at than kept (10).
 	_, err := oldDB.Exec(`UPDATE jobs SET seen_at='2024-05-01T00:00:00Z' WHERE id=10`)
 	if err != nil {
 		t.Fatalf("set seen_at 10: %v", err)
@@ -1699,7 +1608,7 @@ func TestImport_ReadMarksMergedVacancyLatestWins(t *testing.T) {
 	newDB := openNewDB(t, targetDir)
 
 	var seenAt string
-	newDB.QueryRow(`SELECT seen_at FROM vacancy WHERE id=10`).Scan(&seenAt) //nolint:errcheck
+	newDB.QueryRow(`SELECT seen_at FROM vacancy WHERE id=10`).Scan(&seenAt)
 	if seenAt != "2024-06-15T00:00:00Z" {
 		t.Errorf("seen_at: got %q, want later date from aliased job", seenAt)
 	}
@@ -1709,7 +1618,6 @@ func TestImport_ProfileNamesCarriedOver(t *testing.T) {
 	fromDir := makeOldDir(t, "")
 	oldDB := openOldDB(t, fromDir)
 
-	// Two profiles with distinct invented names stored in the name column.
 	insertProfile(t, oldDB, "p-m", "Meridian", "2024-01-01T00:00:00Z", false)
 	insertProfile(t, oldDB, "p-s", "Solaris", "2024-02-01T00:00:00Z", false)
 
@@ -1718,8 +1626,8 @@ func TestImport_ProfileNamesCarriedOver(t *testing.T) {
 	newDB := openNewDB(t, targetDir)
 
 	var data1, data2 string
-	newDB.QueryRow(`SELECT data FROM profile WHERE id=1`).Scan(&data1) //nolint:errcheck
-	newDB.QueryRow(`SELECT data FROM profile WHERE id=2`).Scan(&data2) //nolint:errcheck
+	newDB.QueryRow(`SELECT data FROM profile WHERE id=1`).Scan(&data1)
+	newDB.QueryRow(`SELECT data FROM profile WHERE id=2`).Scan(&data2)
 
 	if !strings.Contains(data1, "Meridian") {
 		t.Errorf("profile 1 data: got %q, want Meridian", data1)
@@ -1733,7 +1641,6 @@ func TestImport_ProfileSearchFieldsImported(t *testing.T) {
 	fromDir := makeOldDir(t, "")
 	oldDB := openOldDB(t, fromDir)
 
-	// Profile 1: target roles, keywords and except words (no expressions).
 	insertProfile(t, oldDB, "p1", "Helio", "2024-01-01T00:00:00Z", false)
 	_, err := oldDB.Exec(`UPDATE user_profiles SET data=? WHERE id='p1'`,
 		`{"targetRoles":["backend","platform"],"search":{"keywords":["distributed","observability"],"except":["gambling"]}}`)
@@ -1741,8 +1648,6 @@ func TestImport_ProfileSearchFieldsImported(t *testing.T) {
 		t.Fatalf("set p1 data: %v", err)
 	}
 
-	// Profile 2: search.expressions (or-group → keywords, and-group → allOf) and an except word.
-	// expressions take precedence over keywords.
 	insertProfile(t, oldDB, "p2", "Vesper", "2024-02-01T00:00:00Z", false)
 	_, err = oldDB.Exec(`UPDATE user_profiles SET data=? WHERE id='p2'`,
 		`{"search":{"keywords":["ignored"],"expressions":[{"or":["golang","rust"]},{"and":["kubernetes","cloud"]}],"except":["crypto"]}}`)
@@ -1754,9 +1659,8 @@ func TestImport_ProfileSearchFieldsImported(t *testing.T) {
 	report := runImport(t, fromDir, targetDir)
 	newDB := openNewDB(t, targetDir)
 
-	// Profile 1: roles and keywords stored in new data JSON.
 	var data1 string
-	newDB.QueryRow(`SELECT data FROM profile WHERE id=1`).Scan(&data1) //nolint:errcheck
+	newDB.QueryRow(`SELECT data FROM profile WHERE id=1`).Scan(&data1)
 	if !strings.Contains(data1, `"backend"`) {
 		t.Errorf("profile 1 data missing role backend: %s", data1)
 	}
@@ -1764,9 +1668,8 @@ func TestImport_ProfileSearchFieldsImported(t *testing.T) {
 		t.Errorf("profile 1 data missing keyword distributed: %s", data1)
 	}
 
-	// Profile 2: or-group becomes keywords, and-group becomes allOf; "ignored" keyword is replaced.
 	var data2 string
-	newDB.QueryRow(`SELECT data FROM profile WHERE id=2`).Scan(&data2) //nolint:errcheck
+	newDB.QueryRow(`SELECT data FROM profile WHERE id=2`).Scan(&data2)
 	if !strings.Contains(data2, `"golang"`) {
 		t.Errorf("profile 2 data missing keyword golang: %s", data2)
 	}
@@ -1777,10 +1680,9 @@ func TestImport_ProfileSearchFieldsImported(t *testing.T) {
 		t.Errorf("profile 2 data should not contain 'ignored' (expressions take precedence): %s", data2)
 	}
 
-	// Except words imported as per-profile exclusions.
 	var excl1, excl2 int
-	newDB.QueryRow(`SELECT count(*) FROM exclusion WHERE profile_id=1`).Scan(&excl1) //nolint:errcheck
-	newDB.QueryRow(`SELECT count(*) FROM exclusion WHERE profile_id=2`).Scan(&excl2) //nolint:errcheck
+	newDB.QueryRow(`SELECT count(*) FROM exclusion WHERE profile_id=1`).Scan(&excl1)
+	newDB.QueryRow(`SELECT count(*) FROM exclusion WHERE profile_id=2`).Scan(&excl2)
 	if excl1 != 1 {
 		t.Errorf("profile 1 per-profile exclusions: got %d, want 1", excl1)
 	}
@@ -1788,7 +1690,6 @@ func TestImport_ProfileSearchFieldsImported(t *testing.T) {
 		t.Errorf("profile 2 per-profile exclusions: got %d, want 1", excl2)
 	}
 
-	// Report lists search fields for both profiles.
 	if !strings.Contains(report, "Profile search:") {
 		t.Errorf("report missing profile search section: %s", report)
 	}
@@ -1801,8 +1702,6 @@ func TestImport_ProfileSearchFieldsImported(t *testing.T) {
 }
 
 func TestImport_IndustriesAssignedFromDefaultVocab(t *testing.T) {
-	// A vacancy whose description contains a Web3 keyword gets "Web3" assigned
-	// by the default vocabulary during import.
 	fromDir := makeOldDir(t, "")
 	oldDB := openOldDB(t, fromDir)
 
@@ -1831,8 +1730,6 @@ func TestImport_IndustriesAssignedFromDefaultVocab(t *testing.T) {
 }
 
 func TestImport_VacancyWithNoMatchingKeywordsKeepsEmptyIndustries(t *testing.T) {
-	// A vacancy whose title and HTML description contain no industry keywords
-	// gets industries='[]' after import.
 	fromDir := makeOldDir(t, "")
 	oldDB := openOldDB(t, fromDir)
 
@@ -1862,36 +1759,22 @@ func TestImport_VacancyWithNoMatchingKeywordsKeepsEmptyIndustries(t *testing.T) 
 }
 
 func TestImport_CompanyRecovery(t *testing.T) {
-	// Each row: id, title, existing company, canonical URL, expected company after import.
 	cases := []struct {
 		id                        int
 		title, company, url, want string
 	}{
-		// Getro: title-cased when no sibling.
 		{1, "Engineer", "", "https://jobs.example.com/companies/fund-protocol/jobs/1-engineer", "Fund Protocol"},
-		// Getro sibling with non-title-case name seeds the slug map.
 		{2, "Lead", "DeFi Labs", "https://jobs.example.com/companies/defi-labs/jobs/2-lead", "DeFi Labs"},
-		// Getro: exact sibling name wins over title-cased "Defi Labs".
 		{3, "Dev", "", "https://jobs.example.com/companies/defi-labs/jobs/3-dev", "DeFi Labs"},
-		// WWR: title suffix stripped from combined slug.
 		{4, "Blockchain Dev", "", "https://weworkremotely.com/remote-jobs/acme-co-blockchain-dev", "Acme Co"},
-		// web3.career: title prefix stripped from combined slug.
 		{5, "Blockchain Dev", "", "https://web3.career/blockchain-dev-chainlink/12345", "Chainlink"},
-		// Probe slug: no company assigned.
 		{6, "Engineer", "", "https://jobs.example.com/companies/zzz-probe/jobs/6-engineer", ""},
-		// Existing company: not replaced.
 		{7, "Designer", "Already Set Inc", "https://jobs.example.com/companies/other-org/jobs/7-designer", "Already Set Inc"},
-		// Getro sibling that seeds the slug map for WWR prefix fallback below.
 		{8, "PM", "Acme Corp", "https://jobs.example.com/companies/acme-corp/jobs/8-pm", "Acme Corp"},
-		// Getro disambiguation: trailing -<digits> stripped.
 		{9, "Dev", "", "https://jobs.example.com/companies/acme-2/jobs/9-dev", "Acme"},
-		// Getro disambiguation: trailing -<digits>-<uuid> stripped.
 		{10, "Dev", "", "https://jobs.example.com/companies/acme-2-1a2b3c4d-5e6f-7890-abcd-ef1234567890/jobs/10-dev", "Acme"},
-		// WWR: trailing -<digits> stripped before title removal.
 		{11, "Blockchain Dev", "", "https://weworkremotely.com/remote-jobs/acme-co-blockchain-dev-1", "Acme Co"},
-		// WWR sibling prefix fallback: title does not match, longest slug-map prefix wins.
 		{12, "Frontend Dev", "", "https://weworkremotely.com/remote-jobs/acme-corp-different-job", "Acme Corp"},
-		// WWR: title does not match and no sibling prefix — left empty.
 		{13, "Frontend Dev", "", "https://weworkremotely.com/remote-jobs/unknown-vendor-some-job", ""},
 	}
 

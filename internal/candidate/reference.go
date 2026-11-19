@@ -11,13 +11,11 @@ import (
 //go:embed options.json
 var optionsJSON []byte
 
-// OptionItem is a value-label pair for select inputs.
 type OptionItem struct {
 	Value string `json:"value"`
 	Label string `json:"label"`
 }
 
-// ReferenceOptions holds every option set used in the editors.
 type ReferenceOptions struct {
 	SkillLevels       []OptionItem `json:"skillLevels"`
 	LanguageLevels    []OptionItem `json:"languageLevels"`
@@ -38,8 +36,6 @@ type ReferenceOptions struct {
 	WorkAuthorization []OptionItem `json:"workAuthorization"`
 }
 
-// ReferenceResp is the response for GET /api/reference: the places vocabulary
-// and the option sets of the editors.
 type ReferenceResp struct {
 	Countries     []places.ReferenceCountry      `json:"countries"`
 	Regions       []places.ReferenceRegion       `json:"regions"`

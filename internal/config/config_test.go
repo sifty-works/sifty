@@ -10,8 +10,6 @@ import (
 	"github.com/sifty-works/sifty-server/internal/config"
 )
 
-// --- helpers -----------------------------------------------------------------
-
 func writeTmp(t *testing.T, content string) string {
 	t.Helper()
 	f, err := os.CreateTemp(t.TempDir(), "sifty-*.yaml")
@@ -25,8 +23,6 @@ func writeTmp(t *testing.T, content string) string {
 	return f.Name()
 }
 
-// loadFile opens path with config.Open and returns the Config and any error.
-// Tests that check parsing and validation use this instead of the removed Load.
 func loadFile(t *testing.T, path string) (config.Config, error) {
 	t.Helper()
 	s, err := config.Open(path)
@@ -36,13 +32,10 @@ func loadFile(t *testing.T, path string) (config.Config, error) {
 	return s.Get(), nil
 }
 
-// loadContent writes content to a temp file and loads it.
 func loadContent(t *testing.T, content string) (config.Config, error) {
 	t.Helper()
 	return loadFile(t, writeTmp(t, content))
 }
-
-// --- defaults ----------------------------------------------------------------
 
 func TestDefaultsAreValid(t *testing.T) {
 	c := config.Defaults()
@@ -81,8 +74,6 @@ func TestDefaultsYAMLAccepted(t *testing.T) {
 	}
 }
 
-// --- missing / empty file ----------------------------------------------------
-
 func TestMissingFileReturnsDefaults(t *testing.T) {
 	c, err := loadFile(t, filepath.Join(t.TempDir(), "nosuchfile.yaml"))
 	if err != nil {
@@ -96,8 +87,6 @@ func TestMissingFileReturnsDefaults(t *testing.T) {
 		t.Errorf("missing file: got %+v, want defaults %+v", c, d)
 	}
 }
-
-// --- key parsing -------------------------------------------------------------
 
 func TestValidKeysParsed(t *testing.T) {
 	parse := func(yaml string) config.Config {
@@ -141,8 +130,6 @@ func TestInvalidConfigsRejected(t *testing.T) {
 		}
 	}
 }
-
-// --- sources -----------------------------------------------------------------
 
 func TestSourceWithValidURL(t *testing.T) {
 	yaml := "sources:\n  - url: https://example.com/jobs\n    enabled: true\n"
@@ -193,14 +180,11 @@ func TestSourceInvalidURL(t *testing.T) {
 }
 
 func TestSourceNameLimitCountsCharactersNotBytes(t *testing.T) {
-	// "ñ" is 2 bytes in UTF-8 but 1 character.
-	// 100 ñ characters = 200 bytes: must be accepted.
 	name100 := strings.Repeat("ñ", 100)
 	yaml100 := "sources:\n  - name: " + name100 + "\n    url: https://example.com/jobs\n"
 	if _, err := loadContent(t, yaml100); err != nil {
 		t.Errorf("100-character non-ASCII name should be accepted: %v", err)
 	}
-	// 101 ñ characters must be rejected and name the field.
 	name101 := strings.Repeat("ñ", 101)
 	yaml101 := "sources:\n  - name: " + name101 + "\n    url: https://example.com/jobs\n"
 	_, err := loadContent(t, yaml101)
@@ -212,7 +196,6 @@ func TestSourceNameLimitCountsCharactersNotBytes(t *testing.T) {
 }
 
 func TestDuplicateSourceKey(t *testing.T) {
-	// https://www.Example.com/jobs/ and https://example.com/jobs have the same key.
 	yaml := `sources:
   - url: https://www.Example.com/jobs/
   - url: https://example.com/jobs
@@ -234,16 +217,14 @@ func TestUnknownSourceKey(t *testing.T) {
 	}
 }
 
-// --- SourceKey ---------------------------------------------------------------
-
 func TestSourceKeyTransformations(t *testing.T) {
 	cases := []struct{ in, want string }{
-		{"https://EXAMPLE.COM/jobs", "https://example.com/jobs"},                 // lowercase host
-		{"https://www.example.com/jobs", "https://example.com/jobs"},             // strip www
-		{"https://example.com/jobs/", "https://example.com/jobs"},                // strip trailing slash
-		{"https://example.com/jobs?type=go", "https://example.com/jobs?type=go"}, // keep query
-		{"https://example.com/jobs#section", "https://example.com/jobs"},         // drop fragment
-		{"https://www.Example.com/jobs/", "https://example.com/jobs"},            // combined
+		{"https://EXAMPLE.COM/jobs", "https://example.com/jobs"},
+		{"https://www.example.com/jobs", "https://example.com/jobs"},
+		{"https://example.com/jobs/", "https://example.com/jobs"},
+		{"https://example.com/jobs?type=go", "https://example.com/jobs?type=go"},
+		{"https://example.com/jobs#section", "https://example.com/jobs"},
+		{"https://www.Example.com/jobs/", "https://example.com/jobs"},
 	}
 	for _, tc := range cases {
 		k, err := config.SourceKey(tc.in)
@@ -266,8 +247,6 @@ func TestSourceKeyErrors(t *testing.T) {
 		}
 	}
 }
-
-// --- full round-trip ---------------------------------------------------------
 
 func TestFullConfigRoundTrip(t *testing.T) {
 	yaml := `port: 8080

@@ -1,4 +1,3 @@
-// Package inbox handles the vacancy list, decisions, seen and delete endpoints.
 package inbox
 
 import (
@@ -15,7 +14,6 @@ import (
 	"github.com/sifty-works/sifty-server/internal/listing"
 )
 
-// repoRow is the raw data loaded from a list query.
 type repoRow struct {
 	id             int64
 	company        string
@@ -47,9 +45,6 @@ const orderNewest = `ORDER BY
 
 const orderDecided = `ORDER BY d.decided_at DESC, d.vacancy DESC`
 
-// resolveProfile returns pid if it exists, otherwise 404.
-// When pid is 0 the active profile from settings is used, falling back to the
-// profile with the lowest id when no active profile is set.
 func resolveProfile(ctx context.Context, database *db.DB, pid int64) (int64, error) {
 	if pid == 0 {
 		return candidate.ActiveProfileID(ctx, database)
@@ -65,8 +60,6 @@ func resolveProfile(ctx context.Context, database *db.DB, pid int64) (int64, err
 	return id, nil
 }
 
-// resolveVacancy resolves id through vacancy_alias and returns the vacancy id.
-// Returns NotFound when no matching vacancy exists.
 func resolveVacancy(ctx context.Context, database *db.DB, id int64) (int64, error) {
 	var realID int64
 	err := database.QueryRowContext(ctx,
@@ -81,38 +74,24 @@ func resolveVacancy(ctx context.Context, database *db.DB, id int64) (int64, erro
 	return realID, nil
 }
 
-// IndustryCount is one entry in the per-industry count returned by the list.
 type IndustryCount struct {
 	Name  string `json:"name"`
 	Count int    `json:"count"`
 }
 
-// SourceCount is one entry in the per-source count returned by the list.
 type SourceCount struct {
 	Name  string `json:"name"`
 	Count int    `json:"count"`
 }
 
-// notExpiredSQL is a SQL predicate that holds when a vacancy has no expiry date
-// or its expiry date has not yet passed. The single ? argument is the current
-// time in RFC3339 format. Applied to Inbox, Shortlist and Dismissed but not Applied.
 const notExpiredSQL = `(v.expires_at='' OR v.expires_at>?)`
 
-// remoteSQL is a SQL predicate that holds when the vacancy location contains
-// "remote", "anywhere", or "telecommute" as whole words after lightweight
-// normalisation (lowercase, hyphens and middle-dots replaced with spaces).
-// char(183) is U+00B7 MIDDLE DOT (·).
 const remoteSQL = `(` +
 	`instr(' '||lower(replace(replace(v.location,'-',' '),char(183),' '))||' ',' remote ')>0 OR ` +
 	`instr(' '||lower(replace(replace(v.location,'-',' '),char(183),' '))||' ',' anywhere ')>0 OR ` +
 	`instr(' '||lower(replace(replace(v.location,'-',' '),char(183),' '))||' ',' telecommute ')>0` +
 	`)`
 
-// leadershipClause returns the SQL predicate and bound args that hold when the
-// vacancy title contains CTO, Head, Director, Manager, or Lead as whole words.
-// Lead is excluded when "lead generation" also appears in the title.
-// The title column of vacancy_fts holds pre-normalised text so padded phrase
-// queries follow the same pattern as roleClause in the candidate package.
 func leadershipClause() (string, []any) {
 	mk := func(term string) string {
 		norm := listing.FTSNorm(term)
@@ -132,9 +111,6 @@ func leadershipClause() (string, []any) {
 	return sql, args
 }
 
-// filterClauses returns SQL fragments and bound args for the user-supplied
-// Filters f. When skipSources is true the sources clause is omitted so the
-// caller can count across all sources while still honouring every other filter.
 func filterClauses(now time.Time, f Filters, skipSources bool) ([]string, []any) {
 	var parts []string
 	var args []any
@@ -176,11 +152,6 @@ func filterClauses(now time.Time, f Filters, skipSources bool) ([]string, []any)
 	return parts, args
 }
 
-// scopeClause builds the JOIN, WHERE, and base arguments for a profile+stage
-// list query. vis is applied to inbox listings only. When skipSources is true
-// the sources clause in f is omitted (used by sourceCounts). industries filters
-// the result to vacancies with at least one of the named industries (skipped when
-// nil or empty). The expiry condition is added for all stages except applied.
 func scopeClause(now time.Time, profileID int64, stage, q string, vis candidate.Filter, f Filters, industries []string, skipSources bool) (join, where string, args []any) {
 	isInbox := stage == "inbox"
 	low := strings.ToLower(strings.TrimSpace(q))
@@ -244,11 +215,6 @@ func scopeClause(now time.Time, profileID int64, stage, q string, vis candidate.
 	return join, where, args
 }
 
-// industryCounts returns the number of vacancies per industry for the given
-// profile and stage, applying visibility (inbox only), exclusions, the query q
-// and all Filters f — the same conditions as the row list — but NOT the
-// industries filter itself. Only industries with at least one vacancy are
-// returned, sorted alphabetically.
 func industryCounts(ctx context.Context, database *db.DB, now time.Time, profileID int64, stage, q string, vis candidate.Filter, f Filters) ([]IndustryCount, error) {
 	join, where, args := scopeClause(now, profileID, stage, q, vis, f, nil, false)
 
@@ -277,10 +243,6 @@ func industryCounts(ctx context.Context, database *db.DB, now time.Time, profile
 	return out, rows.Err()
 }
 
-// sourceCounts returns the number of vacancies per source key for the given
-// profile and stage, applying the same conditions as industryCounts but NOT
-// the sources filter. Only sources with at least one vacancy are returned,
-// sorted alphabetically by source key.
 func sourceCounts(ctx context.Context, database *db.DB, now time.Time, profileID int64, stage, q string, vis candidate.Filter, industries []string, f Filters) ([]SourceCount, error) {
 	join, where, args := scopeClause(now, profileID, stage, q, vis, f, industries, true)
 
@@ -309,16 +271,10 @@ func sourceCounts(ctx context.Context, database *db.DB, now time.Time, profileID
 	return out, rows.Err()
 }
 
-// stageCounts returns the vacancy count per stage for a profile.
-// Decided stages (shortlist, applied, dismissed) apply per-profile exclusions;
-// expired vacancies are excluded from shortlist and dismissed but not from applied.
-// The inbox count also applies the profile's visibility filter and the expiry condition.
 func stageCounts(ctx context.Context, database *db.DB, now time.Time, profileID int64, vis candidate.Filter) (map[string]int, error) {
 	out := map[string]int{}
 	nowStr := now.UTC().Format(time.RFC3339)
 
-	// Count decided stages: apply per-profile exclusions and exclude expired
-	// vacancies from shortlist and dismissed (Applied is always shown).
 	decidedRows, err := database.QueryContext(ctx, `
 		SELECT d.stage, COUNT(*)
 		FROM vacancy v
@@ -342,8 +298,6 @@ func stageCounts(ctx context.Context, database *db.DB, now time.Time, profileID 
 		return nil, fmt.Errorf("inbox: counts decided: %w", err)
 	}
 
-	// Count inbox: vacancies without a decision for this profile that fit the
-	// search and have not expired.
 	inboxArgs := append([]any{profileID, profileID}, vis.Args...)
 	inboxArgs = append(inboxArgs, nowStr)
 	var inboxCount int
@@ -360,10 +314,6 @@ func stageCounts(ctx context.Context, database *db.DB, now time.Time, profileID 
 	return out, nil
 }
 
-// listRows returns vacancy rows for the given profile and stage,
-// optionally filtered by query q, Filters f and by industry names, in the
-// order sort names ("newest", else Best fit) in Inbox and Shortlist.
-// vis is applied to inbox listings only.
 func listRows(ctx context.Context, database *db.DB, now time.Time, profileID int64, stage, q, sort string, vis candidate.Filter, f Filters, industries ...string) ([]repoRow, error) {
 	join, where, args := scopeClause(now, profileID, stage, q, vis, f, industries, false)
 	order := orderDecided
@@ -410,9 +360,6 @@ func scanListRows(stage string, sqlRows *sql.Rows) ([]repoRow, error) {
 	return out, sqlRows.Err()
 }
 
-// viewData holds the vacancy fields needed for the view endpoint that are
-// not covered by the list row: the original URL, the apply address, the text
-// state, the compressed body and the source keys.
 type viewData struct {
 	url       string
 	applyURL  string
@@ -421,9 +368,6 @@ type viewData struct {
 	sources   []string
 }
 
-// loadVacancyFull returns the stage, row data and view-only fields for the
-// given (profile, vacancy) pair in one query. It answers NotFound when no
-// vacancy row exists or the vacancy is hidden by an exclusion for this profile.
 func loadVacancyFull(ctx context.Context, database *db.DB, profileID, vacancyID int64) (stage string, row repoRow, vd viewData, err error) {
 	var unread int64
 	var appliedAt, appliedName sql.NullString

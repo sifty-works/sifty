@@ -17,18 +17,16 @@ import (
 	"github.com/sifty-works/sifty-server/internal/listing"
 )
 
-// Filters carries the user-supplied filter parameters for the vacancy list.
 type Filters struct {
-	Collected  int // 0 = any, 7 = last 7 days, 30 = last 30 days by first_seen
+	Collected  int
 	Remote     bool
 	Leadership bool
-	Sources    []string // source keys; empty means all sources
+	Sources    []string
 	Unread     bool
-	Fit        []string // buckets: strong, partial, weak, not_scored; empty means all
-	inputs     int64    // hash of the profile's Fits you inputs, set by list
+	Fit        []string
+	inputs     int64
 }
 
-// Stage is the inbox stage of a vacancy row.
 type Stage string
 
 const (
@@ -38,7 +36,6 @@ const (
 	StageDismissed Stage = "dismissed"
 )
 
-// ConfirmDialog names the confirmation dialog to show before an action.
 type ConfirmDialog string
 
 const (
@@ -46,7 +43,6 @@ const (
 	ConfirmDelete  ConfirmDialog = "delete"
 )
 
-// Row is one vacancy row in the API list response.
 type Row struct {
 	ID         int64    `json:"id"`
 	Company    string   `json:"company"`
@@ -62,24 +58,20 @@ type Row struct {
 	Fit        FitMark  `json:"fit"`
 }
 
-// FitMark is Fits you as a row shows it: the number with its bucket, or why
-// there is none. A dimmed mark is out of date and being recomputed.
 type FitMark struct {
 	Score  *int   `json:"score"`
-	Bucket string `json:"bucket"` // Strong, Partial, Weak or Not scored
-	Text   string `json:"text"`   // "Fits you 82: Strong", or why there is no number
+	Bucket string `json:"bucket"`
+	Text   string `json:"text"`
 	Dimmed bool   `json:"dimmed"`
 }
 
-// Band is the Fits you band of the vacancy page, computed when it is opened.
 type Band struct {
 	Score  *int       `json:"score"`
 	Bucket string     `json:"bucket"`
-	Text   string     `json:"text"` // "Fits you 82 /100", or why there is no number
+	Text   string     `json:"text"`
 	Tiles  []fit.Tile `json:"tiles"`
 }
 
-// fitMark builds the mark of a stored result for a profile's inputs hash.
 func fitMark(s fit.Stored, inputs int64) FitMark {
 	m := FitMark{Bucket: "Not scored", Text: fit.Texts[s.State.String], Dimmed: s.State.Valid && !s.Current(inputs)}
 	if s.State.String == fit.Scored {
@@ -90,14 +82,11 @@ func fitMark(s fit.Stored, inputs int64) FitMark {
 	return m
 }
 
-// fitInputs returns the hash of a profile's Fits you inputs; 0, which shows
-// every result as out of date, when the profile cannot be loaded.
 func fitInputs(ctx context.Context, database *db.DB, profileID int64, r fit.Rules) int64 {
 	p, _ := fit.LoadProfile(ctx, database, profileID, r)
 	return p.Inputs
 }
 
-// Counts holds per-stage vacancy counts for one profile.
 type Counts struct {
 	Inbox     int `json:"inbox"`
 	Shortlist int `json:"shortlist"`
@@ -106,8 +95,6 @@ type Counts struct {
 	Archive   int `json:"archive"`
 }
 
-// toRow converts a repoRow to the API Row type; inputs is the hash of the
-// profile's Fits you inputs.
 func toRow(rr repoRow, now time.Time, inputs int64) Row {
 	company := rr.company
 	if company == "" {
@@ -116,7 +103,7 @@ func toRow(rr repoRow, now time.Time, inputs int64) Row {
 	nowStr := now.UTC().Format(time.RFC3339)
 	var industries []string
 	if rr.industries != "" && rr.industries != "[]" {
-		json.Unmarshal([]byte(rr.industries), &industries) //nolint:errcheck
+		json.Unmarshal([]byte(rr.industries), &industries)
 	}
 	if industries == nil {
 		industries = []string{}
@@ -137,9 +124,6 @@ func toRow(rr repoRow, now time.Time, inputs int64) Row {
 	}
 }
 
-// profileVisibility loads the visibility filter for a profile.
-// vocabNames restricts target industries to known names when non-nil.
-// Returns Filter{SQL:"1=0"} when the profile cannot be loaded.
 func profileVisibility(ctx context.Context, database *db.DB, profileID int64, vocabNames []string) candidate.Filter {
 	p, err := candidate.ProfileSearch(ctx, database, profileID, vocabNames)
 	if err != nil {
@@ -148,7 +132,6 @@ func profileVisibility(ctx context.Context, database *db.DB, profileID int64, vo
 	return candidate.Visibility(p)
 }
 
-// buildCounts converts a stage-count map to a Counts value.
 func buildCounts(cm map[string]int) Counts {
 	return Counts{
 		Inbox:     cm["inbox"],
@@ -159,8 +142,6 @@ func buildCounts(cm map[string]int) Counts {
 	}
 }
 
-// loadCounts returns the per-stage vacancy counts for a profile,
-// applying the profile's search visibility to the inbox count.
 func loadCounts(ctx context.Context, database *db.DB, now time.Time, profileID int64, vocabNames []string) (Counts, error) {
 	vis := profileVisibility(ctx, database, profileID, vocabNames)
 	cm, err := stageCounts(ctx, database, now, profileID, vis)
@@ -170,7 +151,6 @@ func loadCounts(ctx context.Context, database *db.DB, now time.Time, profileID i
 	return buildCounts(cm), nil
 }
 
-// rowAndCounts fetches one vacancy row and the profile counts as a shared tail for decision paths.
 func rowAndCounts(ctx context.Context, database *db.DB, now func() time.Time, profileID, vacancyID int64, vocabNames []string, r fit.Rules) (Row, Counts, error) {
 	vis := profileVisibility(ctx, database, profileID, vocabNames)
 	_, row, _, err := loadVacancyFull(ctx, database, profileID, vacancyID)
@@ -185,10 +165,6 @@ func rowAndCounts(ctx context.Context, database *db.DB, now func() time.Time, pr
 	return toRow(row, t, fitInputs(ctx, database, profileID, r)), buildCounts(cm), nil
 }
 
-// list returns the rows, counts, industry counts, source counts and total for
-// the given profile, stage, query, sort, industries filter and user Filters.
-// vocabNames restricts the profile's target industries in the visibility filter.
-// total is the stage count before the query and f are applied.
 func list(ctx context.Context, database *db.DB, now func() time.Time, profileID int64, stage, q, sort string, vocabNames []string, industries []string, f Filters, r fit.Rules) ([]Row, Counts, []IndustryCount, []SourceCount, int, error) {
 	vis := profileVisibility(ctx, database, profileID, vocabNames)
 	f.inputs = fitInputs(ctx, database, profileID, r)
@@ -217,13 +193,9 @@ func list(ctx context.Context, database *db.DB, now func() time.Time, profileID 
 	return rows, buildCounts(cm), indCounts, srcCounts, total, nil
 }
 
-// applyDecision validates and executes a stage transition.
-// Returns the updated row and profile counts on success.
-// vocabNames is passed to profileVisibility for the counts refresh.
 func applyDecision(ctx context.Context, database *db.DB, now func() time.Time,
 	vacancyID, profileID int64, from, to, reason string, confirmed bool, vocabNames []string, r fit.Rules) (Row, Counts, error) {
 
-	// Load current stage.
 	var currentStage string
 	err := database.QueryRowContext(ctx,
 		`SELECT COALESCE(d.stage,'inbox') FROM vacancy v LEFT JOIN decision d ON d.vacancy=v.id AND d.profile=? WHERE v.id=?`,
@@ -235,19 +207,16 @@ func applyDecision(ctx context.Context, database *db.DB, now func() time.Time,
 		return Row{}, Counts{}, fmt.Errorf("inbox: decision: load stage: %w", err)
 	}
 
-	// Stale from.
 	if from != currentStage {
 		return Row{}, Counts{}, apperr.Conflict{
 			Message: fmt.Sprintf("job %d changed while this outcome was being saved; reload and try again", vacancyID),
 		}
 	}
 
-	// No-op: same stage.
 	if from == to {
 		return rowAndCounts(ctx, database, now, profileID, vacancyID, vocabNames, r)
 	}
 
-	// Validate move.
 	if err := validateMove(from, to, reason, confirmed); err != nil {
 		return Row{}, Counts{}, err
 	}
@@ -257,7 +226,7 @@ func applyDecision(ctx context.Context, database *db.DB, now func() time.Time,
 	if err != nil {
 		return Row{}, Counts{}, fmt.Errorf("inbox: decision: begin tx: %w", err)
 	}
-	defer tx.Rollback() //nolint:errcheck
+	defer tx.Rollback()
 
 	switch to {
 	case "inbox":
@@ -286,10 +255,8 @@ func applyDecision(ctx context.Context, database *db.DB, now func() time.Time,
 	return rowAndCounts(ctx, database, now, profileID, vacancyID, vocabNames, r)
 }
 
-// validateMove returns an error when the stage transition is not allowed.
 func validateMove(from, to, reason string, confirmed bool) error {
 	inv := apperr.Invalid{Message: "the role is no longer awaiting an application decision; reload and try again"}
-	// Reason only allowed on shortlist → dismissed.
 	if reason != "" && !(from == "shortlist" && to == "dismissed") {
 		return inv
 	}
@@ -310,7 +277,6 @@ func validateMove(from, to, reason string, confirmed bool) error {
 	return inv
 }
 
-// locationText returns the location string or "Location unstated".
 func locationText(loc string) string {
 	if loc == "" {
 		return "Location unstated"
@@ -318,7 +284,6 @@ func locationText(loc string) string {
 	return loc
 }
 
-// publicationLine formats the publication line for a vacancy.
 func publicationLine(publishedAt, publishedBasis string, now time.Time) string {
 	if publishedAt == "" {
 		return "Publication date not reported"
@@ -335,7 +300,6 @@ func publicationLine(publishedAt, publishedBasis string, now time.Time) string {
 	return "Source date " + dateStr + " (unverified)"
 }
 
-// ageText returns a human-readable age string.
 func ageText(published, now time.Time) string {
 	loc := now.Location()
 	py, pm, pd := published.In(loc).Date()
@@ -360,7 +324,6 @@ func ageText(published, now time.Time) string {
 	}
 }
 
-// appliedText formats the applied line for a vacancy row.
 func appliedText(appliedAt, profileName, stage string, now time.Time) string {
 	if appliedAt == "" {
 		return ""
@@ -376,8 +339,6 @@ func appliedText(appliedAt, profileName, stage string, now time.Time) string {
 	return "Applied " + date + " from " + profileName
 }
 
-// emptyText returns the empty-state text for the stage.
-// hasFilters is true when any query or filter is active.
 func emptyText(rowCount int, stage string, hasFilters bool) string {
 	if rowCount > 0 {
 		return ""
@@ -396,9 +357,6 @@ func emptyText(rowCount int, stage string, hasFilters bool) string {
 	return "Inbox zero. Collect more jobs in Settings → Sources."
 }
 
-// --- Vacancy view types and functions ---
-
-// Outcome is one answer shown in the outcome confirmation dialog.
 type Outcome struct {
 	Key       string `json:"key"`
 	Label     string `json:"label"`
@@ -407,10 +365,6 @@ type Outcome struct {
 	Confirmed bool   `json:"confirmed,omitempty"`
 }
 
-// Action is one available action on the vacancy page.
-// To is the target stage for decision endpoints (from is the row's stage).
-// Confirm names the dialog to show before the action ("outcome" or "delete").
-// Outcomes lists the choices shown in the outcome dialog.
 type Action struct {
 	Key      string        `json:"key"`
 	Label    string        `json:"label"`
@@ -421,22 +375,17 @@ type Action struct {
 	Outcomes []Outcome     `json:"outcomes,omitempty"`
 }
 
-// ListingView describes the vacancy's text as shown on the vacancy page.
 type ListingView struct {
 	State string `json:"state"`
 	HTML  string `json:"html"`
 	Empty string `json:"empty,omitempty"`
 }
 
-// VacancySource is one source that carried a vacancy, as returned by the API.
-// URL is the source address; it is omitted when the internal source identifier
-// is not a valid HTTP address.
 type VacancySource struct {
 	Name string `json:"name"`
 	URL  string `json:"url,omitempty"`
 }
 
-// VacancyView is the vacancy page API response.
 type VacancyView struct {
 	Row
 	Sources  []VacancySource `json:"sources"`
@@ -447,7 +396,6 @@ type VacancyView struct {
 	Band     Band            `json:"band"`
 }
 
-// listingState returns the display text for a vacancy's text_state value.
 func listingState(textState string) string {
 	switch listing.TextState(textState) {
 	case listing.TextFull:
@@ -462,10 +410,6 @@ func listingState(textState string) string {
 	return "Not fetched"
 }
 
-// toVacancySource converts an internal source key to a VacancySource.
-// When the key appears in names, that name is used. Otherwise the hostname of
-// the key URL is used, with a leading "www." stripped. URL is set when src is
-// a valid http(s) address.
 func toVacancySource(src string, names map[string]string) VacancySource {
 	name, srcURL := names[src], ""
 	if u, err := url.Parse(src); err == nil && u.Host != "" {
@@ -482,7 +426,6 @@ func toVacancySource(src string, names map[string]string) VacancySource {
 	return VacancySource{Name: name, URL: srcURL}
 }
 
-// statusText returns the status line shown on the vacancy page.
 func statusText(stage, reason, appliedAt string, t time.Time) string {
 	if stage == "dismissed" {
 		if reason != "" {
@@ -500,7 +443,6 @@ func statusText(stage, reason, appliedAt string, t time.Time) string {
 	return "Applied " + at.In(t.Location()).Format("2 Jan 2006")
 }
 
-// validApplyURL reports whether raw is an http(s) URL with no credentials.
 func validApplyURL(raw string) bool {
 	if raw == "" {
 		return false
@@ -512,8 +454,6 @@ func validApplyURL(raw string) bool {
 	return (u.Scheme == "http" || u.Scheme == "https") && u.User == nil
 }
 
-// outcomeButtons are the choices in the apply-outcome dialog, used by both the
-// apply and confirm actions in the shortlist stage.
 var outcomeButtons = []Outcome{
 	{Key: "not-yet", Label: "Not yet"},
 	{Key: "stale", Label: "No, vacancy is stale", To: StageDismissed, Reason: "vacancy is stale"},
@@ -522,9 +462,6 @@ var outcomeButtons = []Outcome{
 	{Key: "applied", Label: "Yes, applied", To: StageApplied, Confirmed: true},
 }
 
-// stageActions returns the actions available in stage, in the order the page
-// shows them. Labels carry no keyboard hints; to is the decision target stage;
-// confirm names the dialog the client must show before proceeding.
 func stageActions(stage, vacURL, applyURL, company string) []Action {
 	switch stage {
 	case "inbox":
@@ -558,10 +495,6 @@ func stageActions(stage, vacURL, applyURL, company string) []Action {
 	return []Action{}
 }
 
-// buildApplyAction builds the apply Action for the shortlist stage.
-// It carries a URL when a valid http(s) address without credentials is found,
-// otherwise a message. Labels carry no keyboard hints.
-// Confirm and Outcomes are set so the client shows the outcome dialog after opening the URL.
 func buildApplyAction(vacURL, applyURL string) Action {
 	if validApplyURL(applyURL) {
 		return Action{Key: "apply", Label: "Apply", URL: applyURL, Confirm: ConfirmOutcome, Outcomes: outcomeButtons}
@@ -576,8 +509,6 @@ func buildApplyAction(vacURL, applyURL string) Action {
 	}
 }
 
-// vacancyView loads and assembles the vacancy page response for a resolved
-// vacancy and profile. sourceNames maps source keys to their configured display names.
 func vacancyView(ctx context.Context, database *db.DB, now func() time.Time,
 	vacancyID, profileID int64, sourceNames map[string]string, r fit.Rules) (VacancyView, error) {
 

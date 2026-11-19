@@ -15,7 +15,6 @@ import (
 	"github.com/sifty-works/sifty-server/internal/server"
 )
 
-// setVacancyIndustries writes a JSON industries array directly to the vacancy row.
 func setVacancyIndustries(t *testing.T, d *db.DB, id int64, industries []string) {
 	t.Helper()
 	b, _ := json.Marshal(industries)
@@ -24,8 +23,6 @@ func setVacancyIndustries(t *testing.T, d *db.DB, id int64, industries []string)
 	}
 }
 
-// setProfileTargetIndustries writes targetIndustries to profile 1's data.
-// The profile uses a keyword that matches all test vacancies' text.
 func setProfileTargetIndustries(t *testing.T, d *db.DB, industries []string) {
 	t.Helper()
 	type pd struct {
@@ -33,15 +30,12 @@ func setProfileTargetIndustries(t *testing.T, d *db.DB, industries []string) {
 		Keywords         []string `json:"keywords,omitempty"`
 		TargetIndustries []string `json:"targetIndustries,omitempty"`
 	}
-	// "description" appears in every vacancy's text ("job description").
 	b, _ := json.Marshal(pd{Name: "Profile", Keywords: []string{"description"}, TargetIndustries: industries})
 	if _, err := d.Exec(`UPDATE profile SET data=? WHERE id=1`, string(b)); err != nil {
 		t.Fatalf("setProfileTargetIndustries: %v", err)
 	}
 }
 
-// newServerWithVocab creates an httptest.Server for the inbox with a vocabulary
-// function wired into RegisterRoutes for target-industry filtering.
 func newServerWithVocab(t *testing.T, d *db.DB, vocabNames []string) *httptest.Server {
 	t.Helper()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -54,8 +48,6 @@ func newServerWithVocab(t *testing.T, d *db.DB, vocabNames []string) *httptest.S
 	t.Cleanup(ts.Close)
 	return ts
 }
-
-// --- Row carries industries field ---
 
 func TestRows_IndustriesField(t *testing.T) {
 	d := openTestDB(t)
@@ -95,8 +87,6 @@ func TestRows_EmptyIndustriesField(t *testing.T) {
 	}
 }
 
-// --- Industries filter ---
-
 func TestList_IndustriesFilter_ReturnsMatchingOnly(t *testing.T) {
 	d := openTestDB(t)
 	cat := newCat(d)
@@ -129,7 +119,6 @@ func TestList_IndustriesFilter_MultipleNames(t *testing.T) {
 
 	setVacancyIndustries(t, d, id1, []string{"Web3"})
 	setVacancyIndustries(t, d, id2, []string{"Software"})
-	// id3 stays empty
 
 	rs := getRows(apiGet(t, newTestServer(t, d), "/api/vacancies?industries=Web3,Software"))
 	if len(rs) != 2 {
@@ -141,8 +130,6 @@ func TestList_IndustriesFilter_MultipleNames(t *testing.T) {
 	}
 	_ = id3
 }
-
-// --- Industry counts ---
 
 func TestList_IndustryCounts(t *testing.T) {
 	d := openTestDB(t)
@@ -185,7 +172,6 @@ func TestList_IndustryCounts_NotAffectedByIndustriesFilter(t *testing.T) {
 	setVacancyIndustries(t, d, id1, []string{"Web3"})
 	setVacancyIndustries(t, d, id2, []string{"Software"})
 
-	// When filtering to Web3, industry counts still reflect the full inbox set.
 	body := apiGet(t, newTestServer(t, d), "/api/vacancies?industries=Web3")
 	icRaw, _ := body["industryCounts"].([]any)
 	counts := make(map[string]int)
@@ -203,17 +189,14 @@ func TestList_IndustryCounts_NotAffectedByIndustriesFilter(t *testing.T) {
 	}
 }
 
-// --- Visibility with target industries ---
-
 func TestVisibility_TargetIndustries_ShowsMatchingAndNoIndustry(t *testing.T) {
 	d := openTestDB(t)
 	cat := newCat(d)
-	// Profile requires a role + keyword, plus target industries.
 	setProfileTargetIndustries(t, d, []string{"Web3"})
 
 	id1 := add(t, cat, post("https://example.com/jobs/1", "Smart contract tester", "Co"))
-	id2 := add(t, cat, post("https://example.com/jobs/2", "Platform tester", "Co"))         // no industry
-	id3 := add(t, cat, post("https://example.com/jobs/3", "Software analyst tester", "Co")) // other industry
+	id2 := add(t, cat, post("https://example.com/jobs/2", "Platform tester", "Co"))
+	id3 := add(t, cat, post("https://example.com/jobs/3", "Software analyst tester", "Co"))
 
 	setVacancyIndustries(t, d, id1, []string{"Web3"})
 	setVacancyIndustries(t, d, id3, []string{"Software"})
@@ -227,7 +210,6 @@ func TestVisibility_TargetIndustries_ShowsMatchingAndNoIndustry(t *testing.T) {
 		ids = append(ids, rowID(r))
 	}
 
-	// id1 (Web3) and id2 (no industry) should be visible; id3 (Software only) should not.
 	hasID1, hasID2, hasID3 := false, false, false
 	for _, id := range ids {
 		switch id {
@@ -253,7 +235,6 @@ func TestVisibility_TargetIndustries_ShowsMatchingAndNoIndustry(t *testing.T) {
 func TestVisibility_TargetIndustries_OutsideVocabIgnored(t *testing.T) {
 	d := openTestDB(t)
 	cat := newCat(d)
-	// Profile targets "Obsolete" which is not in the vocab.
 	setProfileTargetIndustries(t, d, []string{"Obsolete"})
 
 	id1 := add(t, cat, post("https://example.com/jobs/1", "Platform tester", "Co"))
@@ -261,13 +242,10 @@ func TestVisibility_TargetIndustries_OutsideVocabIgnored(t *testing.T) {
 
 	setVacancyIndustries(t, d, id2, []string{"Software"})
 
-	// Vocab only has "Software", not "Obsolete". The profile's "Obsolete" target is
-	// stripped, leaving no effective targets — no industry constraint applied.
 	vocabNames := []string{"Software"}
 	ts := newServerWithVocab(t, d, vocabNames)
 	rs := getRows(apiGet(t, ts, "/api/vacancies"))
 
-	// Both vacancies should be visible (no industry filter active after restriction).
 	if len(rs) != 2 {
 		t.Errorf("got %d rows, want 2 (no effective industry targets)", len(rs))
 	}
@@ -278,10 +256,8 @@ func TestVisibility_TargetIndustries_InheritedFromFirstProfile(t *testing.T) {
 	d := openTestDB(t)
 	cat := newCat(d)
 
-	// Profile 1: roles, keywords, target industries.
 	setProfileTargetIndustries(t, d, []string{"Web3"})
 
-	// Add a second profile with no target industries (they are inherited from profile 1).
 	const insertProfile2 = `INSERT INTO profile (id, data) VALUES (2, ?)`
 	type pd2 struct {
 		Name     string   `json:"name"`
@@ -293,7 +269,7 @@ func TestVisibility_TargetIndustries_InheritedFromFirstProfile(t *testing.T) {
 	}
 
 	id1 := add(t, cat, post("https://example.com/jobs/1", "Chain tester", "Co"))
-	id2 := add(t, cat, post("https://example.com/jobs/2", "Platform tester", "Co")) // no industry
+	id2 := add(t, cat, post("https://example.com/jobs/2", "Platform tester", "Co"))
 	id3 := add(t, cat, post("https://example.com/jobs/3", "Software analyst tester", "Co"))
 
 	setVacancyIndustries(t, d, id1, []string{"Web3"})
@@ -302,7 +278,6 @@ func TestVisibility_TargetIndustries_InheritedFromFirstProfile(t *testing.T) {
 	vocabNames := []string{"Web3", "Software"}
 	ts := newServerWithVocab(t, d, vocabNames)
 
-	// Profile 2 inherits Web3 target from profile 1.
 	rs := getRows(apiGet(t, ts, "/api/vacancies?profile=2"))
 	var hasID3 bool
 	for _, r := range rs {
@@ -314,7 +289,6 @@ func TestVisibility_TargetIndustries_InheritedFromFirstProfile(t *testing.T) {
 		t.Errorf("profile 2 inherited Web3; vacancy with only Software should not be visible")
 	}
 
-	// id2 (no industry) should still be visible.
 	var hasID2 bool
 	for _, r := range rs {
 		if rowID(r) == float64(id2) {
@@ -325,8 +299,6 @@ func TestVisibility_TargetIndustries_InheritedFromFirstProfile(t *testing.T) {
 		t.Errorf("vacancy with no industry should be visible even with inherited target industries")
 	}
 }
-
-// --- Vacancy page carries industries ---
 
 func TestVacancyPage_IndustriesField(t *testing.T) {
 	d := openTestDB(t)
@@ -340,8 +312,6 @@ func TestVacancyPage_IndustriesField(t *testing.T) {
 	setVacancyIndustries(t, d, id, []string{"Web3"})
 
 	ts := newTestServer(t, d)
-	// apiGetRaw does not run shape validation (VacancyView embeds Row which
-	// the shape validator would read as a nested field, not inline fields).
 	body, status := apiGetRaw(t, ts, "/api/vacancies/1")
 	if status != http.StatusOK {
 		t.Fatalf("GET /api/vacancies/1: status %d", status)
@@ -352,18 +322,12 @@ func TestVacancyPage_IndustriesField(t *testing.T) {
 	}
 }
 
-// --- Robustness: null industries in the database ---
-
 func TestList_NullIndustriesReturnOKAndNoCount(t *testing.T) {
-	// A vacancy whose industries column holds JSON null (written by a previous
-	// buggy run of assign_industries) must not cause the list endpoint to
-	// return 500. After reassignment the value must be [] not null.
 	d := openTestDB(t)
 	cat := newCat(d)
 	setProfileData(t, d, nil, []string{"description"}, nil)
 
 	id := add(t, cat, post("https://example.com/jobs/1", "Platform tester", "Co"))
-	// Simulate the broken state: store JSON null instead of [].
 	if _, err := d.Exec(`UPDATE vacancy SET industries='null' WHERE id=?`, id); err != nil {
 		t.Fatalf("set null industries: %v", err)
 	}
@@ -373,12 +337,10 @@ func TestList_NullIndustriesReturnOKAndNoCount(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("GET /api/vacancies with null industries: status %d, want 200", status)
 	}
-	// The null value must not appear as a count entry.
 	icRaw, _ := body["industryCounts"].([]any)
 	if len(icRaw) != 0 {
 		t.Errorf("industryCounts: got %v, want empty when only vacancy has null industries", icRaw)
 	}
-	// The row must still be listed with an empty industries slice.
 	rows := getRows(body)
 	if len(rows) != 1 {
 		t.Fatalf("rows: got %d, want 1", len(rows))
@@ -390,11 +352,7 @@ func TestList_NullIndustriesReturnOKAndNoCount(t *testing.T) {
 	}
 }
 
-// --- IndustryCounts counts the stage being shown ---
-
 func TestIndustryCounts_ShortlistCountsDifferFromInbox(t *testing.T) {
-	// A vacancy with "Web3" in shortlist and a vacancy with "Software" in inbox
-	// must produce different industryCounts when the shortlist is requested.
 	d := openTestDB(t)
 	cat := newCat(d)
 	setProfileData(t, d, nil, []string{"description"}, nil)
@@ -405,7 +363,6 @@ func TestIndustryCounts_ShortlistCountsDifferFromInbox(t *testing.T) {
 	setVacancyIndustries(t, d, idShort, []string{"Web3"})
 	setVacancyIndustries(t, d, idInbox, []string{"Software"})
 
-	// Move idShort to shortlist.
 	now := testNowFn()
 	_, err := d.Exec(
 		`INSERT INTO decision (profile, vacancy, stage, reason, decided_at) VALUES (1,?,?,?,?)`,
@@ -416,7 +373,6 @@ func TestIndustryCounts_ShortlistCountsDifferFromInbox(t *testing.T) {
 
 	ts := newTestServer(t, d)
 
-	// Shortlist: industryCounts should show Web3=1, not Software.
 	shortBody := apiGet(t, ts, "/api/vacancies?stage=shortlist")
 	shortCounts := make(map[string]int)
 	for _, v := range shortBody["industryCounts"].([]any) {
@@ -432,7 +388,6 @@ func TestIndustryCounts_ShortlistCountsDifferFromInbox(t *testing.T) {
 		t.Errorf("shortlist Software count: got %d, want 0 (Software vacancy is in inbox, not shortlist)", shortCounts["Software"])
 	}
 
-	// Inbox: industryCounts should show Software=1, not Web3.
 	inboxBody := apiGet(t, ts, "/api/vacancies")
 	inboxCounts := make(map[string]int)
 	for _, v := range inboxBody["industryCounts"].([]any) {
@@ -450,19 +405,17 @@ func TestIndustryCounts_ShortlistCountsDifferFromInbox(t *testing.T) {
 }
 
 func TestVisibility_TargetIndustries_InheritedFromNewFirstAfterDeletion(t *testing.T) {
-	// After deleting the first profile, an empty-industries profile must inherit
-	// from the new lowest-id profile, not from the deleted one.
 	d := openTestDB(t)
 	cat := newCat(d)
 	setProfileTargetIndustries(t, d, []string{"Web3"})
-	d.Exec(`INSERT INTO profile (id, data) VALUES (2, '{"name":"P2","keywords":["description"]}')`) //nolint:errcheck
-	d.Exec(`INSERT INTO profile (id, data) VALUES (3, '{"name":"P3","keywords":["description"]}')`) //nolint:errcheck
+	d.Exec(`INSERT INTO profile (id, data) VALUES (2, '{"name":"P2","keywords":["description"]}')`)
+	d.Exec(`INSERT INTO profile (id, data) VALUES (3, '{"name":"P3","keywords":["description"]}')`)
 	idS := add(t, cat, post("https://example.com/jobs/s1", "Software engineer description", "Co"))
 	setVacancyIndustries(t, d, idS, []string{"Software"})
 	idW := add(t, cat, post("https://example.com/jobs/w1", "Web3 dev description", "Co"))
 	setVacancyIndustries(t, d, idW, []string{"Web3"})
-	d.Exec(`DELETE FROM profile WHERE id=1`)                                                                                //nolint:errcheck
-	d.Exec(`UPDATE profile SET data='{"name":"P2","keywords":["description"],"targetIndustries":["Software"]}' WHERE id=2`) //nolint:errcheck
+	d.Exec(`DELETE FROM profile WHERE id=1`)
+	d.Exec(`UPDATE profile SET data='{"name":"P2","keywords":["description"],"targetIndustries":["Software"]}' WHERE id=2`)
 	ts := newServerWithVocab(t, d, []string{"Web3", "Software"})
 	rs := getRows(apiGet(t, ts, "/api/vacancies?profile=3"))
 	if len(rs) != 1 || rowID(rs[0]) != float64(idS) {
@@ -470,17 +423,11 @@ func TestVisibility_TargetIndustries_InheritedFromNewFirstAfterDeletion(t *testi
 	}
 }
 
-// --- Import assigns industries ---
-
 func TestImport_IndustriesAssigned(t *testing.T) {
-	// Use a fixture DB opened in-memory, then verify via the inbox store.
-	// This test checks the assignment path without running the full server.
 	ctx := context.Background()
 	d := openTestDB(t)
 
-	// Directly write a vacancy with keyword "solidity" (matches Web3 in default vocab)
-	// and verify its industries after the catalog assigns them.
-	cat := newCat(d) // no assign, so industries stay []
+	cat := newCat(d)
 
 	id := add(t, cat, listing.Posting{
 		URL:   "https://example.com/jobs/88",
@@ -490,9 +437,8 @@ func TestImport_IndustriesAssigned(t *testing.T) {
 		TextState: listing.TextFull,
 	})
 
-	// industries must be [] without an assign function.
 	var industries string
-	d.QueryRowContext(ctx, `SELECT industries FROM vacancy WHERE id=?`, id).Scan(&industries) //nolint:errcheck
+	d.QueryRowContext(ctx, `SELECT industries FROM vacancy WHERE id=?`, id).Scan(&industries)
 	if industries != "[]" {
 		t.Errorf("industries without assigner: got %q, want []", industries)
 	}

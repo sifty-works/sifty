@@ -40,7 +40,6 @@ func (s *leverSource) List(ctx context.Context, f fetch.Fetcher, cfg SiteConfig)
 	}
 	var postings []listing.Posting
 	for _, post := range body {
-		// Build text: description + lists as heading+list + additional.
 		var tb strings.Builder
 		tb.WriteString(post.Description)
 		for _, lst := range post.Lists {
@@ -52,7 +51,6 @@ func (s *leverSource) List(ctx context.Context, f fetch.Fetcher, cfg SiteConfig)
 			}
 		}
 		tb.WriteString(post.Additional)
-		// Build salary field value.
 		var salary string
 		if sr := post.SalaryRange; sr != nil && (sr.Min != 0 || sr.Max != 0) {
 			if sr.Max > 0 {

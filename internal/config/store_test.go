@@ -24,8 +24,6 @@ func TestOpenInvalidFileReturnsError(t *testing.T) {
 	}
 }
 
-// --- Update ------------------------------------------------------------------
-
 func openStore(t *testing.T) (*config.Store, string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -62,7 +60,7 @@ func TestUpdateChangesInMemoryConfig(t *testing.T) {
 
 func TestUpdateWritesFileWithChangedKey(t *testing.T) {
 	s, dir := openStore(t)
-	s.Update(func(c *config.Config) error { c.Port = 9000; return nil }) //nolint:errcheck
+	s.Update(func(c *config.Config) error { c.Port = 9000; return nil })
 	data, _ := os.ReadFile(filepath.Join(dir, "sifty.yaml"))
 	if !strings.Contains(string(data), "port: 9000") {
 		t.Errorf("file should contain 'port: 9000'; got:\n%s", data)
@@ -97,7 +95,7 @@ func TestUpdateValidationFailureWritesNothing(t *testing.T) {
 	s, dir := openStore(t)
 
 	err := s.Update(func(c *config.Config) error {
-		c.Port = 99999 // invalid
+		c.Port = 99999
 		return nil
 	})
 	if err == nil {
@@ -108,11 +106,9 @@ func TestUpdateValidationFailureWritesNothing(t *testing.T) {
 		t.Errorf("validation error should be apperr.Invalid, got %T: %v", err, err)
 	}
 
-	// File should not exist (store was opened on missing file).
 	if _, err2 := os.Stat(filepath.Join(dir, "sifty.yaml")); err2 == nil {
 		t.Error("file should not have been written after failed validation")
 	}
-	// In-memory config unchanged.
 	if s.Get().Port == 99999 {
 		t.Error("in-memory config should not have changed after failed validation")
 	}
@@ -135,7 +131,7 @@ func TestUpdateFnErrorIsInvalid(t *testing.T) {
 func TestUpdateWritesBackup(t *testing.T) {
 	s, dir := openStoreWith(t, "port: 7373\n")
 
-	s.Update(func(c *config.Config) error { c.Port = 8000; return nil }) //nolint:errcheck
+	s.Update(func(c *config.Config) error { c.Port = 8000; return nil })
 
 	entries, err := os.ReadDir(filepath.Join(dir, "backups"))
 	if err != nil {
@@ -147,8 +143,8 @@ func TestUpdateWritesBackup(t *testing.T) {
 }
 
 func TestUpdateNoBackupWhenFileDidNotExist(t *testing.T) {
-	s, dir := openStore(t)                                               // file does not exist yet
-	s.Update(func(c *config.Config) error { c.Port = 8000; return nil }) //nolint:errcheck
+	s, dir := openStore(t)
+	s.Update(func(c *config.Config) error { c.Port = 8000; return nil })
 
 	if _, err := os.Stat(filepath.Join(dir, "backups")); err == nil {
 		t.Error("backups dir should not exist when file did not exist before update")
@@ -158,14 +154,12 @@ func TestUpdateNoBackupWhenFileDidNotExist(t *testing.T) {
 func TestUpdateKeepsLastTenBackups(t *testing.T) {
 	s, dir := openStoreWith(t, "port: 7373\n")
 
-	// Run 12 updates so 12 backups would be written; only 10 should remain.
 	for i := 8000; i < 8012; i++ {
 		port := i
-		s.Update(func(c *config.Config) error { //nolint:errcheck
+		s.Update(func(c *config.Config) error {
 			c.Port = port
 			return nil
 		})
-		// Tiny sleep so timestamps differ.
 		time.Sleep(time.Millisecond)
 	}
 
@@ -180,7 +174,7 @@ func TestUpdateKeepsLastTenBackups(t *testing.T) {
 
 func TestUpdateAddsSource(t *testing.T) {
 	s, dir := openStore(t)
-	s.Update(func(c *config.Config) error { //nolint:errcheck
+	s.Update(func(c *config.Config) error {
 		c.Sources = append(c.Sources, config.SourceConfig{
 			URL: "https://example.com/jobs", Enabled: true,
 		})
@@ -197,8 +191,7 @@ func TestUpdateRemovesSource(t *testing.T) {
 	s, dir := openStoreWith(t, "sources:\n  - url: https://example.com/jobs1\n  - url: https://example.com/jobs2\n")
 	path := filepath.Join(dir, "sifty.yaml")
 
-	s.Update(func(c *config.Config) error { //nolint:errcheck
-		// Keep only the first source.
+	s.Update(func(c *config.Config) error {
 		c.Sources = c.Sources[:1]
 		return nil
 	})
@@ -216,7 +209,7 @@ func TestUpdateChangesSourceKeepsComment(t *testing.T) {
 	s, dir := openStoreWith(t, "sources:\n  # job board\n  - url: https://example.com/jobs\n    enabled: true\n")
 	path := filepath.Join(dir, "sifty.yaml")
 
-	s.Update(func(c *config.Config) error { //nolint:errcheck
+	s.Update(func(c *config.Config) error {
 		c.Sources[0].Enabled = false
 		return nil
 	})
@@ -234,20 +227,17 @@ func TestUpdateFailsWhenFileIsUnparseable(t *testing.T) {
 	s, dir := openStoreWith(t, "port: 7373\n")
 	path := filepath.Join(dir, "sifty.yaml")
 
-	// Externally corrupt the file (simulates a hand edit that breaks the YAML).
 	garbage := []byte("{{{{: not valid yaml\n")
-	os.WriteFile(path, garbage, 0600) //nolint:errcheck
+	os.WriteFile(path, garbage, 0600)
 
 	err := s.Update(func(c *config.Config) error { c.Port = 8080; return nil })
 	if err == nil {
 		t.Fatal("Update should fail when the file on disk is unparseable")
 	}
-	// File must be unchanged.
 	got, _ := os.ReadFile(path)
 	if string(got) != string(garbage) {
 		t.Errorf("file should be unchanged after failed Update; got:\n%s", got)
 	}
-	// In-memory config must be unchanged.
 	if s.Get().Port != 7373 {
 		t.Errorf("in-memory port should still be 7373, got %d", s.Get().Port)
 	}
@@ -255,7 +245,7 @@ func TestUpdateFailsWhenFileIsUnparseable(t *testing.T) {
 
 func TestUpdateWritesIntervalInShortForm(t *testing.T) {
 	s, dir := openStore(t)
-	s.Update(func(c *config.Config) error { //nolint:errcheck
+	s.Update(func(c *config.Config) error {
 		c.Collection.Interval = config.Duration(90 * time.Minute)
 		return nil
 	})

@@ -24,9 +24,6 @@ func defaultRules() fit.Rules {
 	return fit.Rules{Weights: c.Weights, Rates: c.Rates}
 }
 
-// fitFixture adds seven vacancies titled A to G with stored results for
-// profile 1: A and B current 80, C current 60, D current 40, E out of date 90,
-// F none, G current without full text.
 func fitFixture(t *testing.T) (*db.DB, map[string]int64) {
 	t.Helper()
 	d := openTestDB(t)
@@ -45,7 +42,7 @@ func fitFixture(t *testing.T) (*db.DB, map[string]int64) {
 			if name == "E" {
 				inputs++
 			}
-			d.Exec(fmt.Sprintf(`INSERT INTO fit (profile, vacancy, version, inputs, listing, state, score) VALUES (1,%d,1,`+values+`)`, ids[name], inputs)) //nolint:errcheck
+			d.Exec(fmt.Sprintf(`INSERT INTO fit (profile, vacancy, version, inputs, listing, state, score) VALUES (1,%d,1,`+values+`)`, ids[name], inputs))
 		}
 	}
 	return d, ids
@@ -97,7 +94,7 @@ func TestFitFilterSelectsBucketsInEveryListAndDismissedKeepsDecisionOrder(t *tes
 		t.Errorf("source counts under the Fit filter: %v", sc)
 	}
 	d.Exec(`INSERT INTO decision (profile, vacancy, stage, decided_at) VALUES (1,?,'shortlist','2026-11-01T00:00:00Z'),(1,?,'shortlist','2026-11-02T00:00:00Z'),
-		(1,?,'dismissed','2026-11-01T00:00:00Z'),(1,?,'dismissed','2026-11-02T00:00:00Z')`, ids["A"], ids["E"], ids["C"], ids["D"]) //nolint:errcheck
+		(1,?,'dismissed','2026-11-01T00:00:00Z'),(1,?,'dismissed','2026-11-02T00:00:00Z')`, ids["A"], ids["E"], ids["C"], ids["D"])
 	if got := titles(apiGet(t, ts, "/api/vacancies?stage=dismissed&sort=fit")); got != "DC" {
 		t.Errorf("Dismissed order %q, want DC (newest decision first)", got)
 	}
@@ -119,7 +116,7 @@ func TestOutOfDateResultsAreDimmedUntilRecomputed(t *testing.T) {
 		candidate.RegisterRoutes(mux, d, "", logger, nil)
 	}))
 	t.Cleanup(ts.Close)
-	recompute := func() { fit.Recompute(context.Background(), d, defaultRules, func(int, int, string) {}) } //nolint:errcheck
+	recompute := func() { fit.Recompute(context.Background(), d, defaultRules, func(int, int, string) {}) }
 	mark := func() map[string]any {
 		return getRows(apiGet(t, ts, "/api/vacancies"))[0].(map[string]any)["fit"].(map[string]any)
 	}

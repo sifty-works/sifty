@@ -1,7 +1,5 @@
 package listing
 
-// headings is the embedded list of recognised section heading phrases,
-// matched case-insensitively.
 var headings = []string{
 	"about the role",
 	"about this role",

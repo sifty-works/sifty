@@ -16,24 +16,20 @@ import (
 	"github.com/sifty-works/sifty-server/internal/server"
 )
 
-// --- Request and response types ---
-
-// ListReq carries the query parameters for GET /api/vacancies.
 type ListReq struct {
 	Stage      Stage  `json:"stage"`
 	Profile    int64  `json:"profile"`
 	Q          string `json:"q"`
 	Industries string `json:"industries,omitempty"`
-	Collected  string `json:"collected,omitempty"`  // "7" or "30" days by first_seen; empty = any
-	Remote     bool   `json:"remote,omitempty"`     // remote/anywhere/telecommute in location
-	Leadership bool   `json:"leadership,omitempty"` // CTO/Head/Director/Manager/Lead in title
-	Sources    string `json:"sources,omitempty"`    // comma-separated source keys
-	Unread     bool   `json:"unread,omitempty"`     // hide read vacancies; ignored in applied/dismissed
-	Fit        string `json:"fit,omitempty"`        // comma-separated buckets: strong, partial, weak, not_scored
-	Sort       string `json:"sort,omitempty"`       // "fit" (Best fit, the default) or "newest"; Inbox and Shortlist only
+	Collected  string `json:"collected,omitempty"`
+	Remote     bool   `json:"remote,omitempty"`
+	Leadership bool   `json:"leadership,omitempty"`
+	Sources    string `json:"sources,omitempty"`
+	Unread     bool   `json:"unread,omitempty"`
+	Fit        string `json:"fit,omitempty"`
+	Sort       string `json:"sort,omitempty"`
 }
 
-// ListResp is the response body for GET /api/vacancies.
 type ListResp struct {
 	Rows           []Row           `json:"rows"`
 	Counts         Counts          `json:"counts"`
@@ -44,12 +40,10 @@ type ListResp struct {
 	Profile        int64           `json:"profile"`
 }
 
-// VacancyViewReq carries the query parameters for GET /api/vacancies/{id}.
 type VacancyViewReq struct {
 	Profile int64 `json:"profile"`
 }
 
-// DecisionReq is the request body for POST /api/vacancies/{id}/decision.
 type DecisionReq struct {
 	Profile   int64  `json:"profile"`
 	From      Stage  `json:"from"`
@@ -58,54 +52,39 @@ type DecisionReq struct {
 	Confirmed bool   `json:"confirmed"`
 }
 
-// DecisionResp is the response body for POST /api/vacancies/{id}/decision.
 type DecisionResp struct {
 	Row    Row    `json:"row"`
 	Counts Counts `json:"counts"`
 }
 
-// DeleteVacancyResp is the response body for DELETE /api/vacancies/{id}.
 type DeleteVacancyResp struct {
 	Counts Counts `json:"counts"`
 }
 
-// AddExclusionReq is the request body for POST /api/exclusions.
 type AddExclusionReq struct {
 	Kind    ExclusionKind `json:"kind"`
 	Value   string        `json:"value"`
 	Profile int64         `json:"profile,omitempty"`
 }
 
-// DeleteExclusionReq is the request body for DELETE /api/exclusions.
 type DeleteExclusionReq struct {
 	ID      int64 `json:"id"`
 	Profile int64 `json:"profile,omitempty"`
 }
 
-// ExclusionListReq carries the query parameters for GET /api/exclusions.
 type ExclusionListReq struct {
 	Profile int64 `json:"profile,omitempty"`
 }
 
-// PreviewReq carries the query parameters for GET /api/exclusions/preview.
 type PreviewReq struct {
 	Kind  ExclusionKind `json:"kind"`
 	Value string        `json:"value"`
 }
 
-// PreviewResp is the response body for GET /api/exclusions/preview.
 type PreviewResp struct {
 	Text string `json:"text"`
 }
 
-// RegisterRoutes registers all inbox routes on mux.
-// collectActive reports whether a collect job is queued or running.
-// getSourceNames returns the current source-key-to-display-name map; it is
-// called on each vacancy-page request so a source added while the server is
-// running is named correctly.
-// getVocabNames returns the current vocabulary's industry names; nil means no
-// vocabulary is configured and target-industry filtering is not applied.
-// rules returns the weights and rates of Fits you; nil means the defaults.
 func RegisterRoutes(mux *http.ServeMux, database *db.DB, now func() time.Time, logger *slog.Logger, collectActive func() bool, getSourceNames func() map[string]string, getVocabNames func() []string, rules func() fit.Rules) {
 	cat := catalog.New(database, now)
 	if rules == nil {
@@ -147,7 +126,6 @@ func RegisterRoutes(mux *http.ServeMux, database *db.DB, now func() time.Time, l
 		case "30":
 			collected = 30
 		}
-		// unread is ignored in applied and dismissed (Archive).
 		unread := req.Unread && stage != "applied" && stage != "dismissed"
 		f := Filters{
 			Collected:  collected,
@@ -233,7 +211,7 @@ func RegisterRoutes(mux *http.ServeMux, database *db.DB, now func() time.Time, l
 			return DeleteVacancyResp{}, err
 		}
 		var hasDecision int
-		database.QueryRowContext(r.Context(), //nolint:errcheck
+		database.QueryRowContext(r.Context(),
 			`SELECT count(*) FROM decision WHERE vacancy=? AND profile=?`, vacancyID, pid).Scan(&hasDecision)
 		if hasDecision == 0 {
 			return DeleteVacancyResp{}, apperr.Conflict{Message: "Dismiss roles in Inbox; permanent Delete is available outside Inbox"}
@@ -290,7 +268,6 @@ func RegisterRoutes(mux *http.ServeMux, database *db.DB, now func() time.Time, l
 	})
 }
 
-// parseID parses the {id} path value.
 func parseID(req *http.Request) (int64, error) {
 	id, err := strconv.ParseInt(req.PathValue("id"), 10, 64)
 	if err != nil {
@@ -299,7 +276,6 @@ func parseID(req *http.Request) (int64, error) {
 	return id, nil
 }
 
-// parseProfileQuery reads the ?profile= query parameter, returning 0 when absent.
 func parseProfileQuery(req *http.Request) (int64, error) {
 	p := req.URL.Query().Get("profile")
 	if p == "" {
@@ -312,7 +288,6 @@ func parseProfileQuery(req *http.Request) (int64, error) {
 	return pid, nil
 }
 
-// splitComma splits a comma-separated string into trimmed, non-empty tokens.
 func splitComma(s string) []string {
 	if s == "" {
 		return nil
@@ -326,7 +301,6 @@ func splitComma(s string) []string {
 	return out
 }
 
-// resolveRequestIDs resolves the path id through the alias table and resolves the profile.
 func resolveRequestIDs(req *http.Request, database *db.DB, profileID int64) (int64, int64, error) {
 	id, err := parseID(req)
 	if err != nil {

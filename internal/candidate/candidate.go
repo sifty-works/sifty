@@ -1,6 +1,3 @@
-// Package candidate holds the profile search record and the visibility filter
-// it produces. The filter is used by inbox to show only the vacancies that fit
-// a profile's search.
 package candidate
 
 import (
@@ -9,9 +6,6 @@ import (
 	"github.com/sifty-works/sifty-server/internal/listing"
 )
 
-// ProfileData is the JSON record stored in the profile table's data column.
-// It is the canonical serialisation of a profile; callers that read a profile
-// row must unmarshal this type.
 type ProfileData struct {
 	Name               string        `json:"name"`
 	Headline           string        `json:"headline,omitempty"`
@@ -20,17 +14,15 @@ type ProfileData struct {
 	AllOf              []string      `json:"allOf,omitempty"`
 	TargetIndustries   []string      `json:"targetIndustries,omitempty"`
 	Compensation       *Compensation `json:"compensation,omitempty"`
-	Engagement         []string      `json:"engagement,omitempty"` // "employment" | "contract"
+	Engagement         []string      `json:"engagement,omitempty"`
 	Hours              *Hours        `json:"hours,omitempty"`
-	WorkModes          []string      `json:"workModes,omitempty"` // "remote" | "hybrid" | "onsite"
+	WorkModes          []string      `json:"workModes,omitempty"`
 	PreferredLocations []Location    `json:"preferredLocations,omitempty"`
-	Relocation         string        `json:"relocation,omitempty"` // "yes" | "no"
+	Relocation         string        `json:"relocation,omitempty"`
 	TimeZones          []string      `json:"timeZones,omitempty"`
 	OtherRequirements  string        `json:"otherRequirements,omitempty"`
 }
 
-// inheritedFields lists the ProfileData fields that a non-first profile inherits
-// from the first profile when empty.
 var inheritedFields = []string{
 	"compensation",
 	"engagement",
@@ -40,8 +32,6 @@ var inheritedFields = []string{
 	"targetIndustries",
 }
 
-// IsInheritable reports whether the named JSON field is inherited from the first
-// profile when the profile has no value of its own.
 func IsInheritable(field string) bool {
 	for _, f := range inheritedFields {
 		if f == field {
@@ -51,9 +41,6 @@ func IsInheritable(field string) bool {
 	return false
 }
 
-// Effective returns a copy of p with every empty inheritable field filled from
-// base (the first profile). It is called at read time for every profile that is
-// not the first profile.
 func Effective(p, base ProfileData) ProfileData {
 	out := p
 	if out.Compensation == nil {
@@ -77,7 +64,6 @@ func Effective(p, base ProfileData) ProfileData {
 	return out
 }
 
-// GoalsView is what Fits you compares from an effective profile (see Effective).
 type GoalsView struct {
 	TargetRoles                      []string
 	Compensation                     *Compensation
@@ -86,13 +72,10 @@ type GoalsView struct {
 	PreferredLocations               []Location
 }
 
-// Goals returns the goals of an effective profile.
 func Goals(p ProfileData) GoalsView {
 	return GoalsView{p.TargetRoles, p.Compensation, p.Engagement, p.WorkModes, p.TimeZones, p.Hours, p.PreferredLocations}
 }
 
-// InheritedFields returns the set of field names that p inherits from base.
-// A field is inherited when p's own value is empty and base has a non-empty value.
 func InheritedFields(p, base ProfileData) []string {
 	var out []string
 	if p.Compensation == nil && base.Compensation != nil {
@@ -116,32 +99,18 @@ func InheritedFields(p, base ProfileData) []string {
 	return out
 }
 
-// Profile carries the search configuration of one profile.
 type Profile struct {
 	TargetRoles      []string
 	Keywords         []string
 	AllOf            []string
-	TargetIndustries []string // restricted to current vocabulary names; empty means no industry filter
+	TargetIndustries []string
 }
 
-// Filter is a SQL predicate fragment with its bound arguments.
-// SQL is always non-empty: "1=0" when no vacancy can match.
-// The vacancy table must be aliased "v" in the query that uses this filter.
 type Filter struct {
 	SQL  string
 	Args []any
 }
 
-// Visibility returns a Filter selecting vacancies that fit p's search
-// against a vacancy table aliased "v".
-//
-// Rules:
-//   - A profile with neither target roles nor keywords produces Filter{SQL:"1=0"}.
-//   - When both are present, a vacancy fits when any role matches the title AND
-//     any keyword matches the title, tags or text.
-//   - Every term in AllOf must also appear in the title, tags or text.
-//   - Terms are matched as whole words or phrases, ignoring case and punctuation,
-//     using the full-text index with padded normalised phrases.
 func Visibility(p Profile) Filter {
 	hasRoles := len(p.TargetRoles) > 0
 	hasKeywords := len(p.Keywords) > 0
@@ -217,22 +186,17 @@ func Visibility(p Profile) Filter {
 	return Filter{SQL: strings.Join(clauses, " AND "), Args: args}
 }
 
-// NormalizeProfileData makes empty sections absent in pd.
-// A section with no value set is stored as nil so non-first profiles can inherit
-// it from the first profile.
 func NormalizeProfileData(pd *ProfileData) {
 	pd.Compensation = normalizeCompensation(pd.Compensation)
 	pd.Hours = normalizeHours(pd.Hours)
 }
 
-// NormalizeMeData makes empty sections absent in me.
 func NormalizeMeData(me *MeData) {
 	me.Availability = normalizeAvailability(me.Availability)
 	me.CurrentLocation = normalizeLocation(me.CurrentLocation)
 	me.Demographics = normalizeDemographics(me.Demographics)
 }
 
-// normalizeCompensation returns nil when c has no value set.
 func normalizeCompensation(c *Compensation) *Compensation {
 	if c == nil {
 		return nil
@@ -245,7 +209,6 @@ func normalizeCompensation(c *Compensation) *Compensation {
 	return c
 }
 
-// normalizeDayRates returns nil when dr has no value set.
 func normalizeDayRates(dr *DayRates) *DayRates {
 	if dr == nil {
 		return nil
@@ -256,7 +219,6 @@ func normalizeDayRates(dr *DayRates) *DayRates {
 	return dr
 }
 
-// normalizeHours returns nil when h has no value set.
 func normalizeHours(h *Hours) *Hours {
 	if h == nil {
 		return nil
@@ -267,7 +229,6 @@ func normalizeHours(h *Hours) *Hours {
 	return h
 }
 
-// normalizeAvailability returns nil when a has no value set.
 func normalizeAvailability(a *Availability) *Availability {
 	if a == nil {
 		return nil
@@ -278,7 +239,6 @@ func normalizeAvailability(a *Availability) *Availability {
 	return a
 }
 
-// normalizeLocation returns nil when l has no meaningful value.
 func normalizeLocation(l *Location) *Location {
 	if l == nil {
 		return nil
@@ -289,7 +249,6 @@ func normalizeLocation(l *Location) *Location {
 	return l
 }
 
-// normalizeDemographics returns nil when d has no value set.
 func normalizeDemographics(d *Demographics) *Demographics {
 	if d == nil {
 		return nil
@@ -301,9 +260,6 @@ func normalizeDemographics(d *Demographics) *Demographics {
 	return d
 }
 
-// roleClause returns the SQL fragment and arguments for matching a target role
-// as a whole word in the vacancy title column of the full-text index.
-// The vacancy table must be aliased "v".
 func roleClause(role string) (string, []any) {
 	norm := listing.FTSNorm(role)
 	if strings.TrimSpace(norm) == "" {
@@ -313,9 +269,6 @@ func roleClause(role string) (string, []any) {
 	return `v.id IN (SELECT rowid FROM vacancy_fts WHERE vacancy_fts MATCH ?)`, []any{matchArg}
 }
 
-// termClause returns the SQL fragment and arguments for matching one term
-// as a whole word or phrase in the vacancy title, tags or text columns of
-// the full-text index. The vacancy table must be aliased "v".
 func termClause(term string) (string, []any) {
 	norm := listing.FTSNorm(term)
 	if strings.TrimSpace(norm) == "" {

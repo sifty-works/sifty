@@ -5,8 +5,6 @@ import (
 	"strings"
 )
 
-// ValidateMeData validates a full MeData record. It returns a list of
-// human-readable error messages, one per violation. An empty list means valid.
 func ValidateMeData(me MeData) []string {
 	var errs []string
 	errs = append(errs, validateSkills(me.Skills, me.AbsentSkills)...)
@@ -17,8 +15,6 @@ func ValidateMeData(me MeData) []string {
 	return errs
 }
 
-// ValidateProfileData validates the editable fields of a ProfileData record.
-// It returns a list of human-readable error messages.
 func ValidateProfileData(p ProfileData) []string {
 	var errs []string
 	if len([]rune(p.Headline)) > 160 {

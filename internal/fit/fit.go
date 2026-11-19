@@ -1,8 +1,3 @@
-// Package fit computes Fits you: a weighted mean of criteria comparing a
-// vacancy's conditions with a profile's goals, the four tiles of the vacancy
-// page and the bucket. Score is pure: no I/O, no clock, no model. The package
-// also owns the fit table, which stores the number for the lists, and the
-// background recomputation that keeps it current.
 package fit
 
 import (
@@ -16,48 +11,38 @@ import (
 	"github.com/sifty-works/sifty-server/internal/reading"
 )
 
-// ProfileView is what Fits you compares a vacancy with.
 type ProfileView struct {
 	Goals          candidate.GoalsView
-	Authorizations []candidate.WorkAuthorization // from My data
+	Authorizations []candidate.WorkAuthorization
 }
 
-// Rules are the weights by criterion and the exchange rates (value of one unit in EUR).
 type Rules struct{ Weights, Rates map[string]float64 }
 
-// Criteria names the criteria in the order of the breakdown; the weighted sum is
-// taken in this order, as the previous version took it, so equal inputs round alike.
 var Criteria = []string{"role", "money", "location", "remote_restriction", "work_mode", "engagement", "hours", "time_zone"}
 
-// States of a result.
 const (
 	Scored  = "scored"
 	NoText  = "no_text"
 	NoGoals = "no_goals"
 )
 
-// Texts say why a result has no number; "" is a result not computed yet.
 var Texts = map[string]string{
 	"":      "Not compared yet",
 	NoText:  "Full job description is unavailable",
 	NoGoals: "Your profile states no goals to compare",
 }
 
-// The lowest numbers of the Strong and Partial buckets.
 const (
 	StrongFrom  = 75
 	PartialFrom = 55
 )
 
-// Criterion is one compared criterion; a criterion that cannot be compared is not Known and counts 0.5.
 type Criterion struct {
 	Name            string
 	Weight, Utility float64
 	Known           bool
 }
 
-// Tile is one tile of the vacancy page: the vacancy's value, a line comparing it
-// with the goal, and ✓, ✕ or ?.
 type Tile struct {
 	Name    string `json:"name"`
 	Value   string `json:"value"`
@@ -65,17 +50,16 @@ type Tile struct {
 	Verdict string `json:"verdict"`
 }
 
-// Fit is Fits you of one vacancy for one profile.
 type Fit struct {
 	State    string
-	Score    int    // 0 to 100 when State is Scored
-	Bucket   string // Strong, Partial, Weak or Not scored
-	Text     string // why there is no number
+	Score    int
+	Bucket   string
+	Text     string
 	Criteria []Criterion
 	Tiles    []Tile
 }
 
-const na = -1.0 // the utility of a criterion that cannot be compared
+const na = -1.0
 
 var tiles = []struct {
 	name     string
@@ -83,7 +67,6 @@ var tiles = []struct {
 }{{"Money", []string{"money"}}, {"Location", []string{"location", "remote_restriction", "time_zone"}},
 	{"Work mode", []string{"work_mode"}}, {"Contract", []string{"engagement", "hours"}}}
 
-// Score computes Fits you. A criterion with weight zero is left out.
 func Score(p ProfileView, v reading.VacancyReading, r Rules) Fit {
 	g := p.Goals
 	var ps []places.Place
@@ -114,7 +97,7 @@ func Score(p ProfileView, v reading.VacancyReading, r Rules) Fit {
 		u["time_zone"] = overlap(g.TimeZones, zones)
 	}
 	if u["work_mode"] = overlap(g.WorkModes, v.WorkModes); u["work_mode"] == 1 && has(v.WorkModes, "remote") && !open && has(g.WorkModes, "remote") {
-		u["work_mode"] = na // whether remote work is open to the user is the remote restriction's verdict
+		u["work_mode"] = na
 	}
 	f := Fit{Bucket: "Not scored"}
 	var num, den float64
@@ -145,7 +128,6 @@ func Score(p ProfileView, v reading.VacancyReading, r Rules) Fit {
 	return f
 }
 
-// Bucket names the bucket of a number: Strong, Partial or Weak.
 func Bucket(score int) string {
 	switch {
 	case score >= StrongFrom:
@@ -156,7 +138,6 @@ func Bucket(score int) string {
 	return "Weak"
 }
 
-// verdict is ✕ when a criterion is a mismatch, ✓ when every comparable one matches, else ?.
 func verdict(cs []Criterion, names []string) string {
 	out := "?"
 	for _, c := range cs {
@@ -170,7 +151,6 @@ func verdict(cs []Criterion, names []string) string {
 	return out
 }
 
-// role is the best token overlap (F1) of the title with a target role.
 func role(targets []string, title string) float64 {
 	best := na
 	tt := tokens(title)
@@ -202,7 +182,6 @@ func tokens(s string) []string {
 	return out
 }
 
-// money is min(1, top of the range / minimum) after conversion.
 func money(c *candidate.Compensation, m *reading.Money, rates map[string]float64) float64 {
 	if c == nil || c.CashMin == nil || *c.CashMin <= 0 || m == nil || m.Max <= 0 || m.Currency == "" ||
 		(m.Tax == "net") != strings.EqualFold(c.GrossNet, "net") {
@@ -214,8 +193,6 @@ func money(c *candidate.Compensation, m *reading.Money, rates map[string]float64
 	return na
 }
 
-// convert turns an amount of the vacancy's currency and period into the
-// user's; it returns 0 when there is no rate.
 func convert(x float64, m *reading.Money, cur, period string, rates map[string]float64) float64 {
 	if cur != "" && !strings.EqualFold(cur, m.Currency) {
 		from, to := rates[m.Currency], rates[strings.ToUpper(cur)]
@@ -234,7 +211,6 @@ func perYear(period string) float64 {
 	return 1
 }
 
-// location compares the vacancy's places with the preferred locations.
 func location(prefs []candidate.Location, ps []places.Place, open bool) float64 {
 	if len(prefs) == 0 {
 		return na
@@ -260,9 +236,6 @@ func location(prefs []candidate.Location, ps []places.Place, open bool) float64 
 	return na
 }
 
-// restriction checks restricted remote work against the user's work
-// authorizations: covered by an eligible one, not covered when the user states
-// authorizations for the countries and none is eligible, unknown otherwise.
 func restriction(auths []candidate.WorkAuthorization, ps []places.Place, remote, open, known bool) float64 {
 	switch {
 	case !remote:
@@ -288,7 +261,6 @@ func restriction(auths []candidate.WorkAuthorization, ps []places.Place, remote,
 	return out
 }
 
-// hours compares full-time or part-time and, for part-time, the weekly hours.
 func hours(h *candidate.Hours, vh *reading.Hours) float64 {
 	if h == nil || h.Mode == "" || vh == nil || vh.Mode == "" {
 		return na
@@ -311,8 +283,6 @@ func hours(h *candidate.Hours, vh *reading.Hours) float64 {
 	return 1
 }
 
-// overlap is 1 when the lists share a value, 0 when they do not, and not
-// comparable when either is empty.
 func overlap(a, b []string) float64 {
 	if len(a) == 0 || len(b) == 0 {
 		return na
@@ -334,7 +304,6 @@ func has(xs []string, x string) bool {
 	return false
 }
 
-// texts returns the values and comparison lines of the four tiles.
 func texts(p ProfileView, v reading.VacancyReading, open bool, rates map[string]float64) ([]string, []string) {
 	g := p.Goals
 	val := []string{"Not stated", "Not stated", list(v.WorkModes, "Not stated"), "Not stated"}
@@ -397,7 +366,6 @@ func per(period string) string {
 	return " a " + period
 }
 
-// amount writes a positive amount with thousands separators, or nothing.
 func amount(x float64) string {
 	if x <= 0 {
 		return ""

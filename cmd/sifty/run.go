@@ -8,11 +8,8 @@ import (
 	"os"
 )
 
-// version is set at build time via -ldflags "-X main.version=...".
 var version = "dev"
 
-// run is the testable entry point for the sifty binary.
-// It parses args, selects a command, and executes it.
 func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, usage())
@@ -39,13 +36,11 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 }
 
-// cmdVersion prints the build version.
 func cmdVersion(stdout io.Writer) error {
 	fmt.Fprintln(stdout, version)
 	return nil
 }
 
-// cmdConfig dispatches config sub-commands.
 func cmdConfig(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, "usage: sifty config <subcommand>")
@@ -60,23 +55,19 @@ func cmdConfig(args []string, stdout, stderr io.Writer) error {
 	}
 }
 
-// serveFlags holds the parsed flags for the serve command.
-// port == -1 means --port was not given (use the settings value).
-// port == 0 means --port 0 was given explicitly (take a free port).
 type serveFlags struct {
 	dataDir   string
-	port      int // -1 when not set
+	port      int
 	offline   bool
 	debug     bool
-	replayDir string // non-empty when --replay is given
+	replayDir string
 }
 
-// parseServeFlags parses serve command flags and returns them.
 func parseServeFlags(args []string) (serveFlags, error) {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 
-	f := serveFlags{port: -1} // -1 = not provided
+	f := serveFlags{port: -1}
 	var portVal int
 	fs.StringVar(&f.dataDir, "data-dir", "", "data folder (default: $SIFTY_DATA_DIR, then ./data)")
 	fs.IntVar(&portVal, "port", 0, "listen port (0 = take a free port; omit = use settings or default 7373)")
@@ -88,7 +79,6 @@ func parseServeFlags(args []string) (serveFlags, error) {
 		return f, err
 	}
 
-	// Record portVal only when --port was explicitly given.
 	fs.Visit(func(flag *flag.Flag) {
 		if flag.Name == "port" {
 			f.port = portVal
@@ -111,8 +101,6 @@ Commands:
 Run 'sifty serve --help' for serve options.`
 }
 
-// resolveDataDir returns the absolute data directory, chosen by flags,
-// then SIFTY_DATA_DIR, then ./data.
 func resolveDataDir(flagValue string) string {
 	if flagValue != "" {
 		return flagValue

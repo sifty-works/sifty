@@ -1,7 +1,3 @@
-// Package config loads, validates and provides defaults for the application
-// settings file (<data>/sifty.yaml). Every key is optional; missing keys
-// take their default values. Only the keys known in this package are allowed;
-// an unknown key is an error.
 package config
 
 import (
@@ -17,22 +13,14 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Duration is a time.Duration that serializes as a Go duration string in YAML,
-// for example "3h" or "15m".
 type Duration time.Duration
 
-// String returns the duration in the shortest human-readable form,
-// for example "3h", "1h30m", or "15m".
 func (d Duration) String() string { return shortDuration(time.Duration(d)) }
 
-// MarshalYAML renders the duration in the shortest human-readable form.
 func (d Duration) MarshalYAML() (interface{}, error) {
 	return shortDuration(time.Duration(d)), nil
 }
 
-// shortDuration formats d as the shortest form a user would type:
-// whole hours ("3h"), whole minutes ("15m"), or hours+minutes ("1h30m").
-// Durations with a sub-minute component fall back to time.Duration.String().
 func shortDuration(d time.Duration) string {
 	h := d / time.Hour
 	rem := d % time.Hour
@@ -50,7 +38,6 @@ func shortDuration(d time.Duration) string {
 	}
 }
 
-// UnmarshalYAML parses a duration string such as "3h" from YAML.
 func (d *Duration) UnmarshalYAML(value *yaml.Node) error {
 	var s string
 	if err := value.Decode(&s); err != nil {
@@ -64,14 +51,11 @@ func (d *Duration) UnmarshalYAML(value *yaml.Node) error {
 	return nil
 }
 
-// CollectionConfig holds the automatic collection settings.
 type CollectionConfig struct {
 	Auto     bool     `yaml:"auto"`
 	Interval Duration `yaml:"interval"`
 }
 
-// UnmarshalYAML applies defaults for collection before decoding, so that
-// keys absent from the YAML retain their default values.
 func (c *CollectionConfig) UnmarshalYAML(value *yaml.Node) error {
 	type rawCollection CollectionConfig
 	r := &rawCollection{Auto: true, Interval: Duration(3 * time.Hour)}
@@ -82,15 +66,12 @@ func (c *CollectionConfig) UnmarshalYAML(value *yaml.Node) error {
 	return nil
 }
 
-// SourceConfig describes one collection source.
 type SourceConfig struct {
 	Name    string `yaml:"name,omitempty"`
 	URL     string `yaml:"url"`
 	Enabled bool   `yaml:"enabled"`
 }
 
-// UnmarshalYAML applies defaults for a source before decoding, so that
-// the absent enabled key defaults to true.
 func (s *SourceConfig) UnmarshalYAML(value *yaml.Node) error {
 	type rawSource SourceConfig
 	r := &rawSource{Enabled: true}
@@ -101,21 +82,15 @@ func (s *SourceConfig) UnmarshalYAML(value *yaml.Node) error {
 	return nil
 }
 
-// Config holds the application settings loaded from sifty.yaml.
-// All fields are optional; Defaults returns the baseline.
 type Config struct {
-	Port       int              `yaml:"port"`
-	Debug      bool             `yaml:"debug"`
-	Collection CollectionConfig `yaml:"collection"`
-	Sources    []SourceConfig   `yaml:"sources"`
-	// Weights of the Fits you criteria; Rates value one unit of a currency in EUR.
-	// A key that is absent keeps its default.
-	Weights map[string]float64 `yaml:"weights"`
-	Rates   map[string]float64 `yaml:"rates"`
+	Port       int                `yaml:"port"`
+	Debug      bool               `yaml:"debug"`
+	Collection CollectionConfig   `yaml:"collection"`
+	Sources    []SourceConfig     `yaml:"sources"`
+	Weights    map[string]float64 `yaml:"weights"`
+	Rates      map[string]float64 `yaml:"rates"`
 }
 
-// Defaults returns a Config with every field set to its default value.
-// This is the single source of defaults for the application.
 func Defaults() Config {
 	return Config{
 		Port:  7373,
@@ -131,10 +106,6 @@ func Defaults() Config {
 	}
 }
 
-// SourceKey returns the canonical key for a source URL. Two URLs that produce
-// the same key are considered duplicates. The key is the scheme and host in
-// lowercase with a leading "www." stripped, the path without a trailing slash,
-// the query kept, and the fragment dropped.
 func SourceKey(rawURL string) (string, error) {
 	u, err := url.Parse(rawURL)
 	if err != nil {
@@ -158,8 +129,6 @@ func SourceKey(rawURL string) (string, error) {
 	return key, nil
 }
 
-// load reads path, parses it as YAML, merges with defaults and validates it.
-// If path does not exist, the defaults are returned with no error.
 func load(path string) (Config, error) {
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
@@ -171,7 +140,6 @@ func load(path string) (Config, error) {
 	return parse(data)
 }
 
-// parse decodes YAML bytes into a Config, rejecting unknown keys.
 func parse(data []byte) (Config, error) {
 	c := Defaults()
 
@@ -190,7 +158,6 @@ func parse(data []byte) (Config, error) {
 		return c, fmt.Errorf("settings file must be a YAML mapping")
 	}
 
-	// Check for unknown top-level keys.
 	knownTop := map[string]bool{
 		"port": true, "debug": true, "collection": true, "sources": true, "weights": true, "rates": true,
 	}
@@ -201,7 +168,6 @@ func parse(data []byte) (Config, error) {
 		}
 	}
 
-	// Check for unknown keys under collection:.
 	knownCollection := map[string]bool{"auto": true, "interval": true}
 	for i := 0; i+1 < len(root.Content); i += 2 {
 		if root.Content[i].Value != "collection" {
@@ -219,7 +185,6 @@ func parse(data []byte) (Config, error) {
 		}
 	}
 
-	// Check for unknown keys within each source entry.
 	knownSource := map[string]bool{"name": true, "url": true, "enabled": true}
 	for i := 0; i+1 < len(root.Content); i += 2 {
 		if root.Content[i].Value != "sources" {
@@ -252,8 +217,6 @@ func parse(data []byte) (Config, error) {
 	return c, nil
 }
 
-// Validate checks that the config values are in range.
-// Errors are worded for the user and passed through to the UI.
 func Validate(c Config) error {
 	if c.Port < 0 || c.Port > 65535 {
 		return fmt.Errorf("port: must be between 0 and 65535, got %d", c.Port)
@@ -291,8 +254,6 @@ func Validate(c Config) error {
 	return nil
 }
 
-// DefaultsYAML returns the default settings as a YAML file text, suitable
-// for printing with 'sifty config defaults'.
 func DefaultsYAML() string {
 	c := Defaults()
 	var buf bytes.Buffer

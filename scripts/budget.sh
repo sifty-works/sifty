@@ -1,24 +1,18 @@
 #!/usr/bin/env bash
-# Prints budget measures next to the targets in docs/ARCHITECTURE.md and
-# exits non-zero when one is exceeded. Lines are non-blank lines that are not
-# // comments. Packages whose tests are longer than their code are listed.
-# Later cards add further measures (database size, model calls, etc.).
 set -euo pipefail
 
 cd "$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"
 
-# Files of this working copy only: tracked and new, never other worktrees.
 files() {
   git ls-files --cached --others --exclude-standard -- "$@" \
   | grep -v '^internal/importv1/' || true
 }
 
 count() {
-  # Reads file names on stdin and prints their counted lines.
   local n=0 f
   while IFS= read -r f; do
     [ -f "$f" ] || continue
-    n=$((n + $(grep -cv -e '^[[:space:]]*$' -e '^[[:space:]]*//' "$f" || true)))
+    n=$((n + $(grep -cv '^[[:space:]]*$' "$f" || true)))
   done
   echo "$n"
 }
@@ -37,7 +31,6 @@ row "Backend code (lines)" "$be" "16000" "$(mark "$be" 16000)"
 row "Backend tests (lines)" "$be_test" "≤ code" "$(mark "$be_test" "$be")"
 [ "$be" -gt 16000 ] || [ "$be_test" -gt "$be" ] && fail=1
 
-# Per package, for information: packages whose tests are longer than their code.
 for dir in $(files '*_test.go' | xargs -n1 dirname | sort -u); do
   code=$(files "$dir/*.go" | grep -v '_test\.go$' | grep -v "^$dir/.*/" | count)
   tests=$(files "$dir/*_test.go" | grep -v "^$dir/.*/" | count)
@@ -46,8 +39,6 @@ for dir in $(files '*_test.go' | xargs -n1 dirname | sort -u); do
   fi
 done
 
-# List API measure: run the measure test and print p95 times next to the 50 ms budget.
-# Going over is the owner's decision (see docs/ARCHITECTURE.md, Search).
 printf "\n%-40s %10s %10s\n" "List API measure" "Actual" "Budget"
 printf "%-40s %10s %10s\n" "----------------" "------" "------"
 measure_out=$(SIFTY_MEASURE=1 go test -v -run TestListMeasure -count=1 \

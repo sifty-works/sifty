@@ -1,5 +1,3 @@
-# Words code reads conditions by.
-# labels: labels of lines ("Salary: …") by the condition the line states.
 labels:
   money: [salary, base salary, base pay, cash, cash compensation, compensation, annual salary,
     salary range, pay range, total cash]
@@ -11,7 +9,6 @@ labels:
   engagement: [employment type, engagement, contract type]
   hours: [hours, working hours, time commitment]
   zone: [timezone, time zone]
-# modes: work modes and the words that state them, alone in a value or a location part.
 modes:
   remote: [remote, remote only, fully remote, remote-first, remote first, telecommute, telecommuting, telework, teleworking]
   hybrid: [hybrid]

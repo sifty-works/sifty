@@ -32,14 +32,13 @@ import (
 )
 
 const (
-	logMaxBytes  = 10 << 20 // 10 MB
+	logMaxBytes  = 10 << 20
 	lockFileName = "sifty.lock"
 	logDir       = "logs"
 	logFileName  = "sifty.log"
 	dbFileName   = "sifty.db"
 )
 
-// cmdServe implements 'sifty serve'.
 func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	flags, err := parseServeFlags(args)
 	if err != nil {
@@ -47,18 +46,15 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		return err
 	}
 
-	// 1. Resolve and make absolute the data directory.
 	dataDir, err := filepath.Abs(resolveDataDir(flags.dataDir))
 	if err != nil {
 		return fmt.Errorf("resolving data dir: %w", err)
 	}
 
-	// 2. Create the data folder with mode 0700 if it does not exist.
 	if err := os.MkdirAll(dataDir, 0700); err != nil {
 		return fmt.Errorf("creating data dir %s: %w", dataDir, err)
 	}
 
-	// 3. Take the lock.
 	lockPath := filepath.Join(dataDir, lockFileName)
 	lockFile, err := acquireLock(lockPath)
 	if err != nil {
@@ -67,14 +63,12 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	}
 	defer lockFile.Close()
 
-	// 4. Rotate and open the log.
 	logger, logClose, err := openLog(dataDir, stderr)
 	if err != nil {
 		return fmt.Errorf("opening log: %w", err)
 	}
 	defer logClose()
 
-	// 5. Open settings store.
 	settingsPath := filepath.Join(dataDir, "sifty.yaml")
 	store, err := config.Open(settingsPath)
 	if err != nil {
@@ -83,9 +77,6 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	}
 	cfg := store.Get()
 
-	// 6. Apply flag overrides.
-	// flags.port == -1 means --port was not given; keep the settings value.
-	// flags.port >= 0 means it was given explicitly (0 = take a free port).
 	if flags.port >= 0 {
 		cfg.Port = flags.port
 	}
@@ -94,7 +85,6 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	}
 	offline := flags.offline
 
-	// 7. Open the database.
 	dbPath := filepath.Join(dataDir, dbFileName)
 	database, err := db.Open(dbPath, db.Migrations)
 	if err != nil {
@@ -103,7 +93,6 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	}
 	defer database.Close()
 
-	// 7b. Load the industry vocabulary.
 	vocabPath := filepath.Join(dataDir, "vocab", "industries.yaml")
 	vocab, err := industry.LoadOrDefault(vocabPath)
 	if err != nil {
@@ -111,7 +100,6 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		vocab = industry.DefaultVocab()
 	}
 
-	// 8. Build the fetcher: replay dir overrides the real client.
 	var fetcher fetch.Fetcher
 	if flags.replayDir != "" {
 		rm, err := fetchtest.Load(flags.replayDir)
@@ -127,10 +115,6 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		})
 	}
 
-	// 9. Build the catalogue, runner and collector.
-	// vocabRef holds the active vocabulary; it is replaced atomically when
-	// PUT /api/industries saves a new one so that subsequent Upsert calls and
-	// the assign_industries job always use the latest version.
 	vocabRef := &vocab
 	assignFn := func(title, tags, text string) []string {
 		return industry.Assign(title, tags, text, *vocabRef)
@@ -138,7 +122,6 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	cat := catalog.New(database, time.Now, assignFn)
 	r := runner.New(database, map[string]int{"browser": 1, "net": 4, "cpu": 1}, time.Now, logger)
 
-	// Register the assign_industries job kind.
 	r.Register(runner.Kind{
 		Name:   "assign_industries",
 		Resume: true,
@@ -147,10 +130,8 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		},
 	})
 
-	// Register the recompute_fit job kind and queue it at start, so results
-	// made out of date while the server was stopped are recomputed.
 	rules := func() fit.Rules { c := store.Get(); return fit.Rules{Weights: c.Weights, Rates: c.Rates} }
-	recomputeFit := func() { r.Enqueue(runner.Spec{Kind: "recompute_fit"}) } //nolint:errcheck
+	recomputeFit := func() { r.Enqueue(runner.Spec{Kind: "recompute_fit"}) }
 	r.Register(runner.Kind{
 		Name:   "recompute_fit",
 		Resume: true,
@@ -165,7 +146,6 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	})
 	recomputeFit()
 
-	// Register the retention job kind.
 	r.Register(runner.Kind{
 		Name:   "retention",
 		Resume: true,
@@ -178,19 +158,16 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	col := collect.New(store, cat, r, fetcher, database, blocked, nil, logger)
 	col.Register()
 
-	// Queue retention daily using the same five-minute ticker as collect.
 	col.OnTick = func(now time.Time) {
 		if retentionDue(now, r) {
-			r.Enqueue(runner.Spec{Kind: "retention"}) //nolint:errcheck
+			r.Enqueue(runner.Spec{Kind: "retention"})
 		}
 	}
 
-	// Queue retention at start when it has not run in the last 24 hours.
 	if retentionDue(time.Now(), r) {
-		r.Enqueue(runner.Spec{Kind: "retention"}) //nolint:errcheck
+		r.Enqueue(runner.Spec{Kind: "retention"})
 	}
 
-	// 10. Listen.
 	addr := fmt.Sprintf("127.0.0.1:%d", cfg.Port)
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
@@ -230,7 +207,7 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 			return err
 		}
 		*vocabRef = newVocab
-		r.Enqueue(runner.Spec{Kind: "assign_industries", Subject: "", Priority: 0}) //nolint:errcheck
+		r.Enqueue(runner.Spec{Kind: "assign_industries", Subject: "", Priority: 0})
 		return nil
 	}
 
@@ -279,10 +256,9 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	logger.Info(listenMsg)
 	fmt.Fprintln(stdout, listenMsg)
 
-	// Start runner and ticker; both stop when bgCtx is cancelled on shutdown.
 	bgCtx, bgCancel := context.WithCancel(context.Background())
 	defer bgCancel()
-	go r.Start(bgCtx) //nolint:errcheck
+	go r.Start(bgCtx)
 	go col.Ticker(bgCtx)
 
 	serveErr := make(chan error, 1)
@@ -304,9 +280,6 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	}
 }
 
-// acquireLock opens (or creates) the lock file and acquires an exclusive
-// non-blocking advisory lock. Returns the open file on success; the caller
-// must keep it open for the life of the process.
 func acquireLock(path string) (*os.File, error) {
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
@@ -319,8 +292,6 @@ func acquireLock(path string) (*os.File, error) {
 	return f, nil
 }
 
-// openLog sets up the dual-writer logger (stderr + log file) and returns it
-// along with a cleanup function. It rotates the log file if it exceeds 10 MB.
 func openLog(dataDir string, stderr io.Writer) (*slog.Logger, func(), error) {
 	logsDir := filepath.Join(dataDir, logDir)
 	if err := os.MkdirAll(logsDir, 0700); err != nil {
@@ -329,10 +300,9 @@ func openLog(dataDir string, stderr io.Writer) (*slog.Logger, func(), error) {
 
 	logPath := filepath.Join(logsDir, logFileName)
 
-	// Rotate if over 10 MB.
 	if info, err := os.Stat(logPath); err == nil && info.Size() > logMaxBytes {
 		rotated := filepath.Join(logsDir, logFileName+".1")
-		os.Rename(logPath, rotated) //nolint:errcheck
+		os.Rename(logPath, rotated)
 	}
 
 	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
@@ -347,11 +317,8 @@ func openLog(dataDir string, stderr io.Writer) (*slog.Logger, func(), error) {
 	return logger, func() { logFile.Close() }, nil
 }
 
-// runRetention removes expired vacancies that have no application.
-// It permanently deletes each one using catalog.Delete so tombstone keys are
-// written, keeping those addresses away from future collection runs.
 func runRetention(ctx context.Context, j *runner.Job, cat *catalog.Catalog, log *slog.Logger, now time.Time) error {
-	cutoff := now.UTC().Add(-24 * time.Hour) // expired more than one day ago
+	cutoff := now.UTC().Add(-24 * time.Hour)
 
 	ids, err := cat.RetainableExpired(ctx, cutoff)
 	if err != nil {
@@ -372,8 +339,6 @@ func runRetention(ctx context.Context, j *runner.Job, cat *catalog.Catalog, log 
 	return nil
 }
 
-// retentionDue reports whether a retention run should start. It returns true
-// when no retention job was created in the last 24 hours.
 func retentionDue(now time.Time, r *runner.Runner) bool {
 	last, ok := r.Last("retention")
 	if !ok {
@@ -382,8 +347,6 @@ func retentionDue(now time.Time, r *runner.Runner) bool {
 	return now.After(last.Created.Add(24 * time.Hour))
 }
 
-// runAssignIndustries reassigns industries to every vacancy using the current
-// vocabulary. It runs on the cpu lane and processes vacancies in batches of 200.
 func runAssignIndustries(ctx context.Context, j *runner.Job, cat *catalog.Catalog, vocabRef *industry.Vocab) error {
 	rel, err := j.Lane(ctx, "cpu")
 	if err != nil {
@@ -416,7 +379,7 @@ func runAssignIndustries(ctx context.Context, j *runner.Job, cat *catalog.Catalo
 				return ctx.Err()
 			}
 			var tags []string
-			json.Unmarshal([]byte(row.TagsJSON), &tags) //nolint:errcheck
+			json.Unmarshal([]byte(row.TagsJSON), &tags)
 			tagsText := strings.Join(tags, " ")
 			var plainText string
 			if len(row.Body) > 0 {

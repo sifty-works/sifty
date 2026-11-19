@@ -1,5 +1,3 @@
-// Package importv1 reads a copy of the old application database and writes
-// into a new, empty data folder. It is one-time code, not counted in budgets.
 package importv1
 
 import (
@@ -26,7 +24,7 @@ import (
 	"github.com/sifty-works/sifty-server/internal/industry"
 	"github.com/sifty-works/sifty-server/internal/listing"
 	"gopkg.in/yaml.v3"
-	_ "modernc.org/sqlite" // driver
+	_ "modernc.org/sqlite"
 )
 
 const (
@@ -36,22 +34,16 @@ const (
 	tempDBName    = ".import-tmp.db"
 )
 
-// --- report types ---
-
-// dropReason records one dropped item.
 type dropReason struct {
 	ID     int64
 	Reason string
 }
 
-// dupPair records a duplicate canonical address: KeptID keeps the vacancy,
-// AliasedID becomes an alias.
 type dupPair struct {
 	KeptID    int64
 	AliasedID int64
 }
 
-// importReport accumulates statistics for the final report.
 type importReport struct {
 	VacanciesRead    int
 	VacanciesWritten int
@@ -60,7 +52,7 @@ type importReport struct {
 
 	SightingsRead    int
 	SightingsWritten int
-	SightingsSkipped int // duplicate canonical address
+	SightingsSkipped int
 
 	AliasesRead    int
 	AliasesWritten int
@@ -80,27 +72,27 @@ type importReport struct {
 	LastRunWritten bool
 
 	ExclusionsWritten  int
-	ProfileSearchLines []string // one line per imported profile: id, name and imported search fields
+	ProfileSearchLines []string
 
 	NonImportedKeys []string
 
 	ProfilesRead    int
 	ProfilesWritten int
-	ProfilesDropped int // archived profiles
+	ProfilesDropped int
 
 	StagesRead      int
-	StagesNew       int // kept as inbox (no decision row)
+	StagesNew       int
 	StagesShortlist int
 	StagesApplied   int
 	StagesDismissed int
-	StagesDropped   int // vacancy not imported or profile archived
+	StagesDropped   int
 
-	StageDifferences []string // per-vacancy differences: jobs.status vs first profile
+	StageDifferences []string
 
 	ApplicationsRead    int
 	ApplicationsWritten int
 
-	ReadMarksBefore  int // vacancies with a non-empty seen_at in old DB
+	ReadMarksBefore  int
 	ReadMarksWritten int
 
 	MeWritten bool
@@ -108,29 +100,24 @@ type importReport struct {
 	ActiveProfileSet bool
 
 	PhotoCopied  bool
-	PhotoSkipped string // non-empty when present but skipped, with reason
+	PhotoSkipped string
 
 	QARead    int
 	QAWritten int
 
-	// Legacy folding: one line per folded or dropped legacy value.
-	LegacyFolded  []string // "profile N (<label>): appended to Other requirements"
-	LegacyDropped []string // "profile N (<label>): dropped (structured value present)"
+	LegacyFolded  []string
+	LegacyDropped []string
 
-	SettingsCarried []string         // settings of the previous version that differ from the defaults
-	Fit             fitComparison    // Fits you compared with the previous version
-	profileIDs      map[string]int64 // old profile id → new id
+	SettingsCarried []string
+	Fit             fitComparison
+	profileIDs      map[string]int64
 }
 
-// --- old user / QA / settings row types ---
-
-// oldUser holds the single users row from the old database.
 type oldUser struct {
 	id   string
-	data string // JSON
+	data string
 }
 
-// oldQA holds one row from profile_qa.
 type oldQA struct {
 	id        string
 	question  string
@@ -139,7 +126,6 @@ type oldQA struct {
 	updatedAt string
 }
 
-// oldUserData is the JSON structure of the users.data column.
 type oldUserData struct {
 	Identity struct {
 		DisplayName string `json:"displayName"`
@@ -189,7 +175,7 @@ type oldUserData struct {
 	Availability struct {
 		NoticeValue  json.Number `json:"noticeValue"`
 		NoticeUnit   string      `json:"noticeUnit"`
-		NoticePeriod string      `json:"noticePeriod"` // free-text, old format
+		NoticePeriod string      `json:"noticePeriod"`
 		StartDate    string      `json:"startDate"`
 		NoticeSet    bool        `json:"noticeSet"`
 	} `json:"availability"`
@@ -229,7 +215,6 @@ type oldUserData struct {
 	TargetIndustries     []string `json:"targetIndustries"`
 }
 
-// oldProfileData is the JSON structure of the user_profiles.data column.
 type oldProfileData struct {
 	TargetIndustries []string `json:"targetIndustries"`
 	Compensation     *struct {
@@ -280,8 +265,6 @@ type oldProfileData struct {
 	Dealbreakers []interface{} `json:"dealbreakers"`
 }
 
-// --- old schema row types ---
-
 type oldJob struct {
 	id                int64
 	identity          string
@@ -299,24 +282,24 @@ type oldJob struct {
 	lastSeen          string
 	tags              string
 	descriptionHTML   sql.NullString
-	status            string         // used for comparison with first profile only
-	appliedAt         sql.NullString // becomes an application row when non-empty
-	seenAt            sql.NullString // becomes vacancy.seen_at
+	status            string
+	appliedAt         sql.NullString
+	seenAt            sql.NullString
 }
 
 type oldProfile struct {
 	id         string
-	name       string // the name column of the old user_profiles table
-	headline   string // the headline column of the old user_profiles table
-	data       string // JSON: search fields and other profile data
+	name       string
+	headline   string
+	data       string
 	createdAt  string
-	archivedAt sql.NullString // non-NULL means archived
+	archivedAt sql.NullString
 }
 
 type oldStage struct {
 	profileID     string
 	jobID         int64
-	status        string // new|saved|rejected|applied
+	status        string
 	outcomeReason sql.NullString
 	updatedAt     string
 }
@@ -339,16 +322,11 @@ type oldConfig struct {
 		URL     string `yaml:"url"`
 		Enabled bool   `yaml:"enabled"`
 	} `yaml:"sites"`
-	// remaining top-level keys are captured to report as not imported
 }
 
-// Import reads the old database from fromDir and writes into the new database
-// at dbPath with settings at settingsPath. The data directory is the parent of
-// dbPath. Progress and the final report are written to out.
 func Import(ctx context.Context, fromDir, dbPath, settingsPath string, out io.Writer) error {
 	dataDir := filepath.Dir(dbPath)
 
-	// Refuse a non-empty target.
 	if info, err := os.Stat(dataDir); err == nil && info.IsDir() {
 		entries, err := os.ReadDir(dataDir)
 		if err != nil {
@@ -359,7 +337,6 @@ func Import(ctx context.Context, fromDir, dbPath, settingsPath string, out io.Wr
 		}
 	}
 
-	// Create target folder.
 	if err := os.MkdirAll(dataDir, 0700); err != nil {
 		return fmt.Errorf("creating target folder: %w", err)
 	}
@@ -376,7 +353,6 @@ func Import(ctx context.Context, fromDir, dbPath, settingsPath string, out io.Wr
 }
 
 func runImport(ctx context.Context, fromDir, dbPath, settingsPath, dataDir string, out io.Writer) error {
-	// Open old DB read-only.
 	oldDBPath := filepath.Join(fromDir, oldDBFile)
 	oldDSN := "file:" + oldDBPath + "?mode=ro"
 	oldDB, err := sql.Open("sqlite", oldDSN)
@@ -385,7 +361,6 @@ func runImport(ctx context.Context, fromDir, dbPath, settingsPath, dataDir strin
 	}
 	defer oldDB.Close()
 
-	// VACUUM INTO temp file in target folder.
 	tempPath := filepath.Join(dataDir, tempDBName)
 	if _, err := oldDB.ExecContext(ctx, "VACUUM INTO ?", tempPath); err != nil {
 		return fmt.Errorf("copying old database: %w", err)
@@ -393,7 +368,6 @@ func runImport(ctx context.Context, fromDir, dbPath, settingsPath, dataDir strin
 	oldDB.Close()
 	defer os.Remove(tempPath)
 
-	// Open copy and check version.
 	copyDB, err := sql.Open("sqlite", tempPath)
 	if err != nil {
 		return fmt.Errorf("opening database copy: %w", err)
@@ -408,28 +382,23 @@ func runImport(ctx context.Context, fromDir, dbPath, settingsPath, dataDir strin
 		return fmt.Errorf("Unknown database version %d; this import reads version 43.", version)
 	}
 
-	// Open new database.
 	newDB, err := db.Open(dbPath, db.Migrations)
 	if err != nil {
 		return fmt.Errorf("opening new database: %w", err)
 	}
 	defer newDB.Close()
 
-	// Open settings store.
 	store, err := config.Open(settingsPath)
 	if err != nil {
 		return fmt.Errorf("opening settings: %w", err)
 	}
 
-	// Load old search.yaml.
 	oldCfg, nonImportedKeys, err := loadOldConfig(filepath.Join(fromDir, oldConfigFile))
 	if err != nil {
-		// Missing config is not fatal.
 		oldCfg = &oldConfig{}
 		nonImportedKeys = nil
 	}
 
-	// Run the import, assigning industries using the default vocabulary.
 	defaultVocab := industry.DefaultVocab()
 	assignFn := func(title, tags, text string) []string {
 		return industry.Assign(title, tags, text, defaultVocab)
@@ -447,12 +416,10 @@ func runImport(ctx context.Context, fromDir, dbPath, settingsPath, dataDir strin
 		return fmt.Errorf("comparing Fits you: %w", err)
 	}
 
-	// Photo must be copied after the transaction because it uses the filesystem.
 	if photoErr := importPhoto(fromDir, dataDir, report); photoErr != nil {
 		report.PhotoSkipped = "error reading photo: " + photoErr.Error()
 	}
 
-	// Write report.
 	reportText := formatReport(report)
 	fmt.Fprint(out, reportText)
 	reportPath := filepath.Join(dataDir, "import-report.txt")
@@ -463,13 +430,8 @@ func runImport(ctx context.Context, fromDir, dbPath, settingsPath, dataDir strin
 	return nil
 }
 
-// doImport runs the full import inside transactions and returns the report.
-// assign is called to assign industries to each imported vacancy; nil means no
-// assignment (the assign_industries job will assign them on the next server start).
 func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.Store, oldCfg *oldConfig, assign func(title, tags, text string) []string) (*importReport, error) {
 	report := &importReport{}
-
-	// --- Read old data ---
 
 	jobs, err := readJobs(ctx, copyDB)
 	if err != nil {
@@ -502,14 +464,12 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 	}
 	report.LastRunFound = !lastRunTime.IsZero()
 
-	// Count read marks in old data.
 	for _, j := range jobs {
 		if j.seenAt.Valid && j.seenAt.String != "" {
 			report.ReadMarksBefore++
 		}
 	}
 
-	// Read profiles and stages.
 	profiles, err := readProfiles(ctx, copyDB)
 	if err != nil {
 		return nil, fmt.Errorf("reading profiles: %w", err)
@@ -539,22 +499,16 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 		return nil, fmt.Errorf("reading last applied moves: %w", err)
 	}
 
-	// Build source name → key map from old config.
 	sourceKeyByName := buildSourceKeyMap(oldCfg)
 
-	// Build set of source names seen in sightings.
 	seenSourceNames := make(map[string]bool)
 	for _, s := range sightings {
 		seenSourceNames[s.source] = true
 	}
 
-	// --- Process vacancies ---
-
 	report.VacanciesRead = len(jobs)
 
-	// canonMap maps canonical URL → job id (for duplicate detection).
 	canonMap := make(map[string]int64)
-	// validJobs is the slice of (job, canonURL) for jobs that parse successfully.
 	type validJob struct {
 		job      *oldJob
 		canonURL string
@@ -571,14 +525,11 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 		validJobs = append(validJobs, validJob{job: j, canonURL: canon})
 	}
 
-	// Sort by id ascending so lower ids are processed first (kept in duplicates).
 	sort.Slice(validJobs, func(i, k int) bool {
 		return validJobs[i].job.id < validJobs[k].job.id
 	})
 
-	// Detect duplicates: map canon → first seen id.
-	// duplicateAlias maps higher-id job → lower-id job (kept).
-	duplicateAlias := make(map[int64]int64) // aliasedID → keptID
+	duplicateAlias := make(map[int64]int64)
 	for _, vj := range validJobs {
 		if keptID, found := canonMap[vj.canonURL]; found {
 			duplicateAlias[vj.job.id] = keptID
@@ -588,8 +539,6 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 		}
 	}
 
-	// Build a map of aliasedID → keptID for use in sighting remapping.
-	// Also compute merge data for kept vacancies.
 	type mergeData struct {
 		firstSeen      string
 		publishedAt    string
@@ -598,16 +547,14 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 		textState      listing.TextState
 		body           []byte
 		hash           string
-		seenAt         string // latest non-empty seen_at across kept and aliased
+		seenAt         string
 	}
-	mergedData := make(map[int64]*mergeData) // keptID → best values
+	mergedData := make(map[int64]*mergeData)
 
-	// First pass: initialise merge data from kept vacancies.
 	for _, vj := range validJobs {
 		if _, isAlias := duplicateAlias[vj.job.id]; isAlias {
 			continue
 		}
-		// first_seen and last_seen parse failures are fatal.
 		firstSeen := normDateUTC(vj.job.firstSeen)
 		if firstSeen == "" {
 			return nil, fmt.Errorf("vacancy %d: first_seen cannot be parsed: %q", vj.job.id, vj.job.firstSeen)
@@ -639,7 +586,6 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 		}
 	}
 
-	// Second pass: merge aliased vacancies into kept.
 	for _, vj := range validJobs {
 		keptID, isAlias := duplicateAlias[vj.job.id]
 		if !isAlias {
@@ -654,28 +600,23 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 			continue
 		}
 		pub, pubBasis := parsePublishedAt(vj.job.publishedAt, vj.job.publishedBasis)
-		// Earliest first_seen.
 		fs := normDateUTC(vj.job.firstSeen)
 		if kept.firstSeen == "" || (fs != "" && fs < kept.firstSeen) {
 			kept.firstSeen = fs
 		}
-		// Earliest publishedAt.
 		if pub != "" && (kept.publishedAt == "" || pub < kept.publishedAt) {
 			kept.publishedAt = pub
 			kept.publishedBasis = pubBasis
 		}
-		// Latest lastSeen.
 		ls := normDateUTC(vj.job.lastSeen)
 		if ls > kept.lastSeen {
 			kept.lastSeen = ls
 		}
-		// Better text: full > summary > none.
 		if betterTextState(ts, kept.textState) {
 			kept.textState = ts
 			kept.body = body
 			kept.hash = hash
 		}
-		// Latest seenAt.
 		if vj.job.seenAt.Valid && vj.job.seenAt.String != "" {
 			if sa := normDateUTC(vj.job.seenAt.String); sa > kept.seenAt {
 				kept.seenAt = sa
@@ -683,7 +624,6 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 		}
 	}
 
-	// Build keepIDs: set of job ids that become actual vacancies.
 	keepIDs := make(map[int64]bool)
 	for _, vj := range validJobs {
 		if _, isAlias := duplicateAlias[vj.job.id]; !isAlias {
@@ -693,12 +633,6 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 		}
 	}
 
-	// --- Write all in one transaction ---
-
-	// Build a map from normalised company slugs (extracted from canonical
-	// addresses) to the exact company names already set on sibling vacancies.
-	// When a vacancy lacks a company, an exact sibling name wins over the
-	// title-cased slug produced by companyFromCanonURL.
 	slugCompanyMap := make(map[string]string)
 	for _, vj := range validJobs {
 		if !keepIDs[vj.job.id] {
@@ -725,9 +659,8 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 	if err != nil {
 		return nil, fmt.Errorf("begin transaction: %w", err)
 	}
-	defer tx.Rollback() //nolint:errcheck
+	defer tx.Rollback()
 
-	// Write vacancies.
 	for _, vj := range validJobs {
 		j := vj.job
 		if !keepIDs[j.id] {
@@ -736,14 +669,13 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 		md := mergedData[j.id]
 		company := j.company
 		if strings.EqualFold(company, "Unknown") {
-			company = "" // the old placeholder for a missing company
+			company = ""
 		}
 		if company == "" {
 			company = companyFromCanonURL(vj.canonURL, j.title, slugCompanyMap)
 		}
 		identity := listing.Identity(company, j.title)
 
-		// Apply URL.
 		applyURL := ""
 		if j.applyURL.Valid && j.applyURL.String != "" {
 			if ca, ok := listing.ConcreteATS(j.applyURL.String); ok {
@@ -756,7 +688,6 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 			location = j.location.String
 		}
 
-		// Expire date: drop if doesn't parse.
 		expiresAt := ""
 		if j.expiresAt.Valid && j.expiresAt.String != "" {
 			if t, err := parseOldDate(j.expiresAt.String); err == nil {
@@ -764,7 +695,6 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 			}
 		}
 
-		// Assign industries using the vacancy's title, tags and plain text.
 		industriesJSON := "[]"
 		if assign != nil {
 			var plainText string
@@ -805,8 +735,6 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 		}
 	}
 
-	// Write sightings.
-	// Build sightings by jobID.
 	sightingsByJob := make(map[int64][]oldSighting)
 	for _, s := range sightings {
 		sightingsByJob[s.jobID] = append(sightingsByJob[s.jobID], s)
@@ -814,7 +742,6 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 
 	report.SightingsRead = len(sightings)
 
-	// Track canonical URLs already used in vacancy_source.
 	usedCanonURLs := make(map[string]bool)
 
 	for _, vj := range validJobs {
@@ -823,18 +750,15 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 			continue
 		}
 		jobSightings := sightingsByJob[j.id]
-		// Also gather sightings for aliased duplicates.
 		for _, dp := range report.Duplicates {
 			if dp.KeptID == j.id {
 				jobSightings = append(jobSightings, sightingsByJob[dp.AliasedID]...)
 			}
 		}
 
-		// Find earliest sighting source for own-address row.
 		ownSource := "name:import"
 		ownSeenAt := normDateUTC(j.lastSeen)
 		if len(jobSightings) > 0 {
-			// Sort by seen_at to find earliest.
 			sort.Slice(jobSightings, func(a, b int) bool {
 				return jobSightings[a].seen < jobSightings[b].seen
 			})
@@ -842,7 +766,6 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 			ownSource = resolveSource(earliestSighting.source, sourceKeyByName)
 		}
 
-		// Insert own-address row first.
 		if !usedCanonURLs[vj.canonURL] {
 			if _, err := tx.ExecContext(ctx,
 				`INSERT INTO vacancy_source (vacancy_id, source, url, seen_at) VALUES (?,?,?,?)`,
@@ -854,7 +777,6 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 			report.SightingsWritten++
 		}
 
-		// Insert per-sighting rows.
 		for _, s := range jobSightings {
 			canonSightURL, err := listing.Canonical(s.url)
 			if err != nil {
@@ -881,7 +803,6 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 		}
 	}
 
-	// Write aliases from duplicate pairs.
 	for _, dp := range report.Duplicates {
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO vacancy_alias (old_id, new_id) VALUES (?,?)`,
@@ -891,23 +812,18 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 		}
 	}
 
-	// Write job_aliases (from old table), following chains to imported vacancies.
 	report.AliasesRead = len(aliases)
-	// Build a chain-resolution map.
-	// First, build direct map from old_aliases.
-	aliasMap := make(map[int64]int64, len(aliases)) // old_id → new_id
+	aliasMap := make(map[int64]int64, len(aliases))
 	for _, a := range aliases {
 		aliasMap[a.oldID] = a.newID
 	}
 
 	for _, a := range aliases {
-		// Follow chain.
 		target, reason := resolveAliasTarget(a.oldID, a.newID, aliasMap, keepIDs, 50)
 		if reason != "" {
 			report.AliasesDropped = append(report.AliasesDropped, dropReason{ID: a.oldID, Reason: reason})
 			continue
 		}
-		// old_id must not itself be an imported vacancy.
 		if keepIDs[a.oldID] {
 			report.AliasesDropped = append(report.AliasesDropped, dropReason{ID: a.oldID, Reason: "old_id is an imported vacancy"})
 			continue
@@ -921,7 +837,6 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 		report.AliasesWritten++
 	}
 
-	// Write tombstones.
 	report.TombstonesRead = len(hashes)
 	for _, h := range hashes {
 		if _, err := tx.ExecContext(ctx,
@@ -933,10 +848,9 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 		report.TombstonesWritten++
 	}
 
-	// Set next id: max of all vacancy ids, alias ids, and id_sequence value.
 	var maxVacID, maxAliasID int64
-	tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(id),0) FROM vacancy`).Scan(&maxVacID)             //nolint:errcheck
-	tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(old_id),0) FROM vacancy_alias`).Scan(&maxAliasID) //nolint:errcheck
+	tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(id),0) FROM vacancy`).Scan(&maxVacID)
+	tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(old_id),0) FROM vacancy_alias`).Scan(&maxAliasID)
 	maxID := maxVacID
 	if maxAliasID > maxID {
 		maxID = maxAliasID
@@ -945,7 +859,6 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 		maxID = idSeq
 	}
 
-	// Set sqlite_sequence for vacancy so AUTOINCREMENT never reuses old ids.
 	if maxID > 0 {
 		res, err := tx.ExecContext(ctx,
 			`UPDATE sqlite_sequence SET seq=? WHERE name='vacancy' AND seq<?`,
@@ -956,9 +869,8 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 		}
 		n, _ := res.RowsAffected()
 		if n == 0 {
-			// Row absent (no vacancies were inserted) — INSERT it directly.
 			var exists int
-			tx.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_sequence WHERE name='vacancy'`).Scan(&exists) //nolint:errcheck
+			tx.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_sequence WHERE name='vacancy'`).Scan(&exists)
 			if exists == 0 {
 				if _, err := tx.ExecContext(ctx,
 					`INSERT INTO sqlite_sequence (name, seq) VALUES ('vacancy', ?)`, maxID,
@@ -966,11 +878,9 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 					return nil, fmt.Errorf("inserting sqlite_sequence: %w", err)
 				}
 			}
-			// If exists > 0 but rows == 0, the current seq is already >= maxID; leave it.
 		}
 	}
 
-	// Write exclusions from stop_words (word kind) and block_rules company kind.
 	stopWords, err := readStopWords(ctx, copyDB)
 	if err != nil {
 		return nil, fmt.Errorf("reading stop_words: %w", err)
@@ -1011,10 +921,6 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 			report.ExclusionsWritten++
 		}
 	}
-	// --- Profiles ---
-	//
-	// Sort by created_at ascending (then by id for stability) so the first
-	// created profile always gets new id 1.
 	sort.Slice(profiles, func(i, k int) bool {
 		if profiles[i].createdAt != profiles[k].createdAt {
 			return profiles[i].createdAt < profiles[k].createdAt
@@ -1029,7 +935,6 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 		}
 	}
 
-	// profileIDMap maps old TEXT profile id → new INTEGER id.
 	profileIDMap := make(map[string]int64)
 	report.profileIDs = profileIDMap
 	type profileEntry struct {
@@ -1038,13 +943,12 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 		targetRoles      []string
 		keywords         []string
 		allOf            []string
-		except           []string // words to become per-profile word exclusions
-		targetIndustries []string // from old data; listed in report, not imported
+		except           []string
+		targetIndustries []string
 		profileData      candidate.ProfileData
 	}
 	var profilesByNewID []profileEntry
 
-	// Determine whether any profile has a non-empty headline (to decide user headline fallback).
 	anyProfileHeadline := false
 	for _, p := range profiles {
 		if p.archivedAt.Valid && p.archivedAt.String != "" {
@@ -1056,9 +960,6 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 		}
 	}
 
-	// userHeadline is used as fallback for the first profile when no profile has a headline.
-	// hasStructuredNotice is true when users.data has a valid noticeValue + noticeUnit;
-	// it determines whether profiles' free-text noticePeriod is dropped or folded.
 	userHeadline := ""
 	hasStructuredNotice := false
 	if userData != nil {
@@ -1077,7 +978,7 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 
 	for _, p := range profiles {
 		if p.archivedAt.Valid && p.archivedAt.String != "" {
-			continue // skip archived
+			continue
 		}
 		newID := int64(len(profilesByNewID) + 1)
 		name := p.name
@@ -1087,24 +988,18 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 		roles, keywords, allOf, except := parseOldProfileData(p.data)
 		profileIDMap[p.id] = newID
 
-		// Parse the full old profile data for the extended fields.
 		pd, legacyFolded, legacyDropped := convertOldProfileData(p.data, newID, hasStructuredNotice)
 		pd.Name = name
 		pd.TargetRoles = roles
 		pd.Keywords = keywords
 		pd.AllOf = allOf
 
-		// Headline: use profile's own; fall back to user headline for the first profile
-		// when no profile at all has a headline.
 		headline := strings.TrimSpace(p.headline)
 		if headline == "" && newID == 1 && !anyProfileHeadline {
 			headline = userHeadline
 		}
 		pd.Headline = headline
 
-		// Target industries from the old application informed the previous scoring
-		// model and are not used for filtering in the new application. Record them
-		// for the report and do not import them.
 		oldTargetIndustries := pd.TargetIndustries
 		pd.TargetIndustries = nil
 
@@ -1121,7 +1016,6 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 	}
 
 	if len(profilesByNewID) > 0 {
-		// Replace the default "Profile" row and insert all old profiles.
 		if _, err := tx.ExecContext(ctx, `DELETE FROM profile`); err != nil {
 			return nil, fmt.Errorf("deleting default profile: %w", err)
 		}
@@ -1136,7 +1030,6 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 				return nil, fmt.Errorf("inserting profile %d: %w", pp.newID, err)
 			}
 		}
-		// Update the autoincrement sequence so the application never reuses old ids.
 		maxProfileID := int64(len(profilesByNewID))
 		res, err := tx.ExecContext(ctx,
 			`UPDATE sqlite_sequence SET seq=? WHERE name='profile' AND seq<?`,
@@ -1147,7 +1040,7 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 		}
 		if n, _ := res.RowsAffected(); n == 0 {
 			var exists int
-			tx.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_sequence WHERE name='profile'`).Scan(&exists) //nolint:errcheck
+			tx.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_sequence WHERE name='profile'`).Scan(&exists)
 			if exists == 0 {
 				if _, err := tx.ExecContext(ctx,
 					`INSERT INTO sqlite_sequence (name, seq) VALUES ('profile', ?)`, maxProfileID,
@@ -1157,7 +1050,6 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 			}
 		}
 
-		// Write per-profile except words as word exclusions with that profile's scope.
 		for _, pp := range profilesByNewID {
 			for _, w := range pp.except {
 				value := strings.TrimSpace(w)
@@ -1177,16 +1069,12 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 			}
 		}
 
-		// Build per-profile search report lines.
 		for _, pp := range profilesByNewID {
 			report.ProfileSearchLines = append(report.ProfileSearchLines,
 				buildProfileSearchLine(pp.newID, pp.name, pp.targetRoles, pp.keywords, pp.allOf, pp.except, pp.targetIndustries))
 		}
 	}
 
-	// --- Decisions ---
-	//
-	// stageMap accumulates the strongest stage per (newProfileID, newVacancyID).
 	type decisionEntry struct {
 		stage     string
 		reason    string
@@ -1197,24 +1085,22 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 	for _, s := range stages {
 		newProfileID, ok := profileIDMap[s.profileID]
 		if !ok {
-			report.StagesDropped++ // archived profile
+			report.StagesDropped++
 			continue
 		}
-		// Follow alias.
 		newVacancyID := s.jobID
 		if keptID, isAlias := duplicateAlias[newVacancyID]; isAlias {
 			newVacancyID = keptID
 		}
 		if !keepIDs[newVacancyID] {
-			report.StagesDropped++ // vacancy not imported
+			report.StagesDropped++
 			continue
 		}
-		// Map old status to new stage.
 		var newStage, reason string
 		switch s.status {
 		case "new":
 			report.StagesNew++
-			continue // no decision row
+			continue
 		case "saved":
 			newStage = "shortlist"
 			report.StagesShortlist++
@@ -1260,18 +1146,13 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 		}
 	}
 
-	// --- Comparison: jobs.status vs first profile's stage ---
-	//
-	// jobs.status is the old per-vacancy denormalised copy of the first profile's
-	// stage. It is compared here but never imported.
 	if len(profilesByNewID) > 0 {
 		firstProfileNewID := profilesByNewID[0].newID
 		firstProfileDecisions := stageMap[firstProfileNewID]
 		for _, j := range jobs {
 			if !keepIDs[j.id] {
-				continue // only kept vacancies
+				continue
 			}
-			// Map jobs.status to new stage.
 			var jobsStage string
 			switch j.status {
 			case "saved":
@@ -1281,7 +1162,7 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 			case "applied":
 				jobsStage = "applied"
 			default:
-				jobsStage = "" // "new" or empty → Inbox
+				jobsStage = ""
 			}
 			var profileStage string
 			if entry, ok := firstProfileDecisions[j.id]; ok {
@@ -1294,11 +1175,6 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 		}
 	}
 
-	// --- Applications ---
-	//
-	// Every non-empty jobs.applied_at becomes an application row. Aliased jobs
-	// are mapped to their keptID. Duplicate (vacancy, applied_at) pairs are
-	// deduplicated.
 	type appKey struct {
 		vacancyID int64
 		appliedAt string
@@ -1329,7 +1205,6 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 		}
 		seenApps[key] = true
 
-		// Find the profile that last moved this job to applied.
 		var newProfileID int64
 		var profileName string
 		if oldPID, ok := lastAppliedMove[j.id]; ok {
@@ -1341,7 +1216,7 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 			newProfileID = profilesByNewID[0].newID
 		}
 		if newProfileID == 0 {
-			newProfileID = 1 // last resort when no profiles were imported
+			newProfileID = 1
 		}
 		for _, pp := range profilesByNewID {
 			if pp.newID == newProfileID {
@@ -1359,7 +1234,6 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 		report.ApplicationsWritten++
 	}
 
-	// Write last run as a job row.
 	if !lastRunTime.IsZero() {
 		ts := lastRunTime.UTC().Format("2006-01-02T15:04:05Z")
 		if _, err := tx.ExecContext(ctx, `
@@ -1372,21 +1246,18 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 		report.LastRunWritten = true
 	}
 
-	// --- Me data ---
 	if userData != nil {
 		var ud oldUserData
 		if json.Unmarshal([]byte(userData.data), &ud) == nil {
 			me, myLegacyFolded, myLegacyDropped := convertOldUserData(ud)
 			report.LegacyFolded = append(report.LegacyFolded, myLegacyFolded...)
 			report.LegacyDropped = append(report.LegacyDropped, myLegacyDropped...)
-			// Apply My data legacy text to the first profile's OtherRequirements.
 			if len(profilesByNewID) > 0 && len(myLegacyFolded) > 0 {
 				first := &profilesByNewID[0]
 				for _, fe := range myDataFoldEntries(myLegacyFolded) {
 					line := fe.label + " (previous version): " + fe.text
 					first.profileData.OtherRequirements = appendLegacy(first.profileData.OtherRequirements, line)
 				}
-				// Re-marshal first profile.
 				newData, _ := json.Marshal(first.profileData)
 				if _, err := tx.ExecContext(ctx, `UPDATE profile SET data=? WHERE id=?`, string(newData), first.newID); err != nil {
 					return nil, fmt.Errorf("updating first profile with legacy text: %w", err)
@@ -1401,7 +1272,6 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 		}
 	}
 
-	// --- Active profile ---
 	if oldActiveProfileID != "" {
 		if newID, ok := profileIDMap[oldActiveProfileID]; ok {
 			if _, err := tx.ExecContext(ctx,
@@ -1413,7 +1283,6 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 		}
 	}
 
-	// --- Q&A ---
 	for _, q := range qaRows {
 		question := strings.TrimSpace(q.question)
 		if question == "" {
@@ -1439,8 +1308,6 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("committing transaction: %w", err)
 	}
-
-	// --- Write sources via config.Store.Update ---
 
 	sourceSightings := buildSourceSightingSet(sightings)
 	report.SourcesRead = len(oldCfg.Sites)
@@ -1497,12 +1364,10 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 	return report, nil
 }
 
-// importPhoto copies the old profile photo into the new data folder when it
-// meets the type and size requirements.
 func importPhoto(fromDir, dataDir string, report *importReport) error {
 	avatarMeta, err := os.ReadFile(filepath.Join(fromDir, "profile-avatar.json"))
 	if os.IsNotExist(err) {
-		return nil // no photo
+		return nil
 	}
 	if err != nil {
 		return err
@@ -1519,7 +1384,7 @@ func importPhoto(fromDir, dataDir string, report *importReport) error {
 	if meta.StoragePath == "" {
 		return nil
 	}
-	const maxSize = 2 << 20 // 2 MiB
+	const maxSize = 2 << 20
 	if meta.ByteSize > maxSize {
 		report.PhotoSkipped = fmt.Sprintf("photo too large (%d bytes, limit 2 MiB)", meta.ByteSize)
 		return nil
@@ -1537,7 +1402,6 @@ func importPhoto(fromDir, dataDir string, report *importReport) error {
 		report.PhotoSkipped = fmt.Sprintf("photo too large (%d bytes, limit 2 MiB)", len(data))
 		return nil
 	}
-	// Check real type from bytes.
 	ct := http.DetectContentType(data)
 	if ct != "image/png" && ct != "image/jpeg" && ct != "image/webp" {
 		report.PhotoSkipped = fmt.Sprintf("photo type %q is not png, jpeg or webp", ct)
@@ -1553,15 +1417,10 @@ func importPhoto(fromDir, dataDir string, report *importReport) error {
 	}
 	sum := sha256.Sum256(data)
 	report.PhotoCopied = true
-	_ = sum // sha256 available for report if needed
+	_ = sum
 	return nil
 }
 
-// --- helpers ---
-
-// resolveAliasTarget follows the alias chain starting from (oldID → nextID)
-// up to maxDepth steps, returning the final target vacancy id or a reason
-// why the alias should be dropped.
 func resolveAliasTarget(oldID, nextID int64, aliasMap map[int64]int64, keepIDs map[int64]bool, maxDepth int) (int64, string) {
 	visited := map[int64]bool{oldID: true}
 	cur := nextID
@@ -1582,7 +1441,6 @@ func resolveAliasTarget(oldID, nextID int64, aliasMap map[int64]int64, keepIDs m
 	return 0, "alias chain too long"
 }
 
-// resolveSource maps an old sighting source name to the new source key.
 func resolveSource(name string, sourceKeyByName map[string]string) string {
 	if key, ok := sourceKeyByName[name]; ok {
 		return key
@@ -1590,7 +1448,6 @@ func resolveSource(name string, sourceKeyByName map[string]string) string {
 	return "name:" + name
 }
 
-// buildSourceKeyMap builds a name→key map from the old config.
 func buildSourceKeyMap(cfg *oldConfig) map[string]string {
 	m := make(map[string]string, len(cfg.Sites))
 	for _, site := range cfg.Sites {
@@ -1603,7 +1460,6 @@ func buildSourceKeyMap(cfg *oldConfig) map[string]string {
 	return m
 }
 
-// buildSourceSightingSet returns a set of source names that appear in sightings.
 func buildSourceSightingSet(sightings []oldSighting) map[string]bool {
 	m := make(map[string]bool)
 	for _, s := range sightings {
@@ -1612,11 +1468,7 @@ func buildSourceSightingSet(sightings []oldSighting) map[string]bool {
 	return m
 }
 
-// encodeVacancy computes text state, body and hash for an old job row.
 func encodeVacancy(j *oldJob) (listing.TextState, []byte, string, error) {
-	// Determine text state.
-	// A text a feed gave counts as full, as collection counts it; a status
-	// that claims a text without one is not fetched.
 	var ts listing.TextState
 	hasText := (j.descriptionHTML.Valid && strings.TrimSpace(j.descriptionHTML.String) != "") ||
 		strings.TrimSpace(j.description) != ""
@@ -1631,7 +1483,6 @@ func encodeVacancy(j *oldJob) (listing.TextState, []byte, string, error) {
 		ts = listing.TextSummary
 	}
 
-	// Pick HTML or plain text; plain text is converted to HTML before normalising.
 	var rawText string
 	if j.descriptionHTML.Valid && j.descriptionHTML.String != "" {
 		rawText = j.descriptionHTML.String
@@ -1651,13 +1502,10 @@ func encodeVacancy(j *oldJob) (listing.TextState, []byte, string, error) {
 	return ts, body, hash, nil
 }
 
-// betterTextState reports whether candidate is strictly better than current.
 func betterTextState(candidate, current listing.TextState) bool {
 	return textRank(candidate) > textRank(current)
 }
 
-// stageStrength returns a numeric strength for a stage so the strongest stage
-// wins when two old vacancies merge into one.
 func stageStrength(stage string) int {
 	switch stage {
 	case "applied":
@@ -1680,16 +1528,14 @@ func textRank(s listing.TextState) int {
 	return 0
 }
 
-// parsePublishedAt returns the published_at and published_basis values to store.
 func parsePublishedAt(pubAt, pubBasis sql.NullString) (string, string) {
 	if !pubAt.Valid || pubAt.String == "" {
 		return "", ""
 	}
 	t, err := parseOldDate(pubAt.String)
 	if err != nil {
-		return "", "" // drop unparseable date
+		return "", ""
 	}
-	// Drop future dates.
 	if t.After(time.Now().UTC()) {
 		return "", ""
 	}
@@ -1698,14 +1544,12 @@ func parsePublishedAt(pubAt, pubBasis sql.NullString) (string, string) {
 	if pubBasis.Valid {
 		basis = pubBasis.String
 	}
-	// Keep basis only for datePosted or pubDate; otherwise store without basis.
 	if basis != "datePosted" && basis != "pubDate" {
 		basis = ""
 	}
 	return pub, basis
 }
 
-// normDateUTC parses an old date and returns UTC RFC 3339, or "" on error.
 func normDateUTC(s string) string {
 	if s == "" {
 		return ""
@@ -1717,8 +1561,6 @@ func normDateUTC(s string) string {
 	return t.UTC().Format(time.RFC3339)
 }
 
-// parseOldDate tries to parse an ISO 8601 date in several formats.
-// A date without a timezone is treated as UTC.
 func parseOldDate(s string) (time.Time, error) {
 	formats := []string{
 		time.RFC3339Nano,
@@ -1735,8 +1577,6 @@ func parseOldDate(s string) (time.Time, error) {
 	}
 	return time.Time{}, fmt.Errorf("cannot parse date %q", s)
 }
-
-// --- DB readers ---
 
 type oldStopWord struct{ word, created string }
 type oldBlockRule struct{ value, created string }
@@ -1854,7 +1694,7 @@ func readQA(ctx context.Context, db *sql.DB) ([]oldQA, error) {
 
 func readActiveProfileID(ctx context.Context, db *sql.DB) string {
 	var v string
-	db.QueryRowContext(ctx, `SELECT value FROM app_settings WHERE key='active_profile_id'`).Scan(&v) //nolint:errcheck
+	db.QueryRowContext(ctx, `SELECT value FROM app_settings WHERE key='active_profile_id'`).Scan(&v)
 	return v
 }
 
@@ -1876,10 +1716,7 @@ func readProfileStages(ctx context.Context, db *sql.DB) ([]oldStage, error) {
 	return out, rows.Err()
 }
 
-// readLastAppliedMove returns a map from old job_id to the old profile_id that
-// last moved that job to the applied stage.
 func readLastAppliedMove(ctx context.Context, db *sql.DB) (map[int64]string, error) {
-	// ORDER BY created ASC so later rows overwrite earlier ones.
 	rows, err := db.QueryContext(ctx,
 		`SELECT job_id, profile_id FROM profile_workflow_history WHERE to_stage='applied' ORDER BY created ASC`)
 	if err != nil {
@@ -1958,7 +1795,7 @@ func readIDSequence(ctx context.Context, db *sql.DB) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	return v - 1, nil // id_sequence.value is the next id; highest used = value-1
+	return v - 1, nil
 }
 
 func readLastRun(ctx context.Context, db *sql.DB) (time.Time, error) {
@@ -1974,10 +1811,6 @@ func readLastRun(ctx context.Context, db *sql.DB) (time.Time, error) {
 	return t, nil
 }
 
-// --- old config loading ---
-
-// loadOldConfig parses search.yaml and returns the config and the list of keys
-// that are present but not imported.
 func loadOldConfig(path string) (*oldConfig, []string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -1997,7 +1830,6 @@ func loadOldConfig(path string) (*oldConfig, []string, error) {
 		return nil, nil, fmt.Errorf("parsing search.yaml sites: %w", err)
 	}
 
-	// Collect non-imported keys.
 	var nonImported []string
 	for k := range raw {
 		if k != "version" && k != "sites" {
@@ -2009,12 +1841,6 @@ func loadOldConfig(path string) (*oldConfig, []string, error) {
 	return &cfg, nonImported, nil
 }
 
-// --- profile search helpers ---
-
-// parseOldProfileData parses the old profile data JSON and returns target roles,
-// keywords, "All of these" terms and except words.
-// When search.expressions is present it takes precedence over search.keywords:
-// or-groups become keywords and and-groups become allOf terms.
 func parseOldProfileData(data string) (targetRoles, keywords, allOf, except []string) {
 	var d struct {
 		TargetRoles []string `json:"targetRoles"`
@@ -2043,7 +1869,6 @@ func parseOldProfileData(data string) (targetRoles, keywords, allOf, except []st
 	return
 }
 
-// filterEmpty returns a copy of ss with empty and whitespace-only strings removed.
 func filterEmpty(ss []string) []string {
 	var out []string
 	for _, s := range ss {
@@ -2054,9 +1879,6 @@ func filterEmpty(ss []string) []string {
 	return out
 }
 
-// buildProfileSearchLine formats one profile's imported search data for the report.
-// targetIndustries are the previous version's target industries; they are listed
-// but not imported.
 func buildProfileSearchLine(newID int64, name string, roles, keywords, allOf, except, targetIndustries []string) string {
 	var parts []string
 	if len(roles) > 0 {
@@ -2081,11 +1903,6 @@ func buildProfileSearchLine(newID int64, name string, roles, keywords, allOf, ex
 	return header + ": " + strings.Join(parts, "; ")
 }
 
-// --- data conversion helpers ---
-
-// mapSkillLevel converts old skill level strings to new ones.
-// Production→Expert, Familiar→Proficient, Learning→Beginner.
-// New values (Expert/Proficient/Beginner) pass through unchanged.
 func mapSkillLevel(old string) string {
 	switch old {
 	case "Production":
@@ -2095,11 +1912,9 @@ func mapSkillLevel(old string) string {
 	case "Learning":
 		return "Beginner"
 	}
-	return old // already new, or unknown
+	return old
 }
 
-// convertOldUserData converts an oldUserData to a candidate.MeData.
-// It also returns legacy folded/dropped lines for the first profile.
 func convertOldUserData(ud oldUserData) (candidate.MeData, []string, []string) {
 	var me candidate.MeData
 	var folded, dropped []string
@@ -2183,7 +1998,6 @@ func convertOldUserData(ud oldUserData) (candidate.MeData, []string, []string) {
 		})
 	}
 
-	// Availability.
 	if ud.Availability.NoticeSet {
 		av := &candidate.Availability{}
 		if nv := ud.Availability.NoticeValue.String(); nv != "" && nv != "0" && nv != "<nil>" {
@@ -2197,7 +2011,6 @@ func convertOldUserData(ud oldUserData) (candidate.MeData, []string, []string) {
 		me.Availability = av
 	}
 
-	// Current location.
 	if ud.Geography.CurrentLocationSet && ud.Geography.CurrentLocation != nil {
 		me.CurrentLocation = &candidate.Location{
 			Country: strings.TrimSpace(ud.Geography.CurrentLocation.Country),
@@ -2205,7 +2018,6 @@ func convertOldUserData(ud oldUserData) (candidate.MeData, []string, []string) {
 		}
 	}
 
-	// Work authorizations.
 	if ud.Geography.WorkAuthorizationsSet {
 		for _, wa := range ud.Geography.WorkAuthorizations {
 			country := strings.TrimSpace(wa.Country)
@@ -2219,7 +2031,6 @@ func convertOldUserData(ud oldUserData) (candidate.MeData, []string, []string) {
 		}
 	}
 
-	// Demographics.
 	g := strings.TrimSpace(ud.Demographics.Gender)
 	e2 := strings.TrimSpace(ud.Demographics.Ethnicity)
 	races := filterEmpty(ud.Demographics.Race)
@@ -2231,10 +2042,8 @@ func convertOldUserData(ud oldUserData) (candidate.MeData, []string, []string) {
 		}
 	}
 
-	// Legacy text from My data goes to the first profile as legacy lines.
-	var toFold []foldEntry // items to append to first profile's OtherRequirements
+	var toFold []foldEntry
 
-	// Legacy users.data availability.noticePeriod (free text).
 	if noticeFreeText := strings.TrimSpace(ud.Availability.NoticePeriod); noticeFreeText != "" {
 		if me.Availability != nil && me.Availability.NoticeValue != nil {
 			dropped = append(dropped, "My data (notice period): dropped (structured value present)")
@@ -2284,7 +2093,6 @@ func convertOldUserData(ud oldUserData) (candidate.MeData, []string, []string) {
 		toFold = append(toFold, foldEntry{"dealbreakers", strings.Join(dbItems, "; ")})
 	}
 
-	// User-level target roles and target industries: not imported (they belong to profiles).
 	if roles := filterEmpty(ud.TargetRoles); len(roles) > 0 {
 		dropped = append(dropped, "My data (targetRoles): not imported ("+strings.Join(roles, ", ")+")")
 	}
@@ -2292,7 +2100,6 @@ func convertOldUserData(ud oldUserData) (candidate.MeData, []string, []string) {
 		dropped = append(dropped, "My data (targetIndustries): not imported ("+strings.Join(industries, ", ")+")")
 	}
 
-	// Build folded report lines. The actual text is applied to the first profile by the caller.
 	for _, fe := range toFold {
 		folded = append(folded, fmt.Sprintf("My data (%s): %s", fe.label, fe.text))
 	}
@@ -2300,8 +2107,6 @@ func convertOldUserData(ud oldUserData) (candidate.MeData, []string, []string) {
 	return me, folded, dropped
 }
 
-// myDataFoldEntries returns foldEntry items from My-data legacy report lines.
-// Lines are of the form "My data (label): text".
 func myDataFoldEntries(foldedLines []string) []foldEntry {
 	var out []foldEntry
 	for _, line := range foldedLines {
@@ -2321,14 +2126,10 @@ func myDataFoldEntries(foldedLines []string) []foldEntry {
 	return out
 }
 
-// convertOldProfileData converts old profile data JSON to a candidate.ProfileData
-// plus legacy folded/dropped lines. The newID is used only for log labels.
-// hasStructuredNotice is true when users.data has a valid noticeValue + noticeUnit;
-// when true, the profile's free-text noticePeriod is dropped instead of folded.
 func convertOldProfileData(data string, newID int64, hasStructuredNotice bool) (candidate.ProfileData, []string, []string) {
 	var pd candidate.ProfileData
 	var dropped []string
-	var toFold []foldEntry // legacy items to append to Other requirements
+	var toFold []foldEntry
 	var opd oldProfileData
 	if err := json.Unmarshal([]byte(data), &opd); err != nil {
 		return pd, nil, dropped
@@ -2336,7 +2137,6 @@ func convertOldProfileData(data string, newID int64, hasStructuredNotice bool) (
 
 	pd.TargetIndustries = filterEmpty(opd.TargetIndustries)
 
-	// Compensation.
 	if opd.Compensation != nil {
 		c := opd.Compensation
 		comp := &candidate.Compensation{
@@ -2357,7 +2157,6 @@ func convertOldProfileData(data string, newID int64, hasStructuredNotice bool) (
 		pd.Compensation = comp
 	}
 
-	// Engagement.
 	for _, t := range opd.Engagement.Types {
 		t = strings.TrimSpace(t)
 		if t != "" {
@@ -2365,7 +2164,6 @@ func convertOldProfileData(data string, newID int64, hasStructuredNotice bool) (
 		}
 	}
 
-	// Hours.
 	if opd.Hours != nil {
 		pd.Hours = &candidate.Hours{
 			Mode:   strings.TrimSpace(opd.Hours.Mode),
@@ -2373,7 +2171,6 @@ func convertOldProfileData(data string, newID int64, hasStructuredNotice bool) (
 		}
 	}
 
-	// Work modes: map "office" → "onsite".
 	for _, m := range opd.WorkModes.Modes {
 		m = strings.TrimSpace(m)
 		if m == "" {
@@ -2385,7 +2182,6 @@ func convertOldProfileData(data string, newID int64, hasStructuredNotice bool) (
 		pd.WorkModes = append(pd.WorkModes, m)
 	}
 
-	// Legacy work-mode limits.
 	var limitItems []string
 	for _, l := range opd.WorkModes.Limits {
 		if s, ok := l.(string); ok && strings.TrimSpace(s) != "" {
@@ -2400,7 +2196,6 @@ func convertOldProfileData(data string, newID int64, hasStructuredNotice bool) (
 		}
 	}
 
-	// Geography: preferred locations.
 	if opd.Geography.PreferredLocationsSet {
 		for _, loc := range opd.Geography.PreferredLocations {
 			switch v := loc.(type) {
@@ -2423,7 +2218,6 @@ func convertOldProfileData(data string, newID int64, hasStructuredNotice bool) (
 		}
 	}
 
-	// Willing to relocate.
 	if opd.Geography.WillingToRelocate != nil {
 		if *opd.Geography.WillingToRelocate {
 			pd.Relocation = "yes"
@@ -2432,7 +2226,6 @@ func convertOldProfileData(data string, newID int64, hasStructuredNotice bool) (
 		}
 	}
 
-	// Legacy geography.current.
 	current := strings.TrimSpace(opd.Geography.Current)
 	if current != "" {
 		if len(pd.PreferredLocations) > 0 {
@@ -2442,7 +2235,6 @@ func convertOldProfileData(data string, newID int64, hasStructuredNotice bool) (
 		}
 	}
 
-	// Legacy geography.desired.
 	var desiredItems []string
 	for _, d := range opd.Geography.Desired {
 		if s, ok := d.(string); ok && strings.TrimSpace(s) != "" {
@@ -2457,7 +2249,6 @@ func convertOldProfileData(data string, newID int64, hasStructuredNotice bool) (
 		}
 	}
 
-	// Legacy geography.eligibility.
 	var eligItems []string
 	for _, e := range opd.Geography.Eligibility {
 		if s, ok := e.(string); ok && strings.TrimSpace(s) != "" {
@@ -2468,19 +2259,15 @@ func convertOldProfileData(data string, newID int64, hasStructuredNotice bool) (
 		toFold = append(toFold, foldEntry{"eligibility", strings.Join(eligItems, ", ")})
 	}
 
-	// Legacy geography.relocation (string list): always fold into Other requirements,
-	// even when willingToRelocate is set, to avoid losing real data.
 	if len(opd.Geography.Relocation) > 0 {
 		toFold = append(toFold, foldEntry{"relocation", strings.Join(filterEmpty(opd.Geography.Relocation), ", ")})
 	}
 
-	// Legacy geography.sponsorship.
 	sponsorship := strings.TrimSpace(opd.Geography.Sponsorship)
 	if sponsorship != "" {
 		toFold = append(toFold, foldEntry{"sponsorship", sponsorship})
 	}
 
-	// Legacy availability.noticePeriod (free text).
 	if noticeFreeText := strings.TrimSpace(opd.Availability.NoticePeriod); noticeFreeText != "" {
 		if hasStructuredNotice {
 			dropped = append(dropped, fmt.Sprintf("profile %d (notice period): dropped (structured value present)", newID))
@@ -2489,16 +2276,13 @@ func convertOldProfileData(data string, newID int64, hasStructuredNotice bool) (
 		}
 	}
 
-	// Time zones: use timezoneIds as-is.
 	pd.TimeZones = filterEmpty(opd.Geography.TimezoneIDs)
 
-	// Other requirements: structured value (rich text → Markdown).
 	otherText := strings.TrimSpace(opd.OtherRequirements.Text)
 	if otherText != "" {
 		pd.OtherRequirements = htmlToMarkdown(otherText)
 	}
 
-	// Dealbreakers → legacy fold.
 	var dbItems []string
 	for _, d := range opd.Dealbreakers {
 		if s, ok := d.(string); ok && strings.TrimSpace(s) != "" {
@@ -2509,7 +2293,6 @@ func convertOldProfileData(data string, newID int64, hasStructuredNotice bool) (
 		toFold = append(toFold, foldEntry{"dealbreakers", strings.Join(dbItems, "; ")})
 	}
 
-	// Apply folded legacy items to OtherRequirements and build report lines.
 	var foldedLines []string
 	for _, fe := range toFold {
 		line := fe.label + " (previous version): " + fe.text
@@ -2520,13 +2303,11 @@ func convertOldProfileData(data string, newID int64, hasStructuredNotice bool) (
 	return pd, foldedLines, dropped
 }
 
-// foldEntry holds one legacy field label and its text for folding into Other requirements.
 type foldEntry struct {
 	label string
 	text  string
 }
 
-// appendLegacy appends a line to other requirements, separated by a blank line when needed.
 func appendLegacy(other, line string) string {
 	other = strings.TrimSpace(other)
 	if other == "" {
@@ -2535,15 +2316,6 @@ func appendLegacy(other, line string) string {
 	return other + "\n\n" + line
 }
 
-// --- company recovery from canonical URL ---
-
-// companyFromCanonURL attempts to recover a company name from a canonical
-// vacancy address when no company was stored. It recognises Getro board
-// addresses (/companies/<org-slug>/jobs/…), We Work Remotely listing addresses
-// (/remote-jobs/<company-title-slug>) and web3.career addresses
-// (/<title-company-slug>/<numeric-id>). slugMap maps normalised slugs to exact
-// company names already seen among siblings; an exact match wins over
-// title-casing. Returns "" when no company can be inferred.
 func companyFromCanonURL(canonURL, title string, slugMap map[string]string) string {
 	slug := urlCompanySlug(canonURL, title, slugMap)
 	if slug == "" {
@@ -2552,11 +2324,6 @@ func companyFromCanonURL(canonURL, title string, slugMap map[string]string) stri
 	return slugToCompany(slug, slugMap)
 }
 
-// urlCompanySlug returns the normalised company slug embedded in a canonical
-// URL for the address shapes we recover from. Returns "" when the shape is not
-// recognised, the slug is a probe (starts with "zzz-"), or no company slug can
-// be isolated cleanly. slugMap is forwarded to trimTitleSuffix for WWR sibling
-// prefix matching; pass nil when the map is not yet built.
 func urlCompanySlug(canonURL, title string, slugMap map[string]string) string {
 	u, err := url.Parse(canonURL)
 	if err != nil {
@@ -2565,7 +2332,6 @@ func urlCompanySlug(canonURL, title string, slugMap map[string]string) string {
 	host := strings.TrimPrefix(strings.ToLower(u.Host), "www.")
 	segs := strings.FieldsFunc(u.Path, func(r rune) bool { return r == '/' })
 
-	// Getro board: /companies/<org-slug>/jobs/...
 	if len(segs) >= 3 && segs[0] == "companies" && segs[2] == "jobs" {
 		slug := segs[1]
 		if strings.HasPrefix(slug, "zzz-") {
@@ -2573,11 +2339,9 @@ func urlCompanySlug(canonURL, title string, slugMap map[string]string) string {
 		}
 		return stripGetroDisambig(slug)
 	}
-	// We Work Remotely: /remote-jobs/<company-title-slug>
 	if host == "weworkremotely.com" && len(segs) >= 2 && segs[0] == "remote-jobs" {
 		return trimTitleSuffix(segs[1], title, slugMap)
 	}
-	// web3.career: /<title-company-slug>/<numeric-id> (id is 5+ decimal digits)
 	if (host == "web3.career" || host == "web3.careers") && len(segs) == 2 {
 		id := segs[1]
 		allDigit := len(id) >= 5 && strings.TrimFunc(id, func(r rune) bool { return r >= '0' && r <= '9' }) == ""
@@ -2588,9 +2352,6 @@ func urlCompanySlug(canonURL, title string, slugMap map[string]string) string {
 	return ""
 }
 
-// slugToCompany converts a URL slug to a company name. When slugMap contains
-// the normalised slug, the stored exact name is returned (sibling match).
-// Otherwise the slug is title-cased (hyphens replaced by spaces).
 func slugToCompany(slug string, slugMap map[string]string) string {
 	if slug == "" {
 		return ""
@@ -2602,7 +2363,6 @@ func slugToCompany(slug string, slugMap map[string]string) string {
 	return titleCaseSlug(slug)
 }
 
-// titleCaseSlug converts a hyphen-separated slug to a title-cased name.
 func titleCaseSlug(slug string) string {
 	parts := strings.Split(slug, "-")
 	for i, p := range parts {
@@ -2613,18 +2373,11 @@ func titleCaseSlug(slug string) string {
 	return strings.Join(parts, " ")
 }
 
-// trimTitleSuffix extracts the company slug from a We Work Remotely combined
-// slug (<company>-<title>). It strips a trailing -<digits> disambiguation
-// suffix first, then removes the slugified title from the end. When the title
-// does not strip cleanly, it falls back to the longest slugMap key that is a
-// proper prefix of the combined slug. Returns "" when no company can be isolated
-// (leave the company empty rather than guess).
 func trimTitleSuffix(slug, title string, slugMap map[string]string) string {
 	if slug == "" || strings.HasPrefix(slug, "zzz-") {
 		return ""
 	}
 	slug = strings.ToLower(slug)
-	// Strip a trailing -<digits> before title matching.
 	if i := strings.LastIndexByte(slug, '-'); i > 0 {
 		if tail := slug[i+1:]; tail != "" && strings.TrimFunc(tail, func(r rune) bool { return r >= '0' && r <= '9' }) == "" {
 			slug = slug[:i]
@@ -2635,7 +2388,6 @@ func trimTitleSuffix(slug, title string, slugMap map[string]string) string {
 			return slug[:len(slug)-len(ts)-1]
 		}
 	}
-	// Sibling prefix fallback: longest slugMap key that is a proper prefix.
 	best := ""
 	for norm := range slugMap {
 		if len(norm) > len(best) && strings.HasPrefix(slug, norm) {
@@ -2647,9 +2399,6 @@ func trimTitleSuffix(slug, title string, slugMap map[string]string) string {
 	return best
 }
 
-// trimTitlePrefix extracts the company slug from a web3.career combined slug
-// (<title>-<company>) by removing the slugified title from the start.
-// Returns "" when the title prefix cannot be matched (leave company empty).
 func trimTitlePrefix(slug, title string) string {
 	if slug == "" || strings.HasPrefix(slug, "zzz-") {
 		return ""
@@ -2662,19 +2411,10 @@ func trimTitlePrefix(slug, title string) string {
 	return ""
 }
 
-// stripGetroDisambig removes a Getro organisation-slug disambiguation suffix.
-// Three suffix shapes are stripped:
-//   - trailing -<digits>              ("acme-2"              → "acme")
-//   - trailing -<digits>-<uuid>       ("acme-2-<uuid>"       → "acme")
-//   - trailing -<uuid>                ("acme-<uuid>"         → "acme")
-//
-// A UUID is five hyphen-separated groups of 8, 4, 4, 4 and 12 hex characters.
-// Slugs that have no disambiguation suffix are returned unchanged.
 func stripGetroDisambig(slug string) string {
 	parts := strings.Split(slug, "-")
 	n := len(parts)
 	end := n
-	// Detect a full UUID suffix in the last five parts (need at least one name part).
 	if n >= 6 {
 		lens := [5]int{8, 4, 4, 4, 12}
 		ok := true
@@ -2696,7 +2436,6 @@ func stripGetroDisambig(slug string) string {
 			end = n - 5
 		}
 	}
-	// Strip a trailing all-digits part immediately before the UUID (or at end).
 	if end > 1 {
 		seg := parts[end-1]
 		if seg != "" && strings.TrimFunc(seg, func(r rune) bool { return r >= '0' && r <= '9' }) == "" {
@@ -2709,8 +2448,6 @@ func stripGetroDisambig(slug string) string {
 	return strings.Join(parts[:end], "-")
 }
 
-// slugifyTitle lowercases s and replaces runs of non-alphanumeric characters
-// with a single hyphen, trimming leading and trailing hyphens.
 func slugifyTitle(s string) string {
 	s = strings.ToLower(s)
 	var b strings.Builder
@@ -2726,8 +2463,6 @@ func slugifyTitle(s string) string {
 	}
 	return strings.TrimRight(b.String(), "-")
 }
-
-// --- report formatting ---
 
 func formatReport(r *importReport) string {
 	var sb strings.Builder
@@ -2852,8 +2587,6 @@ func formatReport(r *importReport) string {
 	return sb.String()
 }
 
-// PlainToHTML converts plain-text job descriptions from the v1 database to
-// HTML. Bullet lines become <ul><li> lists; paragraphs are wrapped in <p> tags.
 func PlainToHTML(plain string) string {
 	if plain == "" {
 		return ""
@@ -2861,8 +2594,8 @@ func PlainToHTML(plain string) string {
 	lines := strings.Split(strings.ReplaceAll(plain, "\r\n", "\n"), "\n")
 
 	type block struct {
-		tag   string   // "ul" or "" (paragraph)
-		lines []string // items for ul; single entry for paragraph
+		tag   string
+		lines []string
 	}
 
 	var blocks []block
@@ -2901,7 +2634,7 @@ func PlainToHTML(plain string) string {
 				cur = &block{}
 			}
 			if len(cur.lines) > 0 {
-				cur.lines[len(cur.lines)-1] += "\n" + stripped // a single newline is a line break
+				cur.lines[len(cur.lines)-1] += "\n" + stripped
 			} else {
 				cur.lines = append(cur.lines, stripped)
 			}

@@ -19,8 +19,6 @@ import (
 
 const fixtureCount = 1200
 
-// TestListMeasure measures the 95th-percentile list time over the HTTP handler
-// with 1,200 vacancies. Run with SIFTY_MEASURE=1; otherwise the test is skipped.
 func TestListMeasure(t *testing.T) {
 	if os.Getenv("SIFTY_MEASURE") != "1" {
 		t.Skip("set SIFTY_MEASURE=1 to run")
@@ -37,7 +35,7 @@ func TestListMeasure(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GET %s: %v", path, err)
 		}
-		resp.Body.Close() //nolint:errcheck
+		resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("GET %s: status %d", path, resp.StatusCode)
 		}
@@ -45,7 +43,6 @@ func TestListMeasure(t *testing.T) {
 
 	const runs = 100
 
-	// No-query runs.
 	noQTimes := make([]time.Duration, runs)
 	for i := range noQTimes {
 		start := time.Now()
@@ -53,7 +50,6 @@ func TestListMeasure(t *testing.T) {
 		noQTimes[i] = time.Since(start)
 	}
 
-	// Text-only query: "xenophon2718" appears only in body text, not in title/company/tags.
 	textTimes := make([]time.Duration, runs)
 	for i := range textTimes {
 		start := time.Now()
@@ -61,7 +57,6 @@ func TestListMeasure(t *testing.T) {
 		textTimes[i] = time.Since(start)
 	}
 
-	// Best fit with a Fit filter.
 	fitTimes := make([]time.Duration, runs)
 	for i := range fitTimes {
 		start := time.Now()
@@ -74,9 +69,6 @@ func TestListMeasure(t *testing.T) {
 	fmt.Printf("list p95 fit-filter: %v\n", percentile95(fitTimes))
 }
 
-// buildFixtureDB creates a temporary database populated with fixtureCount vacancies.
-// Each vacancy has an invented body of about 5 KB of HTML (~1.8 KB compressed).
-// One vacancy contains the text-only search token "xenophon2718".
 func buildFixtureDB(t *testing.T) *db.DB {
 	t.Helper()
 	dir := t.TempDir()
@@ -106,16 +98,13 @@ func buildFixtureDB(t *testing.T) *db.DB {
 			t.Fatalf("upsert vacancy %d: %v", i, err)
 		}
 	}
-	// Set profile keyword so that all fixture vacancies (titles contain "engineer")
-	// appear in the inbox visibility filter.
-	database.Exec(`UPDATE profile SET data='{"name":"Profile","keywords":["engineer"],"targetRoles":["Software Engineer"]}' WHERE id=1`) //nolint:errcheck
+	database.Exec(`UPDATE profile SET data='{"name":"Profile","keywords":["engineer"],"targetRoles":["Software Engineer"]}' WHERE id=1`)
 	if err := fit.Recompute(context.Background(), database, defaultRules, func(int, int, string) {}); err != nil {
 		t.Fatalf("recompute fit: %v", err)
 	}
 	return database
 }
 
-// makeFixtureBody returns about 5 KB of HTML. Vacancy 500 includes the text search token.
 func makeFixtureBody(index int) string {
 	var b strings.Builder
 	b.WriteString("<h2>About the role</h2>")
@@ -134,7 +123,6 @@ func makeFixtureBody(index int) string {
 		fmt.Fprintf(&b, "<li>Competitive benefit number %d in our package</li>", j)
 	}
 	b.WriteString("</ul>")
-	// Pad to approximately 5 KB.
 	para := "<p>We build software that helps teams collaborate more effectively across time zones and geographies. Our platform serves millions of users worldwide and processes billions of events each day, requiring engineers who understand both the craft of writing clean code and the operational realities of running distributed systems at scale.</p>"
 	for b.Len() < 4800 {
 		b.WriteString(para)
@@ -145,15 +133,13 @@ func makeFixtureBody(index int) string {
 	return b.String()
 }
 
-// TestVacancyViewMeasure measures the 95th-percentile vacancy view time over
-// the HTTP handler with 1,200 vacancies. Run with SIFTY_MEASURE=1; otherwise skipped.
 func TestVacancyViewMeasure(t *testing.T) {
 	if os.Getenv("SIFTY_MEASURE") != "1" {
 		t.Skip("set SIFTY_MEASURE=1 to run")
 	}
 	database := buildFixtureDB(t)
 	var firstID int64
-	database.QueryRow(`SELECT id FROM vacancy ORDER BY id LIMIT 1`).Scan(&firstID) //nolint:errcheck
+	database.QueryRow(`SELECT id FROM vacancy ORDER BY id LIMIT 1`).Scan(&firstID)
 	ts := newTestServer(t, database)
 	const runs = 100
 	times := make([]time.Duration, runs)
@@ -166,7 +152,7 @@ func TestVacancyViewMeasure(t *testing.T) {
 		if err != nil {
 			t.Fatalf("view: %v", err)
 		}
-		resp.Body.Close() //nolint:errcheck
+		resp.Body.Close()
 		times[i] = time.Since(start)
 	}
 	fmt.Printf("vacancy view p95: %v\n", percentile95(times))

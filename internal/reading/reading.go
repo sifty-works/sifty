@@ -1,6 +1,3 @@
-// Package reading holds what is known about a vacancy's conditions and reads
-// them by code from the fields a source states, the location, the tags and the
-// labelled lines of the text ("Salary: …", "Location: …").
 package reading
 
 import (
@@ -13,40 +10,36 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Vacancy is what code reads conditions from.
 type Vacancy struct {
 	Title    string
 	Location string
 	Tags     []string
-	Fields   map[string]string // structured fields a source states: salary, employment_type, workplace_type
-	Text     string            // plain text, one block per line
-	Full     bool              // the full text is available
+	Fields   map[string]string
+	Text     string
+	Full     bool
 }
 
-// Money is a stated cash range. A zero bound or an empty string is not stated.
 type Money struct {
 	Min, Max float64
-	Currency string // ISO code
-	Period   string // year, month, day, hour
-	Tax      string // gross, net
+	Currency string
+	Period   string
+	Tax      string
 }
 
-// Hours is the stated working time; Min and Max are weekly hours, 0 when not stated.
 type Hours struct {
-	Mode     string // full_time, part_time
+	Mode     string
 	Min, Max float64
 }
 
-// VacancyReading is what is known about a vacancy's conditions.
 type VacancyReading struct {
 	Title      string
 	Full       bool
 	Money      *Money
-	WorkModes  []string // remote, hybrid, onsite
-	Engagement string   // employment, contract
+	WorkModes  []string
+	Engagement string
 	Hours      *Hours
-	Locations  []string // place labels as stated
-	TimeZone   string   // a stated time zone as written
+	Locations  []string
+	TimeZone   string
 }
 
 //go:embed labels.yaml
@@ -60,8 +53,6 @@ var (
 	weeklyRe      = regexp.MustCompile(`(?i)(\d+(?:\.\d+)?)(?:\s*(?:-|–|—|to)\s*(\d+(?:\.\d+)?))?\s*(?:h|hr|hrs|hours)\s*(?:/|per)?\s*week`)
 )
 
-// FromCode reads the conditions code can read: source fields first, then the
-// location, the labelled lines of the text and the tags.
 func FromCode(v Vacancy) VacancyReading {
 	r := VacancyReading{Title: v.Title, Full: v.Full}
 	if s := v.Fields["salary"]; s != "" {
@@ -121,7 +112,6 @@ func FromCode(v Vacancy) VacancyReading {
 	return r
 }
 
-// addPlaces splits a location value; a part that is a work mode is a work mode.
 func (r *VacancyReading) addPlaces(value string) {
 	for _, part := range strings.FieldsFunc(value, func(c rune) bool { return c == '·' || c == ';' || c == '|' }) {
 		part = strings.TrimSpace(part)
@@ -139,7 +129,6 @@ func (r *VacancyReading) addMode(m string) {
 	}
 }
 
-// setHours reads full-time, part-time and weekly hours ("20–30 hours per week").
 func (r *VacancyReading) setHours(value string) {
 	low := strings.ToLower(value)
 	h := Hours{}
@@ -194,8 +183,6 @@ func engagement(low string) string {
 	return ""
 }
 
-// money reads a cash statement such as "USD 120,000 – 150,000 per year gross".
-// line is the whole line, which may name the currency, period and tax basis.
 func money(value, line string) *Money {
 	low := strings.ToLower(line)
 	salary := strings.Contains(low, "salary") || strings.Contains(low, " base ") || strings.Contains(low, "wage")
@@ -242,7 +229,7 @@ func money(value, line string) *Money {
 		}
 		m.Min, m.Max = min(amounts[0], amounts[1]), max(amounts[0], amounts[1])
 	case len(amounts) == 1 && (hasAny(low, " from ", "starting at", "starting from", "minimum", "at least", ">=") || strings.HasPrefix(low, "from ")):
-		m.Min = amounts[0] // a floor alone is not a top of the range
+		m.Min = amounts[0]
 	case len(amounts) == 1:
 		m.Max = amounts[0]
 	default:

@@ -10,9 +10,6 @@ import (
 	"github.com/sifty-works/sifty-server/internal/server"
 )
 
-// expectedRoutes lists every API route that must be in the registry.
-// A failure here means a route was removed from the typed adapter (server.Handle)
-// or was never registered through it.
 var expectedRoutes = []string{
 	"GET /api/status",
 	"GET /api/version",
@@ -49,9 +46,6 @@ var expectedRoutes = []string{
 	"GET /api/reference",
 }
 
-// TestContractAllRoutesRegistered verifies that every expected route is recorded
-// in the route registry (meaning it was registered via server.Handle or
-// server.HandleNoContent rather than raw mux.HandleFunc).
 func TestContractAllRoutesRegistered(t *testing.T) {
 	dir := t.TempDir()
 	_, cancel := startServe(t, dir)
@@ -68,10 +62,6 @@ func TestContractAllRoutesRegistered(t *testing.T) {
 	}
 }
 
-// TestContractResponseShapes makes a request to each registered GET route that
-// has no path parameters and validates that the JSON response body matches the
-// registered response type: required fields present, no unknown fields, null
-// only where the field is a pointer.
 func TestContractResponseShapes(t *testing.T) {
 	dir := t.TempDir()
 	port, cancel := startServe(t, dir)
@@ -87,10 +77,10 @@ func TestContractResponseShapes(t *testing.T) {
 		}
 		path := strings.TrimPrefix(ri.Pattern, "GET ")
 		if strings.Contains(path, "{") {
-			continue // skip routes that need a path parameter
+			continue
 		}
 		if ri.RespType == nil {
-			continue // no-content route
+			continue
 		}
 
 		t.Run(ri.Pattern, func(t *testing.T) {
@@ -120,11 +110,6 @@ func TestContractResponseShapes(t *testing.T) {
 	}
 }
 
-// TestContractSchemaMatchesShape verifies that for every registered response
-// type, the properties genSchema puts in the OpenAPI schema are exactly the
-// top-level fields ValidateShape checks. A schema property that is absent from
-// the Go shape (or vice versa) would cause clients generated from the YAML to
-// send or expect fields the server does not use.
 func TestContractSchemaMatchesShape(t *testing.T) {
 	dir := t.TempDir()
 	_, cancel := startServe(t, dir)

@@ -25,16 +25,12 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// oldCriteria maps the previous version's criterion names to the new ones.
 var oldCriteria = map[string]string{
 	"role.title": "role", "compensation.cash": "money", "geography.location": "location",
 	"geography.remote_restriction": "remote_restriction", "conditions.timezone": "time_zone",
 	"conditions.work_mode": "work_mode", "conditions.engagement": "engagement", "conditions.hours": "hours",
 }
 
-// expectedDifferences names the known causes of a difference. A criterion code
-// explains one differing criterion; a state code explains a number on one side
-// only. Codes are tried in this order.
 var expectedDifferences = []struct{ code, text string }{
 	{"E1", "a condition only the old model read"},
 	{"E2", "place given only as a city"},
@@ -53,17 +49,14 @@ var expectedDifferences = []struct{ code, text string }{
 	{"W1", "same criteria, number differs: the old result was computed with other weights"},
 }
 
-// fitComparison counts the comparison of Fits you with the previous version.
 type fitComparison struct {
 	Found                       bool
 	Equal, Unexplained, NotComp int
 	Expected, NotCurrent        int
-	ByCode                      map[string]int // expected rows that use a code
-	UnexplainedBy               map[string]int // unexplained criteria, or "state"
+	ByCode                      map[string]int
+	UnexplainedBy               map[string]int
 }
 
-// importRules carries the previous weights and exchange rates where they differ
-// from the defaults, and lists them in the report.
 func importRules(fromDir string, store *config.Store, report *importReport) error {
 	var runtime struct {
 		QuickMatch struct {
@@ -87,7 +80,7 @@ func importRules(fromDir string, store *config.Store, report *importReport) erro
 	defaults := config.Defaults()
 	weights := map[string]float64{}
 	if q := runtime.QuickMatch; q.Version != 0 && len(q.CriterionWeights) > 0 {
-		for old, name := range oldCriteria { // an explicit set replaced the whole default set
+		for old, name := range oldCriteria {
 			weights[name] = q.CriterionWeights[old]
 		}
 	}
@@ -123,7 +116,6 @@ type oldFit struct {
 	} `json:"fitsYou"`
 }
 
-// value is one criterion of a result: its utility and whether it was compared.
 type value struct {
 	u     float64
 	known bool
@@ -139,7 +131,6 @@ func values(f fit.Fit) map[string]value {
 	return out
 }
 
-// oldRow is one previous result with the vacancy fields it was computed from.
 type oldRow struct {
 	profile                      string
 	job                          int64
@@ -149,9 +140,6 @@ type oldRow struct {
 	tags                         string
 }
 
-// compareFit computes Fits you of every current old result with the imported
-// data and settings, counts equal and different results, and writes one row per
-// difference to <data>/fit-comparison.tsv.
 func compareFit(ctx context.Context, old *sql.DB, newDB *db.DB, cfg config.Config, report *importReport, dataDir string) error {
 	var n int
 	if err := old.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE name='match_fit_results'`).Scan(&n); err != nil || n == 0 {
@@ -162,7 +150,7 @@ func compareFit(ctx context.Context, old *sql.DB, newDB *db.DB, cfg config.Confi
 	rules := fit.Rules{Weights: cfg.Weights, Rates: cfg.Rates}
 
 	userRev := 0
-	old.QueryRowContext(ctx, `SELECT revision FROM users LIMIT 1`).Scan(&userRev) //nolint:errcheck
+	old.QueryRowContext(ctx, `SELECT revision FROM users LIMIT 1`).Scan(&userRev)
 	profileRev := map[string]int{}
 	identities := map[string]map[string]int{}
 	var rows []oldRow
@@ -319,7 +307,6 @@ func compareFit(ctx context.Context, old *sql.DB, newDB *db.DB, cfg config.Confi
 	return os.WriteFile(filepath.Join(dataDir, "fit-comparison.tsv"), []byte(strings.Join(out, "\n")+"\n"), 0600)
 }
 
-// diffCase is one differing result with what its causes are checked against.
 type diffCase struct {
 	ctx        context.Context
 	old        *sql.DB
@@ -334,12 +321,10 @@ type diffCase struct {
 	folded     []string
 }
 
-// with scores a changed reading and returns the value of one criterion.
 func (d diffCase) with(r reading.VacancyReading, name string) value {
 	return values(fit.Score(d.pv, r, d.rules))[name]
 }
 
-// stateCause explains a number on one side only.
 func (d diffCase) stateCause(oldState, newState string) string {
 	switch {
 	case d.merged:
@@ -350,8 +335,6 @@ func (d diffCase) stateCause(oldState, newState string) string {
 	return ""
 }
 
-// explain returns the code of the first expected difference that causes the
-// difference of one criterion, or "".
 func (d diffCase) explain(name string) string {
 	o, n := d.oldV[name], d.newV[name]
 	geo := name == "location" || name == "remote_restriction" || name == "time_zone"
@@ -371,7 +354,7 @@ func (d diffCase) explain(name string) string {
 			before.Text = d.row.description
 			r := reading.FromCode(before)
 			applies = !reflect.DeepEqual(r, d.now) && d.with(r, name).same(o)
-		case "E4": // the previous version trusted no board's location without corroboration and read no tags
+		case "E4":
 			if (name == "location" || name == "remote_restriction") && !o.known && o.u == 0.5 && (d.v.Location != "" || len(d.v.Tags) > 0) {
 				noBoard := d.v
 				noBoard.Location, noBoard.Tags = "", nil
@@ -416,7 +399,6 @@ func (d diffCase) explain(name string) string {
 	return ""
 }
 
-// foldedCriteria names the criteria a folded legacy field concerns.
 var foldedCriteria = map[string][]string{
 	"work-mode limits": {"work_mode"}, "work arrangement": {"work_mode"},
 	"geography current": {"location", "time_zone"}, "geography desired": {"location", "time_zone"},
@@ -424,7 +406,6 @@ var foldedCriteria = map[string][]string{
 	"engagement preferred": {"engagement"},
 }
 
-// scope reports whether a reading is remote, unrestricted remote, and whether all its places are known.
 func scope(r reading.VacancyReading) (remote, open, known bool) {
 	remote = slices.Contains(r.WorkModes, "remote")
 	open, known = remote, true
@@ -435,7 +416,6 @@ func scope(r reading.VacancyReading) (remote, open, known bool) {
 	return remote, open, known
 }
 
-// present reports whether a reading states the condition a criterion compares.
 func present(r reading.VacancyReading, name string) bool {
 	switch name {
 	case "money":
@@ -454,12 +434,10 @@ func present(r reading.VacancyReading, name string) bool {
 	return true
 }
 
-// modelOnly reports whether the old model's reading states the condition a
-// criterion compares while the old code facts lack it.
 func modelOnly(ctx context.Context, old *sql.DB, job int64, name string) bool {
 	var extJSON, factsJSON string
-	old.QueryRowContext(ctx, `SELECT record FROM match_vacancy_extractions WHERE job_id=? ORDER BY created_at DESC LIMIT 1`, job).Scan(&extJSON) //nolint:errcheck
-	old.QueryRowContext(ctx, `SELECT facts FROM match_job_facts WHERE job_id=?`, job).Scan(&factsJSON)                                           //nolint:errcheck
+	old.QueryRowContext(ctx, `SELECT record FROM match_vacancy_extractions WHERE job_id=? ORDER BY created_at DESC LIMIT 1`, job).Scan(&extJSON)
+	old.QueryRowContext(ctx, `SELECT facts FROM match_job_facts WHERE job_id=?`, job).Scan(&factsJSON)
 	var ext struct {
 		Conditions map[string]*struct{ Value string } `json:"conditions"`
 	}
@@ -476,7 +454,7 @@ func modelOnly(ctx context.Context, old *sql.DB, job int64, name string) bool {
 	if json.Unmarshal([]byte(extJSON), &ext) != nil {
 		return false
 	}
-	json.Unmarshal([]byte(factsJSON), &facts) //nolint:errcheck
+	json.Unmarshal([]byte(factsJSON), &facts)
 	has := func(r json.RawMessage) bool { return len(r) > 0 && string(r) != "null" }
 	locations := len(facts.Geography.HiringLocations) > 0
 	keys := map[string]map[string]bool{
@@ -496,14 +474,12 @@ func modelOnly(ctx context.Context, old *sql.DB, job int64, name string) bool {
 	return false
 }
 
-// metadataOnly reports whether an old description only repeats the title, the
-// tags or both, which the previous version read as no text.
 func metadataOnly(r oldRow) bool {
 	norm := func(s string) string {
 		return strings.ToLower(strings.Join(strings.Fields(strings.NewReplacer(",", " ", ";", " ", ":", " ").Replace(s)), " "))
 	}
 	var tags []string
-	json.Unmarshal([]byte(r.tags), &tags) //nolint:errcheck
+	json.Unmarshal([]byte(r.tags), &tags)
 	for i := range tags {
 		tags[i] = norm(tags[i])
 	}
@@ -511,8 +487,6 @@ func metadataOnly(r oldRow) bool {
 	return desc != "" && (desc == title || joined != "" && (desc == joined || title != "" && (desc == title+" "+joined || desc == joined+" "+title)))
 }
 
-// foldedLabels returns the labels of legacy values folded at import for the
-// profile and for My data.
 func (r *importReport) foldedLabels(profileID int64) []string {
 	var out []string
 	for _, line := range r.LegacyFolded {
@@ -532,7 +506,6 @@ func or(s, def string) string {
 	return s
 }
 
-// formatFitComparison writes the comparison section of the report.
 func formatFitComparison(sb *strings.Builder, c fitComparison) {
 	fmt.Fprintf(sb, "Fits you compared with the previous version:\n")
 	if !c.Found {

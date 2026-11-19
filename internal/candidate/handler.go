@@ -20,10 +20,6 @@ import (
 	"github.com/sifty-works/sifty-server/internal/server"
 )
 
-// --- request and response types ---
-
-// MePatchReq is the body for PATCH /api/me. Each field is a raw JSON section;
-// nil means the section was not sent and must not be changed.
 type MePatchReq struct {
 	DisplayName        *string              `json:"displayName,omitempty"`
 	LegalName          *string              `json:"legalName,omitempty"`
@@ -44,25 +40,21 @@ type MePatchReq struct {
 	Demographics       *Demographics        `json:"demographics,omitempty"`
 }
 
-// ProfileListItem is one entry in GET /api/profiles.
 type ProfileListItem struct {
 	ID     int64  `json:"id"`
 	Name   string `json:"name"`
 	Active bool   `json:"active"`
 }
 
-// ProfileListResp is the response for GET /api/profiles.
 type ProfileListResp struct {
 	Profiles []ProfileListItem `json:"profiles"`
 }
 
-// InheritedSource describes from which profile a field is inherited.
 type InheritedSource struct {
 	ProfileID   int64  `json:"profileId"`
 	ProfileName string `json:"profileName"`
 }
 
-// ProfileDetailResp is the response for GET /api/profiles/{id}.
 type ProfileDetailResp struct {
 	ID        int64                      `json:"id"`
 	Name      string                     `json:"name"`
@@ -73,13 +65,10 @@ type ProfileDetailResp struct {
 	Headline  string                     `json:"headline"`
 }
 
-// CreateProfileReq is the body for POST /api/profiles.
 type CreateProfileReq struct {
 	Name string `json:"name"`
 }
 
-// ProfilePatchReq is the body for PATCH /api/profiles/{id}.
-// Fields that are nil were not sent and must not be changed.
 type ProfilePatchReq struct {
 	Name               *string       `json:"name,omitempty"`
 	Headline           *string       `json:"headline,omitempty"`
@@ -97,12 +86,10 @@ type ProfilePatchReq struct {
 	OtherRequirements  *string       `json:"otherRequirements,omitempty"`
 }
 
-// SetActiveReq is the body for PUT /api/active-profile.
 type SetActiveReq struct {
 	ID int64 `json:"id"`
 }
 
-// QAItem is one entry in the Questions & Answers list.
 type QAItem struct {
 	ID        int64  `json:"id"`
 	Question  string `json:"question"`
@@ -111,32 +98,25 @@ type QAItem struct {
 	UpdatedAt string `json:"updatedAt"`
 }
 
-// QAListResp is the response for GET /api/qa.
 type QAListResp struct {
 	Items []QAItem `json:"items"`
 }
 
-// QACreateReq is the body for POST /api/qa.
 type QACreateReq struct {
 	Question string `json:"question"`
 	Answer   string `json:"answer,omitempty"`
 }
 
-// QAPatchReq is the body for PATCH /api/qa.
 type QAPatchReq struct {
 	ID       int64   `json:"id"`
 	Question *string `json:"question,omitempty"`
 	Answer   *string `json:"answer,omitempty"`
 }
 
-// QADeleteReq is the body for DELETE /api/qa.
 type QADeleteReq struct {
 	ID int64 `json:"id"`
 }
 
-// --- helpers ---
-
-// LoadMe reads My data.
 func LoadMe(ctx context.Context, database *db.DB) (MeData, error) {
 	var dataJSON string
 	err := database.QueryRowContext(ctx, `SELECT data FROM me WHERE id=1`).Scan(&dataJSON)
@@ -153,7 +133,6 @@ func LoadMe(ctx context.Context, database *db.DB) (MeData, error) {
 	return me, nil
 }
 
-// saveMeData writes the Me record to the database.
 func saveMeData(ctx context.Context, database *db.DB, me MeData) error {
 	NormalizeMeData(&me)
 	data, err := json.Marshal(me)
@@ -167,22 +146,18 @@ func saveMeData(ctx context.Context, database *db.DB, me MeData) error {
 	return nil
 }
 
-// activeProfileID returns the id of the active profile from settings.
-// Falls back to the profile with the lowest id when not set.
 func activeProfileID(ctx context.Context, database *db.DB) (int64, error) {
 	var v string
 	err := database.QueryRowContext(ctx, `SELECT value FROM settings WHERE key='active_profile'`).Scan(&v)
 	if err == nil {
 		id, parseErr := strconv.ParseInt(v, 10, 64)
 		if parseErr == nil && id > 0 {
-			// Verify it still exists.
 			var check int64
 			if chkErr := database.QueryRowContext(ctx, `SELECT id FROM profile WHERE id=?`, id).Scan(&check); chkErr == nil {
 				return check, nil
 			}
 		}
 	}
-	// Fall back to the first profile.
 	var id int64
 	if dbErr := database.QueryRowContext(ctx, `SELECT id FROM profile ORDER BY id LIMIT 1`).Scan(&id); dbErr != nil {
 		if dbErr == sql.ErrNoRows {
@@ -193,7 +168,6 @@ func activeProfileID(ctx context.Context, database *db.DB) (int64, error) {
 	return id, nil
 }
 
-// setActiveProfile writes the active profile setting.
 func setActiveProfile(ctx context.Context, database *db.DB, id int64) error {
 	_, err := database.ExecContext(ctx,
 		`INSERT OR REPLACE INTO settings (key, value) VALUES ('active_profile', ?)`,
@@ -204,7 +178,6 @@ func setActiveProfile(ctx context.Context, database *db.DB, id int64) error {
 	return nil
 }
 
-// loadProfileRow reads one profile row by id. Returns NotFound when absent.
 func loadProfileRow(ctx context.Context, database *db.DB, id int64) (ProfileData, error) {
 	var dataJSON string
 	err := database.QueryRowContext(ctx, `SELECT data FROM profile WHERE id=?`, id).Scan(&dataJSON)
@@ -221,7 +194,6 @@ func loadProfileRow(ctx context.Context, database *db.DB, id int64) (ProfileData
 	return pd, nil
 }
 
-// saveProfileRow writes one profile row.
 func saveProfileRow(ctx context.Context, database *db.DB, id int64, pd ProfileData) error {
 	NormalizeProfileData(&pd)
 	data, err := json.Marshal(pd)
@@ -235,7 +207,6 @@ func saveProfileRow(ctx context.Context, database *db.DB, id int64, pd ProfileDa
 	return nil
 }
 
-// firstProfileID returns the id of the first (lowest-id) profile.
 func firstProfileID(ctx context.Context, database *db.DB) (int64, error) {
 	var id int64
 	err := database.QueryRowContext(ctx, `SELECT id FROM profile ORDER BY id LIMIT 1`).Scan(&id)
@@ -248,16 +219,10 @@ func firstProfileID(ctx context.Context, database *db.DB) (int64, error) {
 	return id, nil
 }
 
-// buildHeadline returns the headline to show for a profile.
-// When the profile has an explicit headline it is returned; otherwise a line
-// "role · company · city, country" is built from the first experience entry
-// and the currentLocation from Me data, or "Candidate profile" when nothing
-// is available.
 func buildHeadline(pd ProfileData, me MeData) string {
 	if strings.TrimSpace(pd.Headline) != "" {
 		return pd.Headline
 	}
-	// Find the current or first experience role.
 	var exp *Experience
 	for i := range me.Experience {
 		if me.Experience[i].Current {
@@ -292,16 +257,12 @@ func buildHeadline(pd ProfileData, me MeData) string {
 	return strings.Join(parts, " · ")
 }
 
-// jsonEqual reports whether a and b have the same JSON representation.
 func jsonEqual(a, b any) bool {
 	aj, _ := json.Marshal(a)
 	bj, _ := json.Marshal(b)
 	return string(aj) == string(bj)
 }
 
-// clearInheritedUnchanged nils out inheritable patch fields that equal the first
-// profile's value when own has no value for them. This preserves the
-// "saved unchanged stays inherited" rule for non-first profiles.
 func clearInheritedUnchanged(patch *ProfilePatchReq, own, first ProfileData) {
 	if patch.Compensation != nil && own.Compensation == nil && jsonEqual(patch.Compensation, first.Compensation) {
 		patch.Compensation = nil
@@ -323,9 +284,6 @@ func clearInheritedUnchanged(patch *ProfilePatchReq, own, first ProfileData) {
 	}
 }
 
-// mergePatch overlays the non-nil fields of src onto dst and returns the result.
-// src must be a struct whose pointer fields carry omitempty; absent (nil) fields
-// are skipped. String fields at the top level of the result are trimmed.
 func mergePatch[D any](dst D, src any) (D, error) {
 	base, _ := json.Marshal(dst)
 	over, _ := json.Marshal(src)
@@ -334,7 +292,7 @@ func mergePatch[D any](dst D, src any) (D, error) {
 		return dst, err
 	}
 	var p map[string]json.RawMessage
-	json.Unmarshal(over, &p) //nolint:errcheck
+	json.Unmarshal(over, &p)
 	for k, v := range p {
 		m[k] = v
 	}
@@ -347,8 +305,6 @@ func mergePatch[D any](dst D, src any) (D, error) {
 	return result, nil
 }
 
-// trimStrings trims leading and trailing whitespace from every exported string
-// field at the top level of the struct pointed to by v.
 func trimStrings[T any](v *T) {
 	rv := reflect.ValueOf(v).Elem()
 	for i := 0; i < rv.NumField(); i++ {
@@ -358,15 +314,10 @@ func trimStrings[T any](v *T) {
 	}
 }
 
-// photoPath returns the path where the profile photo is stored.
 func photoPath(filesDir string) string {
 	return filepath.Join(filesDir, "me_photo")
 }
 
-// RegisterRoutes registers all candidate routes on mux.
-// filesDir is the path to the data files directory (e.g. <data>/files/); used for photo storage.
-// When filesDir is empty, photo endpoints are registered but always return an error.
-// changed, when set, is called after My data or a profile was saved or created.
 func RegisterRoutes(mux *http.ServeMux, database *db.DB, filesDir string, logger *slog.Logger, changed func()) {
 	notify := func() {
 		if changed != nil {
@@ -433,7 +384,6 @@ func RegisterRoutes(mux *http.ServeMux, database *db.DB, filesDir string, logger
 		if err != nil {
 			return ProfileDetailResp{}, fmt.Errorf("candidate: new profile id: %w", err)
 		}
-		// Make the new profile active.
 		if err := setActiveProfile(ctx, database, newID); err != nil {
 			return ProfileDetailResp{}, err
 		}
@@ -451,11 +401,9 @@ func RegisterRoutes(mux *http.ServeMux, database *db.DB, filesDir string, logger
 		if err != nil {
 			return ProfileDetailResp{}, err
 		}
-		// Reject empty name explicitly sent.
 		if patch.Name != nil && strings.TrimSpace(*patch.Name) == "" {
-			patch.Name = nil // ignore empty name silently per document
+			patch.Name = nil
 		}
-		// For non-first profiles: sending an inherited value unchanged keeps it inherited.
 		firstID, _ := firstProfileID(ctx, database)
 		if firstID != id {
 			if firstPD, fErr := loadProfileRow(ctx, database, firstID); fErr == nil {
@@ -489,16 +437,14 @@ func RegisterRoutes(mux *http.ServeMux, database *db.DB, filesDir string, logger
 		if id == firstID {
 			return ProfileListResp{}, apperr.Invalid{Message: "The first profile cannot be deleted."}
 		}
-		// Verify the profile exists.
 		if _, err := loadProfileRow(ctx, database, id); err != nil {
 			return ProfileListResp{}, err
 		}
-		// Remove decisions, profile exclusions, and the profile itself.
 		tx, err := database.BeginTx(ctx, nil)
 		if err != nil {
 			return ProfileListResp{}, fmt.Errorf("candidate: delete profile tx: %w", err)
 		}
-		defer tx.Rollback() //nolint:errcheck
+		defer tx.Rollback()
 		if _, err := tx.ExecContext(ctx, `DELETE FROM exclusion WHERE profile_id=?`, id); err != nil {
 			return ProfileListResp{}, fmt.Errorf("candidate: delete profile exclusions: %w", err)
 		}
@@ -511,12 +457,10 @@ func RegisterRoutes(mux *http.ServeMux, database *db.DB, filesDir string, logger
 		if err := tx.Commit(); err != nil {
 			return ProfileListResp{}, fmt.Errorf("candidate: delete profile commit: %w", err)
 		}
-		// If this was the active profile, switch to the first.
 		activeID, _ := activeProfileID(ctx, database)
 		if activeID == 0 || activeID == id {
-			setActiveProfile(ctx, database, firstID) //nolint:errcheck
+			setActiveProfile(ctx, database, firstID)
 		}
-		// Return updated list.
 		return listProfiles(ctx, database)
 	})
 
@@ -525,7 +469,6 @@ func RegisterRoutes(mux *http.ServeMux, database *db.DB, filesDir string, logger
 		if req.ID == 0 {
 			return ProfileListResp{}, apperr.Invalid{Message: "ID is required."}
 		}
-		// Verify it exists.
 		if _, err := loadProfileRow(ctx, database, req.ID); err != nil {
 			return ProfileListResp{}, err
 		}
@@ -535,11 +478,6 @@ func RegisterRoutes(mux *http.ServeMux, database *db.DB, filesDir string, logger
 		return listProfiles(ctx, database)
 	})
 
-	// --- photo ---
-
-	// PUT /api/me/photo accepts a raw png, jpg or webp image body (at most 2 MiB).
-	// The server.BinaryUploadPaths option must include "/api/me/photo" for this route
-	// to bypass the JSON Content-Type check and the 1 MB body limit.
 	server.HandleRaw(mux, "PUT /api/me/photo", func(w http.ResponseWriter, r *http.Request) {
 		if filesDir == "" {
 			server.MapError(w, fmt.Errorf("candidate: no files dir configured"), logger)
@@ -581,7 +519,6 @@ func RegisterRoutes(mux *http.ServeMux, database *db.DB, filesDir string, logger
 		return struct{}{}, nil
 	})
 
-	// GET /api/me/photo serves the raw image bytes with the detected content type.
 	server.HandleRaw(mux, "GET /api/me/photo", func(w http.ResponseWriter, r *http.Request) {
 		if filesDir == "" {
 			server.MapError(w, apperr.NotFound{Message: "No photo set."}, logger)
@@ -599,10 +536,8 @@ func RegisterRoutes(mux *http.ServeMux, database *db.DB, filesDir string, logger
 		ct := http.DetectContentType(body)
 		w.Header().Set("Content-Type", ct)
 		w.WriteHeader(http.StatusOK)
-		w.Write(body) //nolint:errcheck
+		w.Write(body)
 	})
-
-	// --- Q&A ---
 
 	server.Handle(mux, "GET /api/qa", logger, func(r *http.Request, _ struct{}) (QAListResp, error) {
 		ctx := r.Context()
@@ -701,14 +636,11 @@ func RegisterRoutes(mux *http.ServeMux, database *db.DB, filesDir string, logger
 		return struct{}{}, nil
 	})
 
-	// --- reference ---
-
 	server.Handle(mux, "GET /api/reference", logger, func(r *http.Request, _ struct{}) (ReferenceResp, error) {
 		return referenceData, nil
 	})
 }
 
-// listProfiles reads all profiles and returns a ProfileListResp.
 func listProfiles(ctx context.Context, database *db.DB) (ProfileListResp, error) {
 	activeID, _ := activeProfileID(ctx, database)
 	rows, err := database.QueryContext(ctx, `SELECT id, data FROM profile ORDER BY id`)
@@ -724,7 +656,7 @@ func listProfiles(ctx context.Context, database *db.DB) (ProfileListResp, error)
 			return ProfileListResp{}, err
 		}
 		var pd ProfileData
-		json.Unmarshal([]byte(dataJSON), &pd) //nolint:errcheck
+		json.Unmarshal([]byte(dataJSON), &pd)
 		items = append(items, ProfileListItem{ID: id, Name: pd.Name, Active: id == activeID})
 	}
 	if err := rows.Err(); err != nil {
@@ -736,7 +668,6 @@ func listProfiles(ctx context.Context, database *db.DB) (ProfileListResp, error)
 	return ProfileListResp{Profiles: items}, nil
 }
 
-// loadProfileDetail builds a ProfileDetailResp for profile id with own data own.
 func loadProfileDetail(ctx context.Context, database *db.DB, id int64, own ProfileData) (ProfileDetailResp, error) {
 	firstID, err := firstProfileID(ctx, database)
 	if err != nil {
@@ -770,7 +701,6 @@ func loadProfileDetail(ctx context.Context, database *db.DB, id int64, own Profi
 	}, nil
 }
 
-// parseProfileID parses the {id} path value from the request.
 func parseProfileID(r *http.Request) (int64, error) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
@@ -779,14 +709,10 @@ func parseProfileID(r *http.Request) (int64, error) {
 	return id, nil
 }
 
-// ActiveProfileID is the exported version of activeProfileID for use in inbox.
 func ActiveProfileID(ctx context.Context, database *db.DB) (int64, error) {
 	return activeProfileID(ctx, database)
 }
 
-// EffectiveProfile loads a profile with every empty inheritable field filled
-// from the first profile (see Effective). It answers NotFound when the profile
-// does not exist.
 func EffectiveProfile(ctx context.Context, database *db.DB, profileID int64) (ProfileData, error) {
 	pd, err := loadProfileRow(ctx, database, profileID)
 	if err != nil {
@@ -803,10 +729,6 @@ func EffectiveProfile(ctx context.Context, database *db.DB, profileID int64) (Pr
 	return Effective(pd, base), nil
 }
 
-// ProfileSearch loads the search configuration of a profile for use in the
-// inbox visibility filter. It restricts the effective target industries to
-// vocabNames when vocabNames is non-nil. When the profile cannot be loaded an
-// empty Profile is returned so callers receive a "1=0" visibility filter.
 func ProfileSearch(ctx context.Context, database *db.DB, profileID int64, vocabNames []string) (Profile, error) {
 	pd, err := EffectiveProfile(ctx, database, profileID)
 	if err != nil {

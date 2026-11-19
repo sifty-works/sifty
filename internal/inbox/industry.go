@@ -10,21 +10,15 @@ import (
 	"github.com/sifty-works/sifty-server/internal/server"
 )
 
-// IndustryItem is one industry in the vocabulary as returned or accepted by the API.
 type IndustryItem struct {
 	Name     string   `json:"name"`
 	Keywords []string `json:"keywords"`
 }
 
-// IndustriesResp is the response for GET /api/industries and PUT /api/industries.
 type IndustriesResp struct {
 	Industries []IndustryItem `json:"industries"`
 }
 
-// RegisterIndustryRoutes registers GET and PUT /api/industries on mux.
-// getVocab returns the current vocabulary items; saveVocab validates and
-// persists a new vocabulary, returning an error on validation failure.
-// Either may be nil when registering routes for schema-generation only.
 func RegisterIndustryRoutes(
 	mux *http.ServeMux,
 	logger *slog.Logger,
@@ -52,8 +46,6 @@ func RegisterIndustryRoutes(
 	})
 }
 
-// validateIndustryItems checks that industries is non-empty, every name is
-// non-empty and unique, and every industry has at least one non-empty keyword.
 func validateIndustryItems(industries []IndustryItem) error {
 	if len(industries) == 0 {
 		return apperr.Invalid{Message: "Vocabulary must contain at least one industry."}

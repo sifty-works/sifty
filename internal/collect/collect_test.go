@@ -28,8 +28,6 @@ import (
 
 var base = time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 
-// --- test setup helpers ------------------------------------------------------
-
 func openDB(t *testing.T) *db.DB {
 	t.Helper()
 	d, err := db.Open(filepath.Join(t.TempDir(), "test.db"), db.Migrations)
@@ -55,33 +53,29 @@ func newEnv(t *testing.T) *env {
 	return newEnvClock(t, func() time.Time { return base }, false)
 }
 
-// addSource sets e's config to a single enabled source at url.
 func addSource(t *testing.T, e *env, url string) {
 	t.Helper()
-	e.store.Update(func(c *config.Config) error { //nolint:errcheck
+	e.store.Update(func(c *config.Config) error {
 		c.Sources = []config.SourceConfig{{URL: url, Enabled: true}}
 		return nil
 	})
 }
 
-// setSources replaces e's config sources with one enabled entry per url.
 func setSources(t *testing.T, e *env, urls ...string) {
 	t.Helper()
 	srcs := make([]config.SourceConfig, len(urls))
 	for i, u := range urls {
 		srcs[i] = config.SourceConfig{URL: u, Enabled: true}
 	}
-	e.store.Update(func(c *config.Config) error { c.Sources = srcs; return nil }) //nolint:errcheck
+	e.store.Update(func(c *config.Config) error { c.Sources = srcs; return nil })
 }
 
-// runCollect enqueues a forced collect run and waits for it to finish.
 func runCollect(t *testing.T, e *env) runner.Job {
 	t.Helper()
-	e.r.Enqueue(runner.Spec{Kind: "collect"}) //nolint:errcheck
+	e.r.Enqueue(runner.Spec{Kind: "collect"})
 	return waitJob(t, e.r)
 }
 
-// newEnvClock creates a test environment with a custom clock and optional offline mode.
 func newEnvClock(t *testing.T, now func() time.Time, offline bool) *env {
 	t.Helper()
 	database := openDB(t)
@@ -108,7 +102,7 @@ func newEnvClock(t *testing.T, now func() time.Time, offline bool) *env {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	go r.Start(ctx) //nolint:errcheck
+	go r.Start(ctx)
 
 	return &env{srv: srv, fm: fm, store: store, r: r, col: col, db: database, dir: dir}
 }
@@ -126,11 +120,10 @@ func (e *env) get(t *testing.T, path string) map[string]any {
 		t.Fatalf("GET %s: status %d", path, resp.StatusCode)
 	}
 	var out map[string]any
-	json.NewDecoder(resp.Body).Decode(&out) //nolint:errcheck
+	json.NewDecoder(resp.Body).Decode(&out)
 	return out
 }
 
-// mutate sends a JSON request with the given method and returns body + status.
 func (e *env) mutate(t *testing.T, method, path string, body map[string]any) (map[string]any, int) {
 	t.Helper()
 	b, _ := json.Marshal(body)
@@ -143,11 +136,10 @@ func (e *env) mutate(t *testing.T, method, path string, body map[string]any) (ma
 	}
 	defer resp.Body.Close()
 	var out map[string]any
-	json.NewDecoder(resp.Body).Decode(&out) //nolint:errcheck
+	json.NewDecoder(resp.Body).Decode(&out)
 	return out, resp.StatusCode
 }
 
-// waitJob polls Last until the most recent collect job reaches a final state.
 func waitJob(t *testing.T, r *runner.Runner) runner.Job {
 	t.Helper()
 	deadline := time.After(5 * time.Second)
@@ -165,8 +157,6 @@ func waitJob(t *testing.T, r *runner.Runner) runner.Job {
 	}
 }
 
-// --- test fixtures -----------------------------------------------------------
-
 const ghBoardResponse = `{"company":{"name":"Acme Corp"},
 "jobs":[{"id":1,"title":"Engineer","absolute_url":"https://boards.greenhouse.io/acme/jobs/1","content":"<p>Job text</p>"},
 {"id":2,"title":"Designer","absolute_url":"https://boards.greenhouse.io/acme/jobs/2","content":"<p>Design text</p>"}]}`
@@ -180,8 +170,6 @@ const emptyFeedXML = `<?xml version="1.0"?>
 <rss version="2.0"><channel></channel></rss>`
 
 const badPageHTML = `<html><body><p>Not a job site</p></body></html>`
-
-// --- Run behaviour -----------------------------------------------------------
 
 func TestRunWithMixedSourcesEndsDone(t *testing.T) {
 	e := newEnv(t)
@@ -243,11 +231,9 @@ func TestRunDeduplicatesPostingsWithinOneRun(t *testing.T) {
 
 	runCollect(t, e)
 
-	// Catalogue counter must be 1 (one write, not two for the same URL).
 	if cat := e.get(t, "/api/status")["catalogue"].(float64); cat != 1 {
 		t.Errorf("catalogue: got %v, want 1", cat)
 	}
-	// Exactly one request per source.
 	if reqs := e.fm.Requests(); len(reqs) != 2 {
 		t.Errorf("requests: got %d, want 2: %v", len(reqs), reqs)
 	}
@@ -264,33 +250,26 @@ func TestRunTwoBoardsOnSameAPIHostReadSequentially(t *testing.T) {
 	setSources(t, e, "https://boards.greenhouse.io/acme", "https://boards.greenhouse.io/otherco")
 
 	runCollect(t, e)
-	// Both boards must be fetched; each board is one request.
 	if reqs := e.fm.Requests(); len(reqs) != 2 {
 		t.Errorf("requests: got %d, want 2 (one per board): %v", len(reqs), reqs)
 	}
 }
-
-// --- Due and POST /api/collect -----------------------------------------------
 
 func TestDueAndCollectDeduplication(t *testing.T) {
 	e := newEnv(t)
 	e.fm.Set("https://feeds.example.com/jobs.xml", fetchtest.MapEntry{Err: fetch.ErrNotFound})
 	addSource(t, e, "https://feeds.example.com/jobs.xml")
 
-	// No prior run, auto=true → Due returns true.
 	if !e.col.Due(base) {
 		t.Error("Due: want true when no prior run and auto is on")
 	}
 
-	// POST enqueues a run; Due returns false immediately after (interval not elapsed).
 	e.mutate(t, "POST", "/api/collect", map[string]any{"force": false})
 	if e.col.Due(base) {
 		t.Error("Due: want false after collect is enqueued (interval not yet elapsed)")
 	}
-	waitJob(t, e.r) // let the POST-triggered job finish before testing dedup
+	waitJob(t, e.r)
 
-	// Two consecutive Enqueue calls for the same kind deduplicate: the second
-	// returns the same id as the first because the job is still queued.
 	id1, _ := e.r.Enqueue(runner.Spec{Kind: "collect"})
 	id2, _ := e.r.Enqueue(runner.Spec{Kind: "collect"})
 	if id1 != id2 {
@@ -299,8 +278,7 @@ func TestDueAndCollectDeduplication(t *testing.T) {
 
 	waitJob(t, e.r)
 
-	// Auto off → Due returns false regardless.
-	e.store.Update(func(c *config.Config) error { c.Collection.Auto = false; return nil }) //nolint:errcheck
+	e.store.Update(func(c *config.Config) error { c.Collection.Auto = false; return nil })
 	if e.col.Due(base) {
 		t.Error("Due: want false when auto is off")
 	}
@@ -310,7 +288,7 @@ func TestDueIntervalMeasuredFromLastRunCreated(t *testing.T) {
 	e := newEnv(t)
 	e.fm.Set("https://feeds.example.com/jobs.xml", fetchtest.MapEntry{Err: fetch.ErrNotFound})
 	addSource(t, e, "https://feeds.example.com/jobs.xml")
-	e.store.Update(func(c *config.Config) error { //nolint:errcheck
+	e.store.Update(func(c *config.Config) error {
 		c.Collection.Interval = config.Duration(2 * time.Hour)
 		return nil
 	})
@@ -328,7 +306,7 @@ func TestPostCollectForceTrueIgnoresAutoSetting(t *testing.T) {
 	e := newEnv(t)
 	e.fm.Set("https://feeds.example.com/jobs.xml", fetchtest.MapEntry{Err: fetch.ErrNotFound})
 	addSource(t, e, "https://feeds.example.com/jobs.xml")
-	e.store.Update(func(c *config.Config) error { //nolint:errcheck
+	e.store.Update(func(c *config.Config) error {
 		c.Collection.Auto = false
 		return nil
 	})
@@ -349,10 +327,8 @@ func TestPostCollectOfflineBlocksAutomatic(t *testing.T) {
 		t.Error("force=false should not enqueue when offline")
 	}
 	e.mutate(t, "POST", "/api/collect", map[string]any{"force": true})
-	waitJob(t, e.r) // job completes instantly (no sources)
+	waitJob(t, e.r)
 }
-
-// --- /api/sources endpoints --------------------------------------------------
 
 func TestSourcesListIsInitiallyEmpty(t *testing.T) {
 	e := newEnv(t)
@@ -393,7 +369,7 @@ func TestAddSourceAppearsInList(t *testing.T) {
 
 func TestAddSourceValidationMessages(t *testing.T) {
 	e := newEnv(t)
-	e.mutate(t, "POST", "/api/sources", map[string]any{"url": "https://feeds.example.com/jobs.xml"}) //nolint:errcheck
+	e.mutate(t, "POST", "/api/sources", map[string]any{"url": "https://feeds.example.com/jobs.xml"})
 
 	check := func(body map[string]any, wantMsg string) {
 		t.Helper()
@@ -464,8 +440,6 @@ func TestPutScheduleValidAndInvalid(t *testing.T) {
 	}
 }
 
-// --- GET /api/status ---------------------------------------------------------
-
 func TestStatusCatalogueCounterIncreasesAfterRun(t *testing.T) {
 	e := newEnv(t)
 	e.fm.Set("https://feeds.example.com/jobs.xml",
@@ -478,21 +452,15 @@ func TestStatusCatalogueCounterIncreasesAfterRun(t *testing.T) {
 	if after <= before {
 		t.Errorf("catalogue should increase after run; before=%v after=%v", before, after)
 	}
-	// Counter is stable between runs (no spurious increments).
 	c1 := e.get(t, "/api/status")["catalogue"].(float64)
 	if c2 := e.get(t, "/api/status")["catalogue"].(float64); c1 != c2 {
 		t.Errorf("catalogue changed without a run: %v → %v", c1, c2)
 	}
-	// collecting key is nil once the job has finished.
 	if e.get(t, "/api/status")["collecting"] != nil {
 		t.Error("collecting should be nil after run")
 	}
 }
 
-// --- source_run rows ---------------------------------------------------------
-
-// statusText returns the status.text field for the source with the given URL,
-// calling t.Errorf if the source is not found or has no status object.
 func statusText(t *testing.T, srcs []map[string]any, url string) string {
 	t.Helper()
 	for _, s := range srcs {
@@ -508,7 +476,6 @@ func statusText(t *testing.T, srcs []map[string]any, url string) string {
 	return ""
 }
 
-// sourcesOf extracts the sources slice from a /api/sources response.
 func sourcesOf(body map[string]any) []map[string]any {
 	raw := body["sources"].([]any)
 	out := make([]map[string]any, len(raw))
@@ -521,16 +488,12 @@ func sourcesOf(body map[string]any) []map[string]any {
 func TestRunWritesSourceRunRowsForEachOutcome(t *testing.T) {
 	e := newEnv(t)
 
-	// ok board (Greenhouse): 2 jobs
 	e.fm.Set("https://boards-api.greenhouse.io/v1/boards/acme/jobs?content=true",
 		fetchtest.MapEntry{Response: fetch.Response{Status: 200, ContentType: "application/json", Body: []byte(ghBoardResponse)}})
-	// empty feed
 	e.fm.Set("https://feeds.example.com/empty.xml",
 		fetchtest.MapEntry{Response: fetch.Response{Status: 200, ContentType: "application/xml", Body: []byte(emptyFeedXML)}})
-	// blocked source
 	e.fm.Set("https://blocked.example.com/jobs",
 		fetchtest.MapEntry{Err: fetch.ErrBlocked})
-	// unrecognised page – serve HTML with no job listings (generic source returns ErrNothingRecognised)
 	e.fm.Set("https://noparse.example.com/jobs",
 		fetchtest.MapEntry{Response: fetch.Response{Status: 200, ContentType: "text/html", Body: []byte(badPageHTML)}})
 
@@ -550,7 +513,7 @@ func TestRunWritesSourceRunRowsForEachOutcome(t *testing.T) {
 	if !strings.HasSuffix(acme, "2 seen · 2 new") {
 		t.Errorf("ok source text counts: got %q", acme)
 	}
-	statusText(t, srcs, "https://feeds.example.com/empty.xml") // asserts status is not nil
+	statusText(t, srcs, "https://feeds.example.com/empty.xml")
 	if text := statusText(t, srcs, "https://blocked.example.com/jobs"); !strings.Contains(text, "Blocked by site") {
 		t.Errorf("blocked source text: got %q, want 'Blocked by site'", text)
 	}
@@ -562,10 +525,10 @@ func TestRunWritesSourceRunRowsForEachOutcome(t *testing.T) {
 func TestSourceStatusErrorText(t *testing.T) {
 	cases := []struct {
 		name         string
-		firstOK      bool   // run a successful fetch first
-		fetchErr     error  // error to inject on the (second) run
-		wantContains string // substring the status text must contain
-		wantHasPrior bool   // text must also contain "last success"
+		firstOK      bool
+		fetchErr     error
+		wantContains string
+		wantHasPrior bool
 	}{
 		{
 			name:         "not found without prior success",
@@ -618,15 +581,12 @@ func TestSourceStatusNoVacanciesIn30Days(t *testing.T) {
 		fetchtest.MapEntry{Response: fetch.Response{Status: 200, ContentType: "application/xml", Body: []byte(emptyFeedXML)}})
 	addSource(t, e, "https://feeds.example.com/empty.xml")
 
-	// First run at base: source is empty
 	runCollect(t, e)
 
-	// Advance clock past 30 days
 	mu.Lock()
 	nowTime = base.Add(31 * 24 * time.Hour)
 	mu.Unlock()
 
-	// Second run: still empty
 	runCollect(t, e)
 
 	srcs := sourcesOf(e.get(t, "/api/sources"))
@@ -668,7 +628,7 @@ func TestAttentionThresholdAndCount(t *testing.T) {
 		if att["text"] != "2 sources need attention" {
 			t.Errorf("attention.text: got %v, want '2 sources need attention'", att["text"])
 		}
-		e.store.Update(func(c *config.Config) error { //nolint:errcheck
+		e.store.Update(func(c *config.Config) error {
 			c.Sources[1].Enabled = false
 			return nil
 		})
@@ -682,8 +642,6 @@ func TestAttentionThresholdAndCount(t *testing.T) {
 		}
 	})
 }
-
-// --- Detail fetch behaviour --------------------------------------------------
 
 func htmlListing(u string) []byte {
 	return []byte(`<html><body><a href="` + u + `">Senior Engineer</a></body></html>`)
@@ -700,7 +658,7 @@ func TestRunDetailFetchesTextForNewPostingWithoutText(t *testing.T) {
 		t.Errorf("requests: got %d, want 2 (listing+detail)", n)
 	}
 	var state string
-	if e.db.QueryRow(`SELECT text_state FROM vacancy WHERE url = ?`, vacURL).Scan(&state); state != "full" { //nolint:errcheck
+	if e.db.QueryRow(`SELECT text_state FROM vacancy WHERE url = ?`, vacURL).Scan(&state); state != "full" {
 		t.Errorf("text_state: got %q, want full", state)
 	}
 }
@@ -731,22 +689,22 @@ func TestRunDetailSkipsWithin7DaysAndRetriesAfter(t *testing.T) {
 			t.Errorf("requests: got %d, want %d", n, want)
 		}
 	}
-	run(2) // first run: listing + detail
+	run(2)
 	mu.Lock()
 	nowTime = base.Add(24 * time.Hour)
 	mu.Unlock()
-	run(3) // 1 day later: listing only (within 7-day window)
+	run(3)
 	mu.Lock()
 	nowTime = base.Add(8 * 24 * time.Hour)
 	mu.Unlock()
-	run(5) // 8 days after first: listing + detail again
+	run(5)
 }
 
 func TestRunRemovedAddressGetsNoRequest(t *testing.T) {
 	e := newEnv(t)
 	const vacURL = "https://generic.example.com/jobs/3"
 	e.fm.Set("https://generic.example.com/jobs", fetchtest.MapEntry{Response: fetch.Response{Status: 200, ContentType: "text/html", Body: htmlListing(vacURL)}})
-	e.db.Exec(`INSERT INTO tombstone (key) VALUES ('url:` + vacURL + `')`) //nolint:errcheck
+	e.db.Exec(`INSERT INTO tombstone (key) VALUES ('url:` + vacURL + `')`)
 	addSource(t, e, "https://generic.example.com/jobs")
 	runCollect(t, e)
 	if n := len(e.fm.Requests()); n != 1 {
@@ -762,7 +720,7 @@ func TestRunBlockedDetailSavesPostingAsBlocked(t *testing.T) {
 	addSource(t, e, "https://generic.example.com/jobs")
 	runCollect(t, e)
 	var state, reqAt string
-	if e.db.QueryRow(`SELECT text_state, detail_requested_at FROM vacancy WHERE url = ?`, vacURL).Scan(&state, &reqAt); state != "blocked" || reqAt != "" { //nolint:errcheck
+	if e.db.QueryRow(`SELECT text_state, detail_requested_at FROM vacancy WHERE url = ?`, vacURL).Scan(&state, &reqAt); state != "blocked" || reqAt != "" {
 		t.Errorf("text_state=%q detail_requested_at=%q, want blocked and empty", state, reqAt)
 	}
 }
@@ -775,41 +733,33 @@ func TestSourceRunRowDeletedWithJob(t *testing.T) {
 
 	j := runCollect(t, e)
 
-	// Confirm source_run row was written
 	var cnt int
-	if e.db.QueryRow(`SELECT COUNT(*) FROM source_run WHERE job_id=?`, j.ID).Scan(&cnt); cnt == 0 { //nolint:errcheck
+	if e.db.QueryRow(`SELECT COUNT(*) FROM source_run WHERE job_id=?`, j.ID).Scan(&cnt); cnt == 0 {
 		t.Fatal("source_run: expected a row but found none")
 	}
 
-	// Delete the job; CASCADE should remove the source_run row
-	e.db.Exec(`DELETE FROM job WHERE id=?`, j.ID)                                                   //nolint:errcheck
-	if e.db.QueryRow(`SELECT COUNT(*) FROM source_run WHERE job_id=?`, j.ID).Scan(&cnt); cnt != 0 { //nolint:errcheck
+	e.db.Exec(`DELETE FROM job WHERE id=?`, j.ID)
+	if e.db.QueryRow(`SELECT COUNT(*) FROM source_run WHERE job_id=?`, j.ID).Scan(&cnt); cnt != 0 {
 		t.Errorf("source_run row should be deleted with its job, got %d rows", cnt)
 	}
 }
 
-// --- Exclusions --------------------------------------------------------------
-
-// checkExclusionRun asserts that vacancy count is wantVacancies and that
-// source_run.excluded is 1 for the most recent job.
 func checkExclusionRun(t *testing.T, e *env, wantVacancies int) {
 	t.Helper()
 	var cnt int
-	if e.db.QueryRow(`SELECT count(*) FROM vacancy`).Scan(&cnt); cnt != wantVacancies { //nolint:errcheck
+	if e.db.QueryRow(`SELECT count(*) FROM vacancy`).Scan(&cnt); cnt != wantVacancies {
 		t.Errorf("catalog: got %d vacancies, want %d", cnt, wantVacancies)
 	}
 	var excl int
-	if e.db.QueryRow(`SELECT excluded FROM source_run ORDER BY job_id DESC LIMIT 1`).Scan(&excl); excl != 1 { //nolint:errcheck
+	if e.db.QueryRow(`SELECT excluded FROM source_run ORDER BY job_id DESC LIMIT 1`).Scan(&excl); excl != 1 {
 		t.Errorf("source_run.excluded: got %d, want 1", excl)
 	}
 }
 
-// exclusionFeed is a minimal RSS feed with no body text so that needDetail=true.
 const exclusionFeed = `<rss version="2.0"><channel>
 <item><title>Go Developer</title><link>https://feeds.example.com/jobs/excl1</link></item>
 </channel></rss>`
 
-// exclusionDetailPage returns a JSON-LD job page revealing company "ExclCo".
 const exclusionDetailPage = `<html><head><script type="application/ld+json">` +
 	`{"@type":"JobPosting","title":"Go Developer","hiringOrganization":{"name":"ExclCo"},"description":"<p>text</p>"}` +
 	`</script></head><body></body></html>`
@@ -820,11 +770,9 @@ func TestCollect_ExcludedBeforeDetail(t *testing.T) {
 		fetchtest.MapEntry{Response: fetch.Response{Status: 200, ContentType: "application/json", Body: []byte(ghBoardResponse)}})
 	addSource(t, e, "https://boards.greenhouse.io/acme")
 
-	// Word exclusion for "engineer" — matches "Engineer" in the greenhouse board.
-	e.db.Exec(`INSERT INTO exclusion (kind,value,norm,profile_id,created) VALUES ('word','engineer','engineer',0,datetime('now'))`) //nolint:errcheck
+	e.db.Exec(`INSERT INTO exclusion (kind,value,norm,profile_id,created) VALUES ('word','engineer','engineer',0,datetime('now'))`)
 
 	runCollect(t, e)
-	// Both postings are saved; "Engineer" is excluded from view but still upserted.
 	checkExclusionRun(t, e, 2)
 }
 
@@ -836,10 +784,8 @@ func TestCollect_ExcludedAfterDetail(t *testing.T) {
 		fetchtest.MapEntry{Response: fetch.Response{Status: 200, ContentType: "text/html", Body: []byte(exclusionDetailPage)}})
 	addSource(t, e, "https://feeds.example.com/excl.xml")
 
-	// Company exclusion for "ExclCo" — not visible in the listing, only after Detail.
-	e.db.Exec(`INSERT INTO exclusion (kind,value,norm,profile_id,created) VALUES ('company','ExclCo','exclco',0,datetime('now'))`) //nolint:errcheck
+	e.db.Exec(`INSERT INTO exclusion (kind,value,norm,profile_id,created) VALUES ('company','ExclCo','exclco',0,datetime('now'))`)
 
 	runCollect(t, e)
-	// The posting is saved with detail text; it is excluded from view but still upserted.
 	checkExclusionRun(t, e, 1)
 }

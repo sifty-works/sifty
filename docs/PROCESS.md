@@ -25,7 +25,7 @@ The process rests on six arrangements. Each guarantee is held by one of them, no
 ## Where things live
 
 - This repository (`sifty-works/sifty-server`) is public. It holds the Go server, the tests, `README.md`, `CHANGELOG.md`, `AGENTS.md`, `CLAUDE.md` and `docs/`. `CLAUDE.md` holds one line, `@AGENTS.md`, which makes Claude Code load `AGENTS.md`. The web client lives in `sifty-works/sifty-web`; a versioned release archive is pinned in `web/release.txt` and embedded into the binary by `make build`.
-- Nothing from the work repository enters this repository. Code, tests, comments, commit messages and changelog entries describe a change in its own terms and never name a card. Test data is invented.
+- Nothing from the work repository enters this repository. Code, tests, commit messages and changelog entries describe a change in its own terms and never name a card. Test data is invented.
 - The work repository is checked out into `.work/` of the main checkout, and this repository ignores that folder. It holds `backlog.md`, the queue, with one line per card that is not yet merged or cancelled. It holds `cards/<name>.md`, one file per card, named by a short descriptive name and not by a number. It also holds `journal.md`, with one dated line per event: a card started, merged or cancelled (with the reason), a small edit, a release, a rollback, an incident or a review. The coordinator commits the work repository after each journal line and pushes it at the end of a session.
 - The state of a card is read from where it is: a backlog line without a working copy is queued, a working copy in `git worktree list` is in progress, and a journal line says it was merged or cancelled.
 - Working copies live in `.worktrees/<name>/` of the main checkout, which this repository also ignores. The branch of a working copy has the card's name and is never pushed.
@@ -67,7 +67,7 @@ When a coordinator session ends, the backlog, the journal and the branches hold 
 The coordinator accepts a card once, on the final state of its branch, so the tree it tests is the tree that lands on the main branch.
 
 1. The coordinator brings the branch up to date with the main branch. It resolves a small conflict itself and returns a larger one to the executor.
-2. It runs `make check`, which builds the application and runs every test and linter.
+2. It runs `make uncomment` and commits any changes it makes, then runs `make check`, which builds the application and runs every test and linter.
 3. It runs `make budget` on the branch and on the main branch and writes the difference into the card. A change that goes over a budget is not merged. Either the executor makes the change smaller, or the owner decides to raise the budget, and then the budget table in `docs/ARCHITECTURE.md` changes in the same merge.
 4. It checks that everything the card names under "Replaces and removes" is gone.
 5. It checks the result as the card's Checks section says, through the HTTP (Hypertext Transfer Protocol) interface or in the browser. It does this on `make dev`, which runs the application offline on a copy of the data.
@@ -97,7 +97,7 @@ A release is the only event that changes the running application, and it is sepa
 Tests check behaviour through public boundaries, so the code behind those boundaries can be rebuilt without rewriting the tests.
 
 - A test drives the HTTP application programming interface, a command, the store on a fixture database, or one of the interfaces `Fetcher`, `Model` and `Score`.
-- A test's name says the behaviour it checks. Test names and code comments contain no card names, card numbers, rule numbers or section numbers.
+- A test's name says the behaviour it checks. Test names contain no card names, card numbers, rule numbers or section numbers.
 - No test reads source files or checks that some code exists.
 - Tests use invented data and make no network request and no model call. Fakes stand behind the `Fetcher` and `Model` interfaces, and `sifty serve --offline` refuses both kinds of call. Behaviour that needs a job site is checked against recorded responses behind the fake `Fetcher`.
 - `make check` runs every test, and tests are never selected by name.

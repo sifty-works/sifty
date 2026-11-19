@@ -20,7 +20,6 @@ import (
 	"github.com/sifty-works/sifty-server/internal/server"
 )
 
-// openTestDB opens a fresh test database in a temp directory.
 func openTestDB(t *testing.T) *db.DB {
 	t.Helper()
 	d, err := db.Open(filepath.Join(t.TempDir(), "test.db"), db.Migrations)
@@ -31,14 +30,10 @@ func openTestDB(t *testing.T) *db.DB {
 	return d
 }
 
-// newServer starts a test server with candidate routes and no files directory;
-// changed, when given, is told about saved changes.
 func newServer(t *testing.T, d *db.DB, changed ...func()) *httptest.Server {
 	return newServerWithFiles(t, d, "", changed...)
 }
 
-// newServerWithFiles starts a test server with candidate routes and a files directory
-// for photo storage. It also adds "/api/me/photo" to BinaryUploadPaths.
 func newServerWithFiles(t *testing.T, d *db.DB, filesDir string, changed ...func()) *httptest.Server {
 	t.Helper()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -59,7 +54,6 @@ func newServerWithFiles(t *testing.T, d *db.DB, filesDir string, changed ...func
 	return ts
 }
 
-// get performs a GET request with a loopback Host header.
 func get(t *testing.T, ts *httptest.Server, path string) (map[string]any, int) {
 	t.Helper()
 	req, _ := http.NewRequest(http.MethodGet, ts.URL+path, nil)
@@ -70,11 +64,10 @@ func get(t *testing.T, ts *httptest.Server, path string) (map[string]any, int) {
 	}
 	defer resp.Body.Close()
 	var body map[string]any
-	json.NewDecoder(resp.Body).Decode(&body) //nolint:errcheck
+	json.NewDecoder(resp.Body).Decode(&body)
 	return body, resp.StatusCode
 }
 
-// send performs a request with a JSON body and a loopback Host header.
 func send(t *testing.T, ts *httptest.Server, method, path string, payload any) (map[string]any, int) {
 	t.Helper()
 	b, _ := json.Marshal(payload)
@@ -87,11 +80,9 @@ func send(t *testing.T, ts *httptest.Server, method, path string, payload any) (
 	}
 	defer resp.Body.Close()
 	var out map[string]any
-	json.NewDecoder(resp.Body).Decode(&out) //nolint:errcheck
+	json.NewDecoder(resp.Body).Decode(&out)
 	return out, resp.StatusCode
 }
-
-// --- My data tests ---
 
 func TestMeInitiallyEmpty(t *testing.T) {
 	d := openTestDB(t)
@@ -126,7 +117,6 @@ func TestMeIdentitySectionRoundTrip(t *testing.T) {
 		t.Errorf("email = %v, want alex@example.com", out["email"])
 	}
 
-	// A second GET returns the saved state.
 	body, _ := get(t, ts, "/api/me")
 	if body["displayName"] != "Alex Taylor" {
 		t.Errorf("GET after PATCH: displayName = %v", body["displayName"])
@@ -271,12 +261,10 @@ func TestMePatchDoesNotWipeUnsentSections(t *testing.T) {
 	d := openTestDB(t)
 	ts := newServer(t, d)
 
-	// First PATCH: save skills.
-	send(t, ts, http.MethodPatch, "/api/me", map[string]any{ //nolint:errcheck
+	send(t, ts, http.MethodPatch, "/api/me", map[string]any{
 		"skills": []any{map[string]any{"name": "Go", "level": "Expert"}},
 	})
 
-	// Second PATCH: update only identity; skills must be preserved.
 	out, status := send(t, ts, http.MethodPatch, "/api/me", map[string]any{
 		"displayName": "Morgan Lee",
 	})
@@ -288,8 +276,6 @@ func TestMePatchDoesNotWipeUnsentSections(t *testing.T) {
 		t.Errorf("skills after identity patch: got %d, want 1", len(skills))
 	}
 }
-
-// --- Me validation tests ---
 
 func TestSkillWithoutNameIsRejected(t *testing.T) {
 	d := openTestDB(t)
@@ -332,7 +318,6 @@ func TestAvailabilityNoticeMissingUnitIsRejected(t *testing.T) {
 	d := openTestDB(t)
 	ts := newServer(t, d)
 
-	// noticeValue set but noticeUnit omitted.
 	_, status := send(t, ts, http.MethodPatch, "/api/me", map[string]any{
 		"availability": map[string]any{"noticeValue": 3},
 	})
@@ -345,7 +330,6 @@ func TestAvailabilityNoticeZeroIsRejected(t *testing.T) {
 	d := openTestDB(t)
 	ts := newServer(t, d)
 
-	// noticeValue 0 is not a positive number.
 	_, status := send(t, ts, http.MethodPatch, "/api/me", map[string]any{
 		"availability": map[string]any{"noticeValue": 0, "noticeUnit": "week"},
 	})
@@ -365,8 +349,6 @@ func TestWorkAuthorizationMissingCountryIsRejected(t *testing.T) {
 		t.Errorf("authorization without country: status %d, want 422", status)
 	}
 }
-
-// --- Profile list and default name tests ---
 
 func TestProfileListHasOneDefaultProfile(t *testing.T) {
 	d := openTestDB(t)
@@ -404,8 +386,6 @@ func TestProfileDetailReturnsExpectedFields(t *testing.T) {
 	}
 }
 
-// --- Profile creation tests ---
-
 func TestCreateProfileBecomesActive(t *testing.T) {
 	d := openTestDB(t)
 	ts := newServer(t, d)
@@ -423,14 +403,12 @@ func TestCreateProfileBecomesActive(t *testing.T) {
 		t.Error("newly created profile should be active")
 	}
 
-	// List shows 2 profiles.
 	listBody, _ := get(t, ts, "/api/profiles")
 	profiles, _ := listBody["profiles"].([]any)
 	if len(profiles) != 2 {
 		t.Fatalf("expected 2 profiles after create, got %d", len(profiles))
 	}
 
-	// Exactly one is active.
 	var activeCount int
 	for _, p := range profiles {
 		if pm, ok := p.(map[string]any); ok && pm["active"] == true {
@@ -468,8 +446,6 @@ func TestCreateProfileWithEmptyNameIsRejected(t *testing.T) {
 	}
 }
 
-// --- Profile patch tests ---
-
 func TestPatchProfileName(t *testing.T) {
 	d := openTestDB(t)
 	ts := newServer(t, d)
@@ -489,10 +465,8 @@ func TestPatchProfileEmptyNameIsIgnored(t *testing.T) {
 	d := openTestDB(t)
 	ts := newServer(t, d)
 
-	// Set a name first.
-	send(t, ts, http.MethodPatch, "/api/profiles/1", map[string]any{"name": "Named"}) //nolint:errcheck
+	send(t, ts, http.MethodPatch, "/api/profiles/1", map[string]any{"name": "Named"})
 
-	// Send empty name; original should be kept.
 	out, status := send(t, ts, http.MethodPatch, "/api/profiles/1", map[string]any{"name": ""})
 	if status != http.StatusOK {
 		t.Fatalf("PATCH with empty name: status %d", status)
@@ -531,7 +505,6 @@ func TestPatchProfileCompensationWithoutCurrencyIsRejected(t *testing.T) {
 	d := openTestDB(t)
 	ts := newServer(t, d)
 
-	// cashMin provided but no currency.
 	out, status := send(t, ts, http.MethodPatch, "/api/profiles/1", map[string]any{
 		"compensation": map[string]any{
 			"cashMin": 50000.0,
@@ -558,8 +531,6 @@ func TestPatchProfileCompensationTargetBelowMinIsRejected(t *testing.T) {
 	}
 }
 
-// --- Profile delete tests ---
-
 func TestDeleteFirstProfileIsRejected(t *testing.T) {
 	d := openTestDB(t)
 	ts := newServer(t, d)
@@ -574,17 +545,14 @@ func TestDeleteProfileRemovesItFromList(t *testing.T) {
 	d := openTestDB(t)
 	ts := newServer(t, d)
 
-	// Create a second profile.
 	out, _ := send(t, ts, http.MethodPost, "/api/profiles", map[string]any{"name": "Second"})
 	newID := int64(out["id"].(float64))
 
-	// Delete the second profile.
 	listOut, status := send(t, ts, http.MethodDelete, fmt.Sprintf("/api/profiles/%d", newID), struct{}{})
 	if status != http.StatusOK {
 		t.Fatalf("delete second profile: status %d, body: %v", status, listOut)
 	}
 
-	// Response is the updated list showing only first profile.
 	profiles, _ := listOut["profiles"].([]any)
 	if len(profiles) != 1 {
 		t.Errorf("after delete: expected 1 profile, got %d", len(profiles))
@@ -599,14 +567,11 @@ func TestDeleteActiveProfileFallsBackToFirst(t *testing.T) {
 	d := openTestDB(t)
 	ts := newServer(t, d)
 
-	// Create a second profile; it becomes active.
 	out, _ := send(t, ts, http.MethodPost, "/api/profiles", map[string]any{"name": "Second"})
 	secondID := int64(out["id"].(float64))
 
-	// Delete the active (second) profile.
-	send(t, ts, http.MethodDelete, fmt.Sprintf("/api/profiles/%d", secondID), struct{}{}) //nolint:errcheck
+	send(t, ts, http.MethodDelete, fmt.Sprintf("/api/profiles/%d", secondID), struct{}{})
 
-	// First profile should now be active.
 	listOut, _ := get(t, ts, "/api/profiles")
 	profiles, _ := listOut["profiles"].([]any)
 	if len(profiles) != 1 {
@@ -618,17 +583,13 @@ func TestDeleteActiveProfileFallsBackToFirst(t *testing.T) {
 	}
 }
 
-// --- Active profile switching ---
-
 func TestActiveProfileSwitching(t *testing.T) {
 	d := openTestDB(t)
 	ts := newServer(t, d)
 
-	// Create second profile; it becomes active.
 	out, _ := send(t, ts, http.MethodPost, "/api/profiles", map[string]any{"name": "Second"})
 	secondID := int64(out["id"].(float64))
 
-	// Switch back to first profile.
 	listOut, status := send(t, ts, http.MethodPut, "/api/active-profile", map[string]any{"id": 1})
 	if status != http.StatusOK {
 		t.Fatalf("PUT /api/active-profile: status %d", status)
@@ -652,13 +613,10 @@ func TestActiveProfileUsedWhenListHasNoProfileParam(t *testing.T) {
 	d := openTestDB(t)
 	ts := newServer(t, d)
 
-	// Create second profile; it becomes active.
-	send(t, ts, http.MethodPost, "/api/profiles", map[string]any{"name": "Second"}) //nolint:errcheck
+	send(t, ts, http.MethodPost, "/api/profiles", map[string]any{"name": "Second"})
 
-	// Switch back to first profile.
-	send(t, ts, http.MethodPut, "/api/active-profile", map[string]any{"id": 1}) //nolint:errcheck
+	send(t, ts, http.MethodPut, "/api/active-profile", map[string]any{"id": 1})
 
-	// Profile list reflects active = first profile.
 	listOut, _ := get(t, ts, "/api/profiles")
 	profiles, _ := listOut["profiles"].([]any)
 	for _, p := range profiles {
@@ -671,14 +629,11 @@ func TestActiveProfileUsedWhenListHasNoProfileParam(t *testing.T) {
 	}
 }
 
-// --- Profile inheritance tests ---
-
 func TestInheritanceEmptyFieldFilledFromFirstProfile(t *testing.T) {
 	d := openTestDB(t)
 	ts := newServer(t, d)
 
-	// Set compensation on first profile.
-	send(t, ts, http.MethodPatch, "/api/profiles/1", map[string]any{ //nolint:errcheck
+	send(t, ts, http.MethodPatch, "/api/profiles/1", map[string]any{
 		"compensation": map[string]any{
 			"cashMin":  60000.0,
 			"currency": "EUR",
@@ -687,7 +642,6 @@ func TestInheritanceEmptyFieldFilledFromFirstProfile(t *testing.T) {
 		},
 	})
 
-	// Create second profile with no compensation.
 	out, _ := send(t, ts, http.MethodPost, "/api/profiles", map[string]any{"name": "Second"})
 	secondID := int64(out["id"].(float64))
 
@@ -696,7 +650,6 @@ func TestInheritanceEmptyFieldFilledFromFirstProfile(t *testing.T) {
 		t.Fatalf("GET profile detail: status %d", status)
 	}
 
-	// inherited map should name compensation.
 	inherited, _ := detail["inherited"].(map[string]any)
 	if inherited == nil {
 		t.Fatal("second profile should have an inherited map")
@@ -705,13 +658,11 @@ func TestInheritanceEmptyFieldFilledFromFirstProfile(t *testing.T) {
 		t.Error("compensation should be listed as inherited")
 	}
 
-	// effective should carry the first profile's compensation.
 	effective, _ := detail["effective"].(map[string]any)
 	if effective["compensation"] == nil {
 		t.Error("effective compensation should be non-nil (inherited from first)")
 	}
 
-	// own should not have compensation.
 	own, _ := detail["own"].(map[string]any)
 	if own["compensation"] != nil {
 		t.Error("own compensation should be nil — not stored on second profile")
@@ -722,8 +673,7 @@ func TestInheritanceStoredValueOverridesFirstProfile(t *testing.T) {
 	d := openTestDB(t)
 	ts := newServer(t, d)
 
-	// Set compensation on first profile.
-	send(t, ts, http.MethodPatch, "/api/profiles/1", map[string]any{ //nolint:errcheck
+	send(t, ts, http.MethodPatch, "/api/profiles/1", map[string]any{
 		"compensation": map[string]any{
 			"cashMin":  60000.0,
 			"currency": "EUR",
@@ -732,12 +682,10 @@ func TestInheritanceStoredValueOverridesFirstProfile(t *testing.T) {
 		},
 	})
 
-	// Create second profile.
 	out, _ := send(t, ts, http.MethodPost, "/api/profiles", map[string]any{"name": "Second"})
 	secondID := int64(out["id"].(float64))
 
-	// Store a different compensation on second profile.
-	send(t, ts, http.MethodPatch, fmt.Sprintf("/api/profiles/%d", secondID), map[string]any{ //nolint:errcheck
+	send(t, ts, http.MethodPatch, fmt.Sprintf("/api/profiles/%d", secondID), map[string]any{
 		"compensation": map[string]any{
 			"cashMin":  90000.0,
 			"currency": "USD",
@@ -748,13 +696,11 @@ func TestInheritanceStoredValueOverridesFirstProfile(t *testing.T) {
 
 	detail, _ := get(t, ts, fmt.Sprintf("/api/profiles/%d", secondID))
 
-	// Field must not appear as inherited.
 	inherited, _ := detail["inherited"].(map[string]any)
 	if _, ok := inherited["compensation"]; ok {
 		t.Error("compensation must not be inherited once stored on second profile")
 	}
 
-	// effective.compensation should reflect second profile's own value.
 	effective, _ := detail["effective"].(map[string]any)
 	comp, _ := effective["compensation"].(map[string]any)
 	if comp["currency"] != "USD" {
@@ -766,17 +712,14 @@ func TestInheritanceUnchangedInheritedFieldRemainsInherited(t *testing.T) {
 	d := openTestDB(t)
 	ts := newServer(t, d)
 
-	// Set engagement on first profile.
-	send(t, ts, http.MethodPatch, "/api/profiles/1", map[string]any{ //nolint:errcheck
+	send(t, ts, http.MethodPatch, "/api/profiles/1", map[string]any{
 		"engagement": []string{"employment"},
 	})
 
-	// Create second profile.
 	out, _ := send(t, ts, http.MethodPost, "/api/profiles", map[string]any{"name": "Second"})
 	secondID := int64(out["id"].(float64))
 
-	// Patch second profile with only name — engagement stays uninherited.
-	send(t, ts, http.MethodPatch, fmt.Sprintf("/api/profiles/%d", secondID), map[string]any{ //nolint:errcheck
+	send(t, ts, http.MethodPatch, fmt.Sprintf("/api/profiles/%d", secondID), map[string]any{
 		"name": "Second Updated",
 	})
 
@@ -791,21 +734,17 @@ func TestInheritancePatchingInheritedValueUnchangedKeepsItInherited(t *testing.T
 	d := openTestDB(t)
 	ts := newServer(t, d)
 
-	// Set compensation on the first profile.
-	send(t, ts, http.MethodPatch, "/api/profiles/1", map[string]any{ //nolint:errcheck
+	send(t, ts, http.MethodPatch, "/api/profiles/1", map[string]any{
 		"compensation": map[string]any{"cashMin": 1000, "currency": "EUR", "period": "month"},
 	})
 
-	// Create a second profile; it has no own compensation (inherits from first).
 	out, _ := send(t, ts, http.MethodPost, "/api/profiles", map[string]any{"name": "Second"})
 	secondID := int64(out["id"].(float64))
 
-	// Fetch the effective compensation that the second profile shows.
 	detail, _ := get(t, ts, fmt.Sprintf("/api/profiles/%d", secondID))
 	effective, _ := detail["effective"].(map[string]any)
 	effectiveComp := effective["compensation"]
 
-	// Patch with the inherited value unchanged — must stay inherited.
 	patched, status := send(t, ts, http.MethodPatch, fmt.Sprintf("/api/profiles/%d", secondID), map[string]any{
 		"compensation": effectiveComp,
 	})
@@ -821,7 +760,6 @@ func TestInheritancePatchingInheritedValueUnchangedKeepsItInherited(t *testing.T
 		t.Error("own compensation must remain nil when patched with the inherited value")
 	}
 
-	// Patch with a different value — must be stored as own and no longer inherited.
 	patched2, status := send(t, ts, http.MethodPatch, fmt.Sprintf("/api/profiles/%d", secondID), map[string]any{
 		"compensation": map[string]any{"cashMin": 2000, "currency": "USD", "period": "month"},
 	})
@@ -838,7 +776,6 @@ func TestPatchAllNullCompensationOnNonFirstProfileIsInherited(t *testing.T) {
 	d := openTestDB(t)
 	ts := newServer(t, d)
 
-	// Set real compensation on profile 1.
 	_, code := send(t, ts, http.MethodPatch, "/api/profiles/1", map[string]any{
 		"compensation": map[string]any{
 			"cashMin": 50000, "cashTarget": 70000,
@@ -849,14 +786,12 @@ func TestPatchAllNullCompensationOnNonFirstProfileIsInherited(t *testing.T) {
 		t.Fatalf("PATCH profile 1 compensation: status %d", code)
 	}
 
-	// Create profile 2.
 	body, code := send(t, ts, http.MethodPost, "/api/profiles", map[string]any{"name": "Alt"})
 	if code != http.StatusOK {
 		t.Fatalf("POST profiles: status %d", code)
 	}
 	id2 := int64(body["id"].(float64))
 
-	// PATCH profile 2 with an all-null compensation: cashMin, cashTarget and equityOnTop are all null.
 	_, code = send(t, ts, http.MethodPatch, fmt.Sprintf("/api/profiles/%d", id2), map[string]any{
 		"compensation": map[string]any{
 			"cashMin": nil, "cashTarget": nil, "equityOnTop": nil,
@@ -866,7 +801,6 @@ func TestPatchAllNullCompensationOnNonFirstProfileIsInherited(t *testing.T) {
 		t.Fatalf("PATCH profile 2 all-null compensation: status %d", code)
 	}
 
-	// GET profile 2: normalization removes the empty compensation so it stays inherited.
 	got, code := get(t, ts, fmt.Sprintf("/api/profiles/%d", id2))
 	if code != http.StatusOK {
 		t.Fatalf("GET profile 2: status %d", code)
@@ -882,7 +816,6 @@ func TestPatchAllNullCompensationOnNonFirstProfileIsInherited(t *testing.T) {
 	if _, ok := inherited["compensation"]; !ok {
 		t.Errorf("profile 2 compensation should be inherited after all-null patch; inherited=%v", inherited)
 	}
-	// own must not store the empty compensation.
 	own, _ := got["own"].(map[string]any)
 	if own["compensation"] != nil {
 		t.Errorf("own compensation should be absent after all-null patch, got %v", own["compensation"])
@@ -893,12 +826,10 @@ func TestTargetRolesAreNotInherited(t *testing.T) {
 	d := openTestDB(t)
 	ts := newServer(t, d)
 
-	// Set target roles on first profile.
-	send(t, ts, http.MethodPatch, "/api/profiles/1", map[string]any{ //nolint:errcheck
+	send(t, ts, http.MethodPatch, "/api/profiles/1", map[string]any{
 		"targetRoles": []string{"Engineer", "Developer"},
 	})
 
-	// Create second profile.
 	out, _ := send(t, ts, http.MethodPost, "/api/profiles", map[string]any{"name": "Second"})
 	secondID := int64(out["id"].(float64))
 
@@ -913,12 +844,10 @@ func TestKeywordsAreNotInherited(t *testing.T) {
 	d := openTestDB(t)
 	ts := newServer(t, d)
 
-	// Set keywords on first profile.
-	send(t, ts, http.MethodPatch, "/api/profiles/1", map[string]any{ //nolint:errcheck
+	send(t, ts, http.MethodPatch, "/api/profiles/1", map[string]any{
 		"keywords": []string{"remote", "senior"},
 	})
 
-	// Create second profile.
 	out, _ := send(t, ts, http.MethodPost, "/api/profiles", map[string]any{"name": "Second"})
 	secondID := int64(out["id"].(float64))
 
@@ -928,8 +857,6 @@ func TestKeywordsAreNotInherited(t *testing.T) {
 		t.Error("keywords must not be inherited from the first profile")
 	}
 }
-
-// --- Headline tests ---
 
 func TestHeadlineFallbackWhenNoData(t *testing.T) {
 	d := openTestDB(t)
@@ -946,7 +873,7 @@ func TestHeadlineBuiltFromCurrentExperience(t *testing.T) {
 	d := openTestDB(t)
 	ts := newServer(t, d)
 
-	send(t, ts, http.MethodPatch, "/api/me", map[string]any{ //nolint:errcheck
+	send(t, ts, http.MethodPatch, "/api/me", map[string]any{
 		"experience": []any{
 			map[string]any{
 				"company": "Globex",
@@ -971,13 +898,11 @@ func TestExplicitHeadlineTakesPrecedence(t *testing.T) {
 	d := openTestDB(t)
 	ts := newServer(t, d)
 
-	// Set an explicit headline on the profile.
-	send(t, ts, http.MethodPatch, "/api/profiles/1", map[string]any{ //nolint:errcheck
+	send(t, ts, http.MethodPatch, "/api/profiles/1", map[string]any{
 		"headline": "Full-stack engineer",
 	})
 
-	// Also set experience so we confirm the auto-build would fire if headline were absent.
-	send(t, ts, http.MethodPatch, "/api/me", map[string]any{ //nolint:errcheck
+	send(t, ts, http.MethodPatch, "/api/me", map[string]any{
 		"experience": []any{
 			map[string]any{"company": "Acme", "title": "CTO", "current": true},
 		},
@@ -990,7 +915,6 @@ func TestExplicitHeadlineTakesPrecedence(t *testing.T) {
 	}
 }
 
-// makePNG encodes a 1×1 red pixel as a PNG and returns the bytes.
 func makePNG() []byte {
 	img := image.NewRGBA(image.Rect(0, 0, 1, 1))
 	img.Set(0, 0, color.RGBA{R: 255, G: 0, B: 0, A: 255})
@@ -1001,7 +925,6 @@ func makePNG() []byte {
 	return buf.Bytes()
 }
 
-// sendBinary performs a mutating request with a binary (non-JSON) body.
 func sendBinary(t *testing.T, ts *httptest.Server, method, path, contentType string, body []byte) int {
 	t.Helper()
 	req, _ := http.NewRequest(method, ts.URL+path, bytes.NewReader(body))
@@ -1015,8 +938,6 @@ func sendBinary(t *testing.T, ts *httptest.Server, method, path, contentType str
 	return resp.StatusCode
 }
 
-// --- Photo tests ---
-
 func TestPhotoPNGAcceptedAndRemoved(t *testing.T) {
 	d := openTestDB(t)
 	filesDir := filepath.Join(t.TempDir(), "files")
@@ -1024,13 +945,11 @@ func TestPhotoPNGAcceptedAndRemoved(t *testing.T) {
 
 	pngBytes := makePNG()
 
-	// PUT the photo.
 	status := sendBinary(t, ts, http.MethodPut, "/api/me/photo", "image/png", pngBytes)
 	if status != http.StatusNoContent {
 		t.Fatalf("PUT /api/me/photo: status %d, want 204", status)
 	}
 
-	// GET returns the image.
 	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/me/photo", nil)
 	req.Host = "127.0.0.1:9999"
 	resp, err := ts.Client().Do(req)
@@ -1046,13 +965,11 @@ func TestPhotoPNGAcceptedAndRemoved(t *testing.T) {
 		t.Error("GET /api/me/photo: returned bytes do not match uploaded bytes")
 	}
 
-	// DELETE the photo.
 	_, deleteStatus := send(t, ts, http.MethodDelete, "/api/me/photo", struct{}{})
 	if deleteStatus != http.StatusNoContent {
 		t.Errorf("DELETE /api/me/photo: status %d, want 204", deleteStatus)
 	}
 
-	// GET after delete returns 404.
 	req2, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/me/photo", nil)
 	req2.Host = "127.0.0.1:9999"
 	resp2, err := ts.Client().Do(req2)
@@ -1070,7 +987,6 @@ func TestPhotoRenamedTextFileIsRejected(t *testing.T) {
 	filesDir := filepath.Join(t.TempDir(), "files")
 	ts := newServerWithFiles(t, d, filesDir)
 
-	// Send a text file body with image/png Content-Type.
 	textBytes := []byte("This is a text file, not a PNG image.")
 	status := sendBinary(t, ts, http.MethodPut, "/api/me/photo", "image/png", textBytes)
 	if status != http.StatusUnprocessableEntity {
@@ -1083,7 +999,6 @@ func TestPhoto3MiBIsRejected(t *testing.T) {
 	filesDir := filepath.Join(t.TempDir(), "files")
 	ts := newServerWithFiles(t, d, filesDir)
 
-	// 3 MiB body — above the 2 MiB upload limit.
 	big := make([]byte, 3<<20)
 	status := sendBinary(t, ts, http.MethodPut, "/api/me/photo", "image/png", big)
 	if status != http.StatusRequestEntityTooLarge {
@@ -1091,13 +1006,10 @@ func TestPhoto3MiBIsRejected(t *testing.T) {
 	}
 }
 
-// --- Q&A tests ---
-
 func TestQARoundTrip(t *testing.T) {
 	d := openTestDB(t)
 	ts := newServer(t, d)
 
-	// Initial list is empty.
 	listOut, status := get(t, ts, "/api/qa")
 	if status != http.StatusOK {
 		t.Fatalf("GET /api/qa: status %d", status)
@@ -1107,7 +1019,6 @@ func TestQARoundTrip(t *testing.T) {
 		t.Fatalf("initial Q&A list: got %d items, want 0", len(items))
 	}
 
-	// Create a Q&A entry without an answer.
 	created, status := send(t, ts, http.MethodPost, "/api/qa", map[string]any{
 		"question": "Tell me about yourself.",
 	})
@@ -1122,7 +1033,6 @@ func TestQARoundTrip(t *testing.T) {
 	}
 	id := int64(created["id"].(float64))
 
-	// Create a second entry with a pre-filled answer.
 	withAnswer, status := send(t, ts, http.MethodPost, "/api/qa", map[string]any{
 		"question": "What is your notice period?",
 		"answer":   "Two weeks.",
@@ -1134,10 +1044,8 @@ func TestQARoundTrip(t *testing.T) {
 		t.Errorf("created answer = %v, want %q", withAnswer["answer"], "Two weeks.")
 	}
 	withAnswerID := int64(withAnswer["id"].(float64))
-	// Clean up the second entry before continuing.
-	send(t, ts, http.MethodDelete, "/api/qa", map[string]any{"id": withAnswerID}) //nolint:errcheck
+	send(t, ts, http.MethodDelete, "/api/qa", map[string]any{"id": withAnswerID})
 
-	// Update the answer.
 	updated, status := send(t, ts, http.MethodPatch, "/api/qa", map[string]any{
 		"id":     id,
 		"answer": "I am a software engineer.",
@@ -1149,7 +1057,6 @@ func TestQARoundTrip(t *testing.T) {
 		t.Errorf("updated answer = %v", updated["answer"])
 	}
 
-	// List shows one item.
 	listOut, _ = get(t, ts, "/api/qa")
 	items, _ = listOut["items"].([]any)
 	if len(items) != 1 {
@@ -1160,13 +1067,11 @@ func TestQARoundTrip(t *testing.T) {
 		t.Errorf("listed answer = %v", item["answer"])
 	}
 
-	// Delete the entry.
 	_, status = send(t, ts, http.MethodDelete, "/api/qa", map[string]any{"id": id})
 	if status != http.StatusNoContent {
 		t.Errorf("DELETE /api/qa: status %d, want 204", status)
 	}
 
-	// List is empty again.
 	listOut, _ = get(t, ts, "/api/qa")
 	items, _ = listOut["items"].([]any)
 	if len(items) != 0 {
@@ -1183,8 +1088,6 @@ func TestQAEmptyQuestionIsRejected(t *testing.T) {
 		t.Errorf("empty question: status %d, want 422", status)
 	}
 }
-
-// --- Reference tests ---
 
 func TestReferenceListsNonEmpty(t *testing.T) {
 	d := openTestDB(t)

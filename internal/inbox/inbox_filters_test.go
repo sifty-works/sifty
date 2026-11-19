@@ -11,8 +11,6 @@ import (
 	"github.com/sifty-works/sifty-server/internal/listing"
 )
 
-// addWithSrc upserts a vacancy using a custom source key so source-filter
-// tests can distinguish between two feeds.
 func addWithSrc(t *testing.T, cat *catalog.Catalog, p listing.Posting, src string) int64 {
 	t.Helper()
 	id, _, err := cat.Upsert(context.Background(), p, src)
@@ -22,17 +20,12 @@ func addWithSrc(t *testing.T, cat *catalog.Catalog, p listing.Posting, src strin
 	return id
 }
 
-// --- Collected filter ---
-
-// TestFilter_Collected_7days checks that only vacancies seen within 7 days appear
-// when collected=7, and that an 8-day-old vacancy is excluded.
 func TestFilter_Collected_7days(t *testing.T) {
 	d := openTestDB(t)
-	cat := catalog.New(d, func() time.Time { return testNow.AddDate(0, 0, -6) }) // 6 days ago
+	cat := catalog.New(d, func() time.Time { return testNow.AddDate(0, 0, -6) })
 	setProfileData(t, d, nil, []string{"engineer"}, nil)
 	id6 := add(t, cat, post("https://example.com/jobs/c1", "Recent Engineer", "Co"))
 
-	// 8-day-old vacancy: use a catalog with an older now.
 	cat8 := catalog.New(d, func() time.Time { return testNow.AddDate(0, 0, -8) })
 	add(t, cat8, post("https://example.com/jobs/c2", "Old Engineer", "Co"))
 
@@ -41,14 +34,11 @@ func TestFilter_Collected_7days(t *testing.T) {
 	if len(rs) != 1 || rowID(rs[0]) != float64(id6) {
 		t.Errorf("collected=7: got %d rows, want 1 (6-day vacancy); first id %v", len(rs), rowID(rs[0]))
 	}
-	// Without filter: both appear.
 	if len(getRows(apiGet(t, ts, "/api/vacancies"))) != 2 {
 		t.Errorf("no filter: want 2 rows")
 	}
 }
 
-// TestFilter_Collected_30days checks that a 7-day-old vacancy appears with
-// collected=30 and that a 31-day-old vacancy is excluded.
 func TestFilter_Collected_30days(t *testing.T) {
 	d := openTestDB(t)
 	setProfileData(t, d, nil, []string{"engineer"}, nil)
@@ -66,11 +56,6 @@ func TestFilter_Collected_30days(t *testing.T) {
 	}
 }
 
-// --- Expiry condition ---
-
-// TestExpiry_StageCondition checks that expired vacancies are automatically
-// excluded from Inbox, Shortlist and Dismissed rows and their counts while
-// Applied is unaffected; industry counts follow the same rule.
 func TestExpiry_StageCondition(t *testing.T) {
 	d := openTestDB(t)
 	setProfileData(t, d, nil, []string{"engineer"}, nil)
@@ -80,17 +65,17 @@ func TestExpiry_StageCondition(t *testing.T) {
 	pExpSL.Expires = testNow.AddDate(0, 0, -1)
 	expSL := add(t, cat, pExpSL)
 	setVacancyIndustries(t, d, expSL, []string{"Ops"})
-	d.Exec(`INSERT INTO decision (profile,vacancy,stage,reason,decided_at) VALUES (1,?,?,?,?)`, expSL, "shortlist", "", ns) //nolint:errcheck
+	d.Exec(`INSERT INTO decision (profile,vacancy,stage,reason,decided_at) VALUES (1,?,?,?,?)`, expSL, "shortlist", "", ns)
 	pExpAP := post("https://example.com/jobs/ec2", "Applied Expired Engineer", "Co")
 	pExpAP.Expires = testNow.AddDate(0, 0, -2)
 	expAP := add(t, cat, pExpAP)
 	setVacancyIndustries(t, d, expAP, []string{"Ops"})
-	d.Exec(`INSERT INTO decision (profile,vacancy,stage,reason,decided_at) VALUES (1,?,?,?,?)`, expAP, "applied", "", ns) //nolint:errcheck
+	d.Exec(`INSERT INTO decision (profile,vacancy,stage,reason,decided_at) VALUES (1,?,?,?,?)`, expAP, "applied", "", ns)
 	pFuture := post("https://example.com/jobs/ec3", "Future Engineer", "Co")
 	pFuture.Expires = testNow.AddDate(0, 0, 10)
 	add(t, cat, pFuture)
 	openDM := add(t, cat, post("https://example.com/jobs/ec4", "Live Engineer", "Co"))
-	d.Exec(`INSERT INTO decision (profile,vacancy,stage,reason,decided_at) VALUES (1,?,?,?,?)`, openDM, "dismissed", "", ns) //nolint:errcheck
+	d.Exec(`INSERT INTO decision (profile,vacancy,stage,reason,decided_at) VALUES (1,?,?,?,?)`, openDM, "dismissed", "", ns)
 	ts := newTestServer(t, d)
 	ib := apiGet(t, ts, "/api/vacancies?stage=inbox")
 	if n, s, ap, dm := countOf(ib, "inbox"), countOf(ib, "shortlist"), countOf(ib, "applied"), countOf(ib, "dismissed"); n != 1 || s != 0 || ap != 1 || dm != 1 {
@@ -122,11 +107,6 @@ func TestExpiry_StageCondition(t *testing.T) {
 	}
 }
 
-// --- Remote filter ---
-
-// TestFilter_Remote checks that "Remote · EU" and "Remote-first (hybrid)" appear
-// when remote=true, that "New York office only" does not, and that industry counts
-// follow the same filter.
 func TestFilter_Remote(t *testing.T) {
 	d := openTestDB(t)
 	setProfileData(t, d, nil, []string{"engineer"}, nil)
@@ -152,7 +132,6 @@ func TestFilter_Remote(t *testing.T) {
 	if len(rs) != 2 || !got[float64(idA)] || !got[float64(idB)] {
 		t.Errorf("remote rows: got %d %v, want 2 (Remote EU + Remote-first)", len(rs), got)
 	}
-	// Industry counts must honour the remote filter too; the office vacancy is excluded.
 	icRaw, _ := body["industryCounts"].([]any)
 	var softwareCount int
 	for _, v := range icRaw {
@@ -165,8 +144,6 @@ func TestFilter_Remote(t *testing.T) {
 	}
 }
 
-// TestFilter_Remote_Anywhere checks that "anywhere" and "telecommute" in the
-// location also match the remote filter.
 func TestFilter_Remote_Anywhere(t *testing.T) {
 	d := openTestDB(t)
 	setProfileData(t, d, nil, []string{"engineer"}, nil)
@@ -192,10 +169,6 @@ func TestFilter_Remote_Anywhere(t *testing.T) {
 	}
 }
 
-// --- Leadership filter ---
-
-// TestFilter_Leadership matches CTO, Head, Director, Manager, Lead (not "lead
-// generation") as whole words in the title.
 func TestFilter_Leadership(t *testing.T) {
 	d := openTestDB(t)
 	setProfileData(t, d, nil, []string{"engineer", "developer", "head", "director", "manager", "lead", "cto", "analyst"}, nil)
@@ -234,9 +207,6 @@ func TestFilter_Leadership(t *testing.T) {
 	}
 }
 
-// --- Sources filter ---
-
-// TestFilter_Sources returns only vacancies from the requested source key.
 func TestFilter_Sources(t *testing.T) {
 	d := openTestDB(t)
 	setProfileData(t, d, nil, []string{"engineer"}, nil)
@@ -255,10 +225,6 @@ func TestFilter_Sources(t *testing.T) {
 	}
 }
 
-// --- Unread filter ---
-
-// TestFilter_Unread shows only unread vacancies when unread=true; read vacancies
-// are hidden. In Applied the filter is ignored.
 func TestFilter_Unread(t *testing.T) {
 	d := openTestDB(t)
 	setProfileData(t, d, nil, []string{"engineer"}, nil)
@@ -266,8 +232,7 @@ func TestFilter_Unread(t *testing.T) {
 
 	idUnread := add(t, cat, post("https://example.com/jobs/u1", "Unread Engineer", "Co"))
 	idRead := add(t, cat, post("https://example.com/jobs/u2", "Read Engineer", "Co"))
-	// Mark idRead as seen.
-	d.Exec(`UPDATE vacancy SET seen_at=? WHERE id=?`, //nolint:errcheck
+	d.Exec(`UPDATE vacancy SET seen_at=? WHERE id=?`,
 		testNow.UTC().Format(time.RFC3339), idRead)
 
 	ts := newTestServer(t, d)
@@ -276,11 +241,10 @@ func TestFilter_Unread(t *testing.T) {
 		t.Errorf("unread: got %d rows, want 1 (unread)", len(rs))
 	}
 
-	// Unread filter ignored in applied.
 	nowStr := testNow.UTC().Format(time.RFC3339)
-	d.Exec(`INSERT OR REPLACE INTO decision (profile,vacancy,stage,reason,decided_at) VALUES (1,?,?,?,?)`, //nolint:errcheck
+	d.Exec(`INSERT OR REPLACE INTO decision (profile,vacancy,stage,reason,decided_at) VALUES (1,?,?,?,?)`,
 		idRead, "applied", "", nowStr)
-	d.Exec(`INSERT OR REPLACE INTO decision (profile,vacancy,stage,reason,decided_at) VALUES (1,?,?,?,?)`, //nolint:errcheck
+	d.Exec(`INSERT OR REPLACE INTO decision (profile,vacancy,stage,reason,decided_at) VALUES (1,?,?,?,?)`,
 		idUnread, "applied", "", nowStr)
 	rsApplied := getRows(apiGet(t, ts, "/api/vacancies?stage=applied&unread=true"))
 	if len(rsApplied) != 2 {
@@ -288,10 +252,6 @@ func TestFilter_Unread(t *testing.T) {
 	}
 }
 
-// --- Filters combined ---
-
-// TestFilter_Combined applies remote and collected together and verifies only
-// vacancies matching both conditions appear.
 func TestFilter_Combined(t *testing.T) {
 	d := openTestDB(t)
 	setProfileData(t, d, nil, []string{"engineer"}, nil)
@@ -303,12 +263,10 @@ func TestFilter_Combined(t *testing.T) {
 		URL: "https://example.com/jobs/cb1", Title: "Engineer", Company: "Co",
 		Location: "Remote · EU", Text: "job", TextState: listing.TextFull,
 	}, "src")
-	// recent but not remote
 	add(t, catRecent, listing.Posting{
 		URL: "https://example.com/jobs/cb2", Title: "Engineer", Company: "Co",
 		Location: "London", Text: "job", TextState: listing.TextFull,
 	})
-	// remote but old
 	add(t, catOld, listing.Posting{
 		URL: "https://example.com/jobs/cb3", Title: "Engineer", Company: "Co",
 		Location: "Remote · US", Text: "job", TextState: listing.TextFull,
@@ -321,10 +279,6 @@ func TestFilter_Combined(t *testing.T) {
 	}
 }
 
-// --- Count groups ignore their own filter ---
-
-// TestFilter_SourceCounts_IgnoresSourcesFilter checks that sourceCounts returns
-// all sources regardless of the sources filter, but honours other filters.
 func TestFilter_SourceCounts_IgnoresSourcesFilter(t *testing.T) {
 	d := openTestDB(t)
 	setProfileData(t, d, nil, []string{"engineer"}, nil)
@@ -336,12 +290,10 @@ func TestFilter_SourceCounts_IgnoresSourcesFilter(t *testing.T) {
 	ts := newTestServer(t, d)
 	body := apiGet(t, ts, "/api/vacancies?sources=feed-alpha")
 
-	// rows: only feed-alpha.
 	if len(getRows(body)) != 1 {
 		t.Errorf("rows with sources filter: want 1")
 	}
 
-	// sourceCounts: both sources still counted.
 	scRaw, _ := body["sourceCounts"].([]any)
 	scm := make(map[string]int)
 	for _, v := range scRaw {
@@ -358,8 +310,6 @@ func TestFilter_SourceCounts_IgnoresSourcesFilter(t *testing.T) {
 	}
 }
 
-// TestFilter_IndustryCounts_HonoursSourcesFilter checks that industryCounts is
-// affected by the sources filter (since sources is not its own filter group).
 func TestFilter_IndustryCounts_HonoursSourcesFilter(t *testing.T) {
 	d := openTestDB(t)
 	setProfileData(t, d, nil, []string{"engineer"}, nil)
@@ -380,7 +330,6 @@ func TestFilter_IndustryCounts_HonoursSourcesFilter(t *testing.T) {
 		n, _ := m["count"].(float64)
 		counts[name] = int(n)
 	}
-	// Only feed-alpha (Web3) is in the filtered set; Software is in feed-beta only.
 	if counts["Web3"] != 1 {
 		t.Errorf("industryCounts with sources filter: Web3=%d, want 1", counts["Web3"])
 	}
@@ -389,10 +338,6 @@ func TestFilter_IndustryCounts_HonoursSourcesFilter(t *testing.T) {
 	}
 }
 
-// --- Total unchanged by filters ---
-
-// TestFilter_Total_UnchangedByFilters checks that total reflects the stage
-// count before any user query or filter is applied.
 func TestFilter_Total_UnchangedByFilters(t *testing.T) {
 	d := openTestDB(t)
 	setProfileData(t, d, nil, []string{"engineer"}, nil)
@@ -406,34 +351,26 @@ func TestFilter_Total_UnchangedByFilters(t *testing.T) {
 	}
 
 	ts := newTestServer(t, d)
-	// No filters: total = 3.
 	body := apiGet(t, ts, "/api/vacancies")
 	total, _ := body["total"].(float64)
 	if total != 3 {
 		t.Errorf("total no filter: got %v, want 3", total)
 	}
-	// With remote filter (no matches): total still = 3.
 	body2 := apiGet(t, ts, "/api/vacancies?remote=true")
 	total2, _ := body2["total"].(float64)
 	if total2 != 3 {
 		t.Errorf("total with remote filter: got %v, want 3", total2)
 	}
-	// With query that matches 1: total still = 3.
 	body3 := apiGet(t, ts, "/api/vacancies?q=engineer")
 	total3, _ := body3["total"].(float64)
 	if total3 != 3 {
 		t.Errorf("total with query: got %v, want 3", total3)
 	}
-	// rows with remote = 0.
 	if len(getRows(body2)) != 0 {
 		t.Errorf("rows with remote filter: want 0")
 	}
 }
 
-// --- SourceCounts in list response ---
-
-// TestFilter_SourceCounts_Basic checks that sourceCounts is populated and
-// reflects the number of vacancies per source in the unfiltered list.
 func TestFilter_SourceCounts_Basic(t *testing.T) {
 	d := openTestDB(t)
 	setProfileData(t, d, nil, []string{"engineer"}, nil)
@@ -461,8 +398,6 @@ func TestFilter_SourceCounts_Basic(t *testing.T) {
 	}
 }
 
-// TestFilter_Sources_MultipleRequested checks that vacancies from either of two
-// requested sources are returned.
 func TestFilter_Sources_MultipleRequested(t *testing.T) {
 	d := openTestDB(t)
 	setProfileData(t, d, nil, []string{"engineer"}, nil)
@@ -480,8 +415,6 @@ func TestFilter_Sources_MultipleRequested(t *testing.T) {
 	}
 }
 
-// TestFilter_Leadership_HeadNotConfusedWithHeadhunter checks that "Head" as a
-// whole word matches but does not match it inside another word.
 func TestFilter_Leadership_HeadMatch(t *testing.T) {
 	d := openTestDB(t)
 	setProfileData(t, d, nil, []string{"engineer", "developer", "head", "director"}, nil)
@@ -498,8 +431,6 @@ func TestFilter_Leadership_HeadMatch(t *testing.T) {
 
 	ts := newTestServer(t, d)
 	rs := getRows(apiGet(t, ts, "/api/vacancies?leadership=true"))
-	// "Head of Platform Engineering" → matches (Head)
-	// "Lead Generation Director" → matches (Director)
 	got := map[float64]bool{}
 	for _, r := range rs {
 		got[rowID(r)] = true
@@ -507,14 +438,11 @@ func TestFilter_Leadership_HeadMatch(t *testing.T) {
 	if !got[float64(idHead)] {
 		t.Errorf("leadership: Head of Platform not matched")
 	}
-	// Director is a leadership title even in "Lead Generation Director".
 	if len(rs) != 2 {
 		t.Errorf("leadership: got %d rows, want 2", len(rs))
 	}
 }
 
-// TestFilter_Unread_IgnoredInDismissed checks that unread=true is ignored in
-// the dismissed list (matches dismissed-stage behaviour: ignore in Archive).
 func TestFilter_Unread_IgnoredInDismissed(t *testing.T) {
 	d := openTestDB(t)
 	setProfileData(t, d, nil, []string{"engineer"}, nil)
@@ -522,32 +450,28 @@ func TestFilter_Unread_IgnoredInDismissed(t *testing.T) {
 
 	idA := add(t, cat, post("https://example.com/jobs/ud1", "Engineer A", "Co"))
 	idB := add(t, cat, post("https://example.com/jobs/ud2", "Engineer B", "Co"))
-	// Mark idA as read.
-	d.Exec(`UPDATE vacancy SET seen_at=? WHERE id=?`, //nolint:errcheck
+	d.Exec(`UPDATE vacancy SET seen_at=? WHERE id=?`,
 		testNow.UTC().Format(time.RFC3339), idA)
 	nowStr := testNow.UTC().Format(time.RFC3339)
-	d.Exec(`INSERT OR REPLACE INTO decision (profile,vacancy,stage,reason,decided_at) VALUES (1,?,?,?,?)`, //nolint:errcheck
+	d.Exec(`INSERT OR REPLACE INTO decision (profile,vacancy,stage,reason,decided_at) VALUES (1,?,?,?,?)`,
 		idA, "dismissed", "", nowStr)
-	d.Exec(`INSERT OR REPLACE INTO decision (profile,vacancy,stage,reason,decided_at) VALUES (1,?,?,?,?)`, //nolint:errcheck
+	d.Exec(`INSERT OR REPLACE INTO decision (profile,vacancy,stage,reason,decided_at) VALUES (1,?,?,?,?)`,
 		idB, "dismissed", "", nowStr)
 
 	ts := newTestServer(t, d)
 	rs := getRows(apiGet(t, ts, "/api/vacancies?stage=dismissed&unread=true"))
-	// Unread ignored in dismissed → both vacancies appear.
 	if len(rs) != 2 {
 		t.Errorf("unread ignored in dismissed: got %d rows, want 2", len(rs))
 	}
 }
 
-// TestFilter_HTTPStatus_InvalidStageStillErrors verifies that an invalid stage
-// parameter is still rejected 422.
 func TestFilter_HTTPStatus_InvalidStageWithFilters(t *testing.T) {
 	d := openTestDB(t)
 	ts := newTestServer(t, d)
 	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/vacancies?stage=bogus&remote=true", nil)
 	req.Host = "127.0.0.1:9999"
 	resp, _ := ts.Client().Do(req)
-	resp.Body.Close() //nolint:errcheck
+	resp.Body.Close()
 	if resp.StatusCode != http.StatusUnprocessableEntity {
 		t.Errorf("invalid stage with filters: status %d, want 422", resp.StatusCode)
 	}

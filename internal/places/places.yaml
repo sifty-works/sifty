@@ -1,9 +1,4 @@
-# Places: the one vocabulary of countries, regions, remote restrictions and
-# time-zone bands. Countries, regions and bands are also what GET /api/reference
-# shows; aliases, restriction words and abbreviations are used only to read labels.
 
-# countries: ISO 3166-1 alpha-2 code, name, other spellings, and the time-zone
-# bands the country spans.
 countries:
   - {code: AD, name: Andorra, bands: [europe_africa]}
   - {code: AE, name: United Arab Emirates, bands: [mideast_south_asia]}
@@ -204,7 +199,6 @@ countries:
   - {code: ZM, name: Zambia, bands: [europe_africa]}
   - {code: ZW, name: Zimbabwe, bands: [europe_africa]}
 
-# territories: codes and names the resolver reads that GET /api/reference does not list.
 territories:
   - {code: AI, name: Anguilla, bands: [americas_east]}
   - {code: AQ, name: Antarctica, bands: [europe_africa]}
@@ -258,8 +252,6 @@ territories:
   - {code: WF, name: Wallis and Futuna, bands: [oceania]}
   - {code: YT, name: Mayotte, bands: [europe_africa, mideast_south_asia]}
 
-# regions: a name, its aliases and its member countries. A work authorization
-# for a region covers its countries.
 regions:
   - code: north_america
     name: North America
@@ -290,21 +282,15 @@ regions:
     aliases: [Asia Pacific, Asia-Pacific]
     countries: [AU, NZ, JP, KR, SG, HK, CN, IN, TW, ID, TH, MY, PH, VN, BD, PK, LK]
 
-# worldwide: words that name no restriction; a remote vacancy whose places are all
-# worldwide, or that names no place, is unrestricted remote.
 worldwide: [worldwide, anywhere, earth, global, international, remote, telecommute, telecommuting, telework, teleworking]
 
-# ignore: parts of a label that name no place.
 ignore: [hybrid, onsite, on-site, on site, office, in-office, in office, flexible, home, distributed, nationwide]
 
-# prefixes are stripped from the start of a part, qualifiers from its end, before lookup.
 prefixes: [remote within the, within the, remote]
 qualifiers: [" only", "-based", " based", " time zones", " time zone", " timezone"]
 
-# separators split a composite label; words split at word boundaries only.
 separators: ["/", ",", "&", ";", " - ", "·", and, or]
 
-# bands: the six UTC bands a profile chooses from, with the offsets they cover.
 bands:
   - {code: americas_west, label: Americas West, min: -8, max: -6}
   - {code: americas_east, label: Americas East, min: -5, max: -3}
@@ -313,7 +299,6 @@ bands:
   - {code: east_se_asia, label: "East & Southeast Asia", min: 7, max: 9}
   - {code: oceania, label: Oceania, min: 10, max: 12}
 
-# abbreviations: time-zone abbreviations and their UTC offset in hours.
 abbreviations:
   UTC: 0.0
   GMT: 0.0

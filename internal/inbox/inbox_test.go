@@ -65,7 +65,7 @@ func apiGet(t *testing.T, ts *httptest.Server, path string) map[string]any {
 		t.Fatalf("GET %s: status %d", path, resp.StatusCode)
 	}
 	var body map[string]any
-	json.NewDecoder(resp.Body).Decode(&body) //nolint:errcheck
+	json.NewDecoder(resp.Body).Decode(&body)
 	checkShape(t, http.MethodGet, path, body)
 	return body
 }
@@ -82,15 +82,13 @@ func apiJSON(t *testing.T, ts *httptest.Server, method, path string, body any) (
 	}
 	defer resp.Body.Close()
 	var out map[string]any
-	json.NewDecoder(resp.Body).Decode(&out) //nolint:errcheck
+	json.NewDecoder(resp.Body).Decode(&out)
 	if resp.StatusCode == http.StatusOK {
 		checkShape(t, method, path, out)
 	}
 	return out, resp.StatusCode
 }
 
-// checkShape validates body against the registered response type for the
-// given method and path. It is a no-op when no matching route is found.
 func checkShape(t *testing.T, method, path string, body map[string]any) {
 	t.Helper()
 	base, _, _ := strings.Cut(path, "?")
@@ -106,8 +104,6 @@ func checkShape(t *testing.T, method, path string, body map[string]any) {
 	}
 }
 
-// routeMatch reports whether path matches pat. Segments enclosed in {} match
-// any non-empty path segment; all others must be equal.
 func routeMatch(pat, path string) bool {
 	ps := strings.Split(strings.TrimPrefix(pat, "/"), "/")
 	qs := strings.Split(strings.TrimPrefix(path, "/"), "/")
@@ -161,8 +157,6 @@ func post(url, title, company string) listing.Posting {
 	}
 }
 
-// setProfileData writes search fields to profile 1 so the inbox visibility filter
-// selects the vacancies the test expects. Use invented terms only.
 func setProfileData(t *testing.T, d *db.DB, roles, keywords, allOf []string) {
 	t.Helper()
 	type pd struct {
@@ -176,8 +170,6 @@ func setProfileData(t *testing.T, d *db.DB, roles, keywords, allOf []string) {
 		t.Fatalf("setProfileData: %v", err)
 	}
 }
-
-// --- Rows and fields ---
 
 func TestRows_AllFieldsPresent(t *testing.T) {
 	d := openTestDB(t)
@@ -204,8 +196,6 @@ func TestRows_AllFieldsPresent(t *testing.T) {
 		t.Error("published should not be empty")
 	}
 }
-
-// --- Publication line and age forms ---
 
 func TestPublicationLine_Forms(t *testing.T) {
 	cases := []struct {
@@ -241,8 +231,6 @@ func TestPublicationLine_Forms(t *testing.T) {
 		})
 	}
 }
-
-// --- Newest order ---
 
 func TestOrder_ThreeRanks(t *testing.T) {
 	d := openTestDB(t)
@@ -292,8 +280,6 @@ func TestOrder_TieBreakByFirstSeenThenID(t *testing.T) {
 	}
 }
 
-// --- Search ---
-
 func TestSearch(t *testing.T) {
 	d := openTestDB(t)
 	setProfileData(t, d, nil, []string{"backend", "designer", "engineer"}, nil)
@@ -325,7 +311,6 @@ func TestSearch(t *testing.T) {
 		}
 	}
 
-	// counts ignores q.
 	if countOf(apiGet(t, ts, "/api/vacancies?q=golang"), "inbox") != 4 {
 		t.Errorf("counts.inbox with query: want 4")
 	}
@@ -354,8 +339,6 @@ func TestSearch(t *testing.T) {
 		}
 	}
 }
-
-// --- Exclusions ---
 
 func TestExclusions_CRUD(t *testing.T) {
 	d := openTestDB(t)
@@ -482,8 +465,6 @@ func TestExclusions_UnknownPlaceholderNotMatchedByWord(t *testing.T) {
 	}
 }
 
-// --- Empty states ---
-
 func TestEmpty(t *testing.T) {
 	d := openTestDB(t)
 	setProfileData(t, d, nil, []string{"description"}, nil)
@@ -515,8 +496,6 @@ func TestEmpty(t *testing.T) {
 	}
 }
 
-// --- Four lists and counts ---
-
 func TestListStages_CountsAndRows(t *testing.T) {
 	d := openTestDB(t)
 	setProfileData(t, d, nil, []string{"description"}, nil)
@@ -529,7 +508,7 @@ func TestListStages_CountsAndRows(t *testing.T) {
 	now := time.Now().UTC().Format(time.RFC3339)
 
 	decide := func(vacID int64, stage, reason string) {
-		d.Exec(fmt.Sprintf( //nolint:errcheck
+		d.Exec(fmt.Sprintf(
 			`INSERT OR REPLACE INTO decision (profile,vacancy,stage,reason,decided_at) VALUES (1,%d,'%s','%s','%s')`,
 			vacID, stage, reason, now))
 	}
@@ -566,11 +545,11 @@ func TestListStages_AppliedOrder_AndAppliedText(t *testing.T) {
 	id2 := add(t, cat, post("https://example.com/jobs/ao2", "Newer", "Co"))
 	ts := newTestServer(t, d)
 
-	d.Exec(`INSERT OR REPLACE INTO decision (profile,vacancy,stage,reason,decided_at) VALUES (1,?,?,?,?)`, //nolint:errcheck
+	d.Exec(`INSERT OR REPLACE INTO decision (profile,vacancy,stage,reason,decided_at) VALUES (1,?,?,?,?)`,
 		id1, "applied", "", "2026-11-01T12:00:00Z")
-	d.Exec(`INSERT OR REPLACE INTO decision (profile,vacancy,stage,reason,decided_at) VALUES (1,?,?,?,?)`, //nolint:errcheck
+	d.Exec(`INSERT OR REPLACE INTO decision (profile,vacancy,stage,reason,decided_at) VALUES (1,?,?,?,?)`,
 		id2, "applied", "", "2026-11-10T12:00:00Z")
-	d.Exec(`INSERT INTO application (vacancy,applied_at,profile,profile_name) VALUES (?,?,?,?)`, //nolint:errcheck
+	d.Exec(`INSERT INTO application (vacancy,applied_at,profile,profile_name) VALUES (?,?,?,?)`,
 		id1, "2026-11-01T12:00:00Z", 1, "Alpha Profile")
 
 	rs := getRows(apiGet(t, ts, "/api/vacancies?stage=applied"))
@@ -578,14 +557,12 @@ func TestListStages_AppliedOrder_AndAppliedText(t *testing.T) {
 		t.Errorf("applied order: first title %q, want Newer", field(rs[0], "title"))
 	}
 
-	// Applied text in applied list: "Applied <date>" (no profile name)
 	applied := field(rs[1], "applied")
 	if applied != "Applied 1 Nov 2026" {
 		t.Errorf("applied text in applied list: got %q, want 'Applied 1 Nov 2026'", applied)
 	}
-	// Applied text in inbox: "Applied <date> from <name>" when application exists.
 	id3 := add(t, cat, post("https://example.com/jobs/ao3", "Third", "Co"))
-	d.Exec(`INSERT INTO application (vacancy,applied_at,profile,profile_name) VALUES (?,?,?,?)`, //nolint:errcheck
+	d.Exec(`INSERT INTO application (vacancy,applied_at,profile,profile_name) VALUES (?,?,?,?)`,
 		id3, "2026-10-01T12:00:00Z", 1, "Beta Profile")
 	rs = getRows(apiGet(t, ts, "/api/vacancies?stage=inbox"))
 	var found string
@@ -607,11 +584,10 @@ func TestListStages_ExclusionsApplyToAllStages(t *testing.T) {
 	add(t, cat, post("https://example.com/jobs/ea2", "Go Dev", "Co"))
 	ts := newTestServer(t, d)
 	now := time.Now().UTC().Format(time.RFC3339)
-	d.Exec(`INSERT OR REPLACE INTO decision (profile,vacancy,stage,reason,decided_at) VALUES (1,?,?,?,?)`, //nolint:errcheck
+	d.Exec(`INSERT OR REPLACE INTO decision (profile,vacancy,stage,reason,decided_at) VALUES (1,?,?,?,?)`,
 		id1, "shortlist", "", now)
 	apiJSON(t, ts, http.MethodPost, "/api/exclusions", map[string]any{"kind": "word", "value": "kotlin"})
 
-	// Exclusion hides the kotlin vacancy in its stage list and in counts.
 	if rs := getRows(apiGet(t, ts, "/api/vacancies?stage=shortlist")); len(rs) != 0 {
 		t.Errorf("shortlist after exclusion: got %d rows, want 0", len(rs))
 	}
@@ -620,8 +596,6 @@ func TestListStages_ExclusionsApplyToAllStages(t *testing.T) {
 		t.Errorf("counts.shortlist after exclusion: want 0")
 	}
 }
-
-// --- Decision endpoint ---
 
 func TestDecision_AllowedMoves(t *testing.T) {
 	for i, tc := range []struct {
@@ -642,7 +616,7 @@ func TestDecision_AllowedMoves(t *testing.T) {
 			ts := newTestServer(t, d)
 			if tc.from != "inbox" {
 				now := time.Now().UTC().Format(time.RFC3339)
-				d.Exec(`INSERT OR REPLACE INTO decision (profile,vacancy,stage,reason,decided_at) VALUES (1,?,?,?,?)`, id, tc.from, "", now) //nolint:errcheck
+				d.Exec(`INSERT OR REPLACE INTO decision (profile,vacancy,stage,reason,decided_at) VALUES (1,?,?,?,?)`, id, tc.from, "", now)
 			}
 			resp, status := apiJSON(t, ts, http.MethodPost, fmt.Sprintf("/api/vacancies/%d/decision", id),
 				map[string]any{"profile": 1, "from": tc.from, "to": tc.to, "reason": tc.reason, "confirmed": tc.confirm})
@@ -670,7 +644,7 @@ func TestDecision_Refusals(t *testing.T) {
 	check("reason on inbox→dismissed", http.StatusUnprocessableEntity, map[string]any{"profile": 1, "from": "inbox", "to": "dismissed", "reason": "not a fit"})
 
 	now := time.Now().UTC().Format(time.RFC3339)
-	d.Exec(`INSERT OR REPLACE INTO decision (profile,vacancy,stage,reason,decided_at) VALUES (1,?,?,?,?)`, id, "shortlist", "", now) //nolint:errcheck
+	d.Exec(`INSERT OR REPLACE INTO decision (profile,vacancy,stage,reason,decided_at) VALUES (1,?,?,?,?)`, id, "shortlist", "", now)
 	check("apply without confirm", http.StatusUnprocessableEntity, map[string]any{"profile": 1, "from": "shortlist", "to": "applied", "confirmed": false})
 	check("unknown profile", http.StatusNotFound, map[string]any{"profile": 999, "from": "inbox", "to": "shortlist"})
 }
@@ -680,11 +654,11 @@ func TestDecision_AppliedWritesApplication_UndoKeepsIt(t *testing.T) {
 	id := add(t, newCat(d), post("https://example.com/jobs/app1", "Role", "Co"))
 	ts := newTestServer(t, d)
 	now := time.Now().UTC().Format(time.RFC3339)
-	d.Exec(`INSERT OR REPLACE INTO decision (profile,vacancy,stage,reason,decided_at) VALUES (1,?,?,?,?)`, id, "shortlist", "", now) //nolint:errcheck
+	d.Exec(`INSERT OR REPLACE INTO decision (profile,vacancy,stage,reason,decided_at) VALUES (1,?,?,?,?)`, id, "shortlist", "", now)
 	path := fmt.Sprintf("/api/vacancies/%d/decision", id)
 	appCount := func() int {
 		var n int
-		d.QueryRow(`SELECT count(*) FROM application WHERE vacancy=?`, id).Scan(&n) //nolint:errcheck
+		d.QueryRow(`SELECT count(*) FROM application WHERE vacancy=?`, id).Scan(&n)
 		return n
 	}
 	_, status := apiJSON(t, ts, http.MethodPost, path, map[string]any{"profile": 1, "from": "shortlist", "to": "applied", "confirmed": true})
@@ -700,7 +674,7 @@ func TestDecision_AppliedWritesApplication_UndoKeepsIt(t *testing.T) {
 func TestDecision_AliasedVacancy(t *testing.T) {
 	d := openTestDB(t)
 	keptID := add(t, newCat(d), post("https://example.com/jobs/al", "Role", "Co"))
-	d.Exec(`INSERT INTO vacancy_alias (old_id, new_id) VALUES (99999, ?)`, keptID) //nolint:errcheck
+	d.Exec(`INSERT INTO vacancy_alias (old_id, new_id) VALUES (99999, ?)`, keptID)
 	ts := newTestServer(t, d)
 	path := fmt.Sprintf("/api/vacancies/99999/decision")
 	_, status := apiJSON(t, ts, http.MethodPost, path, map[string]any{"profile": 1, "from": "inbox", "to": "shortlist"})
@@ -708,13 +682,11 @@ func TestDecision_AliasedVacancy(t *testing.T) {
 		t.Errorf("decision on alias: status %d", status)
 	}
 	var stage string
-	d.QueryRow(`SELECT stage FROM decision WHERE vacancy=? AND profile=1`, keptID).Scan(&stage) //nolint:errcheck
+	d.QueryRow(`SELECT stage FROM decision WHERE vacancy=? AND profile=1`, keptID).Scan(&stage)
 	if stage != "shortlist" {
 		t.Errorf("decision written to kept: stage %q", stage)
 	}
 }
-
-// --- Seen endpoint ---
 
 func TestSeen_MarksRead(t *testing.T) {
 	d := openTestDB(t)
@@ -725,19 +697,17 @@ func TestSeen_MarksRead(t *testing.T) {
 		t.Fatalf("seen: status %d, want 204", status)
 	}
 	var seenAt string
-	d.QueryRow(`SELECT seen_at FROM vacancy WHERE id=?`, id).Scan(&seenAt) //nolint:errcheck
+	d.QueryRow(`SELECT seen_at FROM vacancy WHERE id=?`, id).Scan(&seenAt)
 	if seenAt == "" {
 		t.Error("seen_at: should be set after /seen")
 	}
-	apiJSON(t, ts, http.MethodPost, fmt.Sprintf("/api/vacancies/%d/seen", id), struct{}{}) //nolint:errcheck
+	apiJSON(t, ts, http.MethodPost, fmt.Sprintf("/api/vacancies/%d/seen", id), struct{}{})
 	var seenAt2 string
-	d.QueryRow(`SELECT seen_at FROM vacancy WHERE id=?`, id).Scan(&seenAt2) //nolint:errcheck
+	d.QueryRow(`SELECT seen_at FROM vacancy WHERE id=?`, id).Scan(&seenAt2)
 	if seenAt2 != seenAt {
 		t.Errorf("seen_at changed on repeat call: %q → %q", seenAt, seenAt2)
 	}
 }
-
-// --- Delete endpoint ---
 
 func TestDelete_RemovesVacancy(t *testing.T) {
 	d := openTestDB(t)
@@ -750,14 +720,14 @@ func TestDelete_RemovesVacancy(t *testing.T) {
 	})
 	ts := newTestServer(t, d)
 	now := time.Now().UTC().Format(time.RFC3339)
-	d.Exec(`INSERT OR REPLACE INTO decision (profile,vacancy,stage,reason,decided_at) VALUES (1,?,?,?,?)`, id, "shortlist", "", now) //nolint:errcheck
+	d.Exec(`INSERT OR REPLACE INTO decision (profile,vacancy,stage,reason,decided_at) VALUES (1,?,?,?,?)`, id, "shortlist", "", now)
 	_, status := apiJSON(t, ts, http.MethodDelete, fmt.Sprintf("/api/vacancies/%d?profile=1", id), nil)
 	if status != http.StatusOK {
 		t.Fatalf("delete: status %d, want 200", status)
 	}
 	var count, tkCount int
-	d.QueryRow(`SELECT count(*) FROM vacancy WHERE id=?`, id).Scan(&count)             //nolint:errcheck
-	d.QueryRow(`SELECT count(*) FROM tombstone WHERE key LIKE 'url:%'`).Scan(&tkCount) //nolint:errcheck
+	d.QueryRow(`SELECT count(*) FROM vacancy WHERE id=?`, id).Scan(&count)
+	d.QueryRow(`SELECT count(*) FROM tombstone WHERE key LIKE 'url:%'`).Scan(&tkCount)
 	if count != 0 {
 		t.Errorf("vacancy still exists after delete")
 	}
@@ -776,15 +746,13 @@ func TestDelete_Refused(t *testing.T) {
 	id := add(t, newCat(d), post("https://example.com/jobs/drf1", "Role", "Co"))
 	ts := newTestServer(t, d)
 
-	// Refused in Inbox (no decision).
 	_, status := apiJSON(t, ts, http.MethodDelete, fmt.Sprintf("/api/vacancies/%d?profile=1", id), nil)
 	if status != http.StatusConflict {
 		t.Errorf("delete in inbox: status %d, want 409", status)
 	}
 
-	// Refused while collect active.
 	now := time.Now().UTC().Format(time.RFC3339)
-	d.Exec(`INSERT OR REPLACE INTO decision (profile,vacancy,stage,reason,decided_at) VALUES (1,?,?,?,?)`, id, "shortlist", "", now) //nolint:errcheck
+	d.Exec(`INSERT OR REPLACE INTO decision (profile,vacancy,stage,reason,decided_at) VALUES (1,?,?,?,?)`, id, "shortlist", "", now)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	h := server.New(server.Options{Version: "test", Port: 9999, Logger: logger},
 		func(mux *http.ServeMux) {
@@ -798,9 +766,6 @@ func TestDelete_Refused(t *testing.T) {
 	}
 }
 
-// --- Vacancy view tests ---
-
-// apiGetRaw performs a GET and returns the parsed body and status code.
 func apiGetRaw(t *testing.T, ts *httptest.Server, path string) (map[string]any, int) {
 	t.Helper()
 	req, _ := http.NewRequest(http.MethodGet, ts.URL+path, nil)
@@ -811,18 +776,16 @@ func apiGetRaw(t *testing.T, ts *httptest.Server, path string) (map[string]any, 
 	}
 	defer resp.Body.Close()
 	var body map[string]any
-	json.NewDecoder(resp.Body).Decode(&body) //nolint:errcheck
+	json.NewDecoder(resp.Body).Decode(&body)
 	return body, resp.StatusCode
 }
 
-// TestVacancyView_StageActionsAndStatus checks the actions and status text
-// for each stage, and that an empty company has no block action.
 func TestVacancyView_StageActionsAndStatus(t *testing.T) {
 	d := openTestDB(t)
 	cat := newCat(d)
 	nowStr := testNow.UTC().Format(time.RFC3339)
 	setStage := func(id int64, stage, reason string) {
-		d.Exec(`INSERT INTO decision (profile,vacancy,stage,reason,decided_at) VALUES (1,?,?,?,?)`, id, stage, reason, nowStr) //nolint:errcheck
+		d.Exec(`INSERT INTO decision (profile,vacancy,stage,reason,decided_at) VALUES (1,?,?,?,?)`, id, stage, reason, nowStr)
 	}
 	inboxID := add(t, cat, post("https://example.com/jobs/vv1", "R", "Acme"))
 	noCoID := add(t, cat, post("https://example.com/jobs/vv2", "R", ""))
@@ -830,7 +793,7 @@ func TestVacancyView_StageActionsAndStatus(t *testing.T) {
 	setStage(shortID, "shortlist", "")
 	applID := add(t, cat, post("https://example.com/jobs/vv4", "R", "Co"))
 	setStage(applID, "applied", "")
-	d.Exec(`INSERT INTO application (vacancy,applied_at,profile,profile_name) VALUES (?,?,1,'P')`, applID, "2026-11-01T12:00:00Z") //nolint:errcheck
+	d.Exec(`INSERT INTO application (vacancy,applied_at,profile,profile_name) VALUES (?,?,1,'P')`, applID, "2026-11-01T12:00:00Z")
 	dismID := add(t, cat, post("https://example.com/jobs/vv5", "R", "Co"))
 	setStage(dismID, "dismissed", "not a fit")
 	ts := newTestServer(t, d)
@@ -871,15 +834,13 @@ func TestVacancyView_StageActionsAndStatus(t *testing.T) {
 	}
 }
 
-// TestVacancyView_ExpiredVacancy checks that expired=true appears in both
-// the view response and the list row when expires_at is in the past.
 func TestVacancyView_ExpiredVacancy(t *testing.T) {
 	d := openTestDB(t)
 	setProfileData(t, d, nil, []string{"description"}, nil)
 	p := listing.Posting{
 		URL: "https://example.com/jobs/exp1", Title: "R", Company: "Co",
 		Text: "job description", TextState: listing.TextFull,
-		Expires: time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC), // before testNow
+		Expires: time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC),
 	}
 	id := add(t, newCat(d), p)
 	ts := newTestServer(t, d)
@@ -896,9 +857,6 @@ func TestVacancyView_ExpiredVacancy(t *testing.T) {
 	}
 }
 
-// TestVacancyView_ApplyRules checks the apply action URL logic:
-// valid apply_url is used; apply_url with credentials falls back to vacancy url;
-// both urls invalid produces a message.
 func TestVacancyView_ApplyRules(t *testing.T) {
 	nowStr := testNow.UTC().Format(time.RFC3339)
 	mkDB := func(url, applyURL string) (*db.DB, int64) {
@@ -906,9 +864,9 @@ func TestVacancyView_ApplyRules(t *testing.T) {
 		var id int64
 		d.QueryRow(`INSERT INTO vacancy (identity,title,company,url,apply_url,first_seen,last_seen,text_state,content_hash,version,body)
 			VALUES ('','R','C',?,?,?,?,'full','h',1,'') RETURNING id`,
-			url, applyURL, nowStr, nowStr).Scan(&id) //nolint:errcheck
-		d.Exec(`INSERT INTO vacancy_source (vacancy_id,source,url,seen_at) VALUES (?,'s',?,?)`, id, url, nowStr)           //nolint:errcheck
-		d.Exec(`INSERT INTO decision (profile,vacancy,stage,reason,decided_at) VALUES (1,?,'shortlist','',?)`, id, nowStr) //nolint:errcheck
+			url, applyURL, nowStr, nowStr).Scan(&id)
+		d.Exec(`INSERT INTO vacancy_source (vacancy_id,source,url,seen_at) VALUES (?,'s',?,?)`, id, url, nowStr)
+		d.Exec(`INSERT INTO decision (profile,vacancy,stage,reason,decided_at) VALUES (1,?,'shortlist','',?)`, id, nowStr)
 		return d, id
 	}
 	apply := func(d *db.DB, id int64) map[string]any {
@@ -935,14 +893,11 @@ func TestVacancyView_ApplyRules(t *testing.T) {
 	}
 }
 
-// TestVacancyView_Sources checks that sources are returned as {name, url?} objects,
-// using the configured name when available and the host otherwise, with url set for
-// http(s) source keys and omitted for opaque identifiers.
 func TestVacancyView_Sources(t *testing.T) {
 	d := openTestDB(t)
 	id := add(t, newCat(d), post("https://named.example.com/jobs/f1", "R", "Co"))
 	nowStr := testNow.UTC().Format(time.RFC3339)
-	d.Exec(`INSERT OR IGNORE INTO vacancy_source (vacancy_id,source,url,seen_at) VALUES (?,'https://hn.example.org','https://hn.example.org',?)`, id, nowStr) //nolint:errcheck
+	d.Exec(`INSERT OR IGNORE INTO vacancy_source (vacancy_id,source,url,seen_at) VALUES (?,'https://hn.example.org','https://hn.example.org',?)`, id, nowStr)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	h := server.New(server.Options{Version: "test", Port: 9999, Logger: logger},
 		func(mux *http.ServeMux) {
@@ -959,7 +914,6 @@ func TestVacancyView_Sources(t *testing.T) {
 	if len(srcs) != 2 {
 		t.Fatalf("sources: got %d items, want 2", len(srcs))
 	}
-	// First source: opaque key "src" mapped to "Named Board"; no URL because "src" is not http(s).
 	s0, _ := srcs[0].(map[string]any)
 	if s0["name"] != "Named Board" {
 		t.Errorf("named source name: got %q, want %q", s0["name"], "Named Board")
@@ -967,7 +921,6 @@ func TestVacancyView_Sources(t *testing.T) {
 	if _, hasURL := s0["url"]; hasURL {
 		t.Errorf("named source: url should be absent for opaque key, got %q", s0["url"])
 	}
-	// Second source: "https://hn.example.org" → name from host, URL present.
 	s1, _ := srcs[1].(map[string]any)
 	if s1["name"] != "hn.example.org" {
 		t.Errorf("unnamed source name: got %q, want %q", s1["name"], "hn.example.org")
@@ -977,12 +930,8 @@ func TestVacancyView_Sources(t *testing.T) {
 	}
 }
 
-// TestVacancyView_SourceNameFromLiveConfig verifies that a source added to the
-// configuration after the server starts is named on the vacancy view without
-// restarting. The getSourceNames function is called on every request.
 func TestVacancyView_SourceNameFromLiveConfig(t *testing.T) {
 	d := openTestDB(t)
-	// Source key "live-board" is not a URL, so without a name map it shows as "live-board".
 	cat := catalog.New(d, testNowFn)
 	id, _, err := cat.Upsert(context.Background(), post("https://live.example.com/jobs/1", "Staff Engineer", "LiveCo"), "live-board")
 	if err != nil {
@@ -1017,7 +966,6 @@ func TestVacancyView_SourceNameFromLiveConfig(t *testing.T) {
 		t.Errorf("before config update: name %q, want %q", s1["name"], "live-board")
 	}
 
-	// Add the source to the live config; the next request must pick it up.
 	mu.Lock()
 	names["live-board"] = "Live Board"
 	mu.Unlock()
@@ -1033,8 +981,6 @@ func TestVacancyView_SourceNameFromLiveConfig(t *testing.T) {
 	}
 }
 
-// TestVacancyView_ListingState checks that each text_state value maps to its
-// display string in the listing.state field.
 func TestVacancyView_ListingState(t *testing.T) {
 	for _, tc := range []struct {
 		state listing.TextState
@@ -1060,12 +1006,10 @@ func TestVacancyView_ListingState(t *testing.T) {
 	}
 }
 
-// TestVacancyView_AliasedVacancyAndNotFound checks that a merged-away id returns
-// the kept vacancy, and that an unknown vacancy or profile answers 404.
 func TestVacancyView_AliasedVacancyAndNotFound(t *testing.T) {
 	d := openTestDB(t)
 	keptID := add(t, newCat(d), post("https://example.com/jobs/vva1", "R", "Co"))
-	d.Exec(`INSERT INTO vacancy_alias (old_id, new_id) VALUES (99997, ?)`, keptID) //nolint:errcheck
+	d.Exec(`INSERT INTO vacancy_alias (old_id, new_id) VALUES (99997, ?)`, keptID)
 	ts := newTestServer(t, d)
 
 	body, status := apiGetRaw(t, ts, "/api/vacancies/99997?profile=1")
@@ -1085,9 +1029,6 @@ func TestVacancyView_AliasedVacancyAndNotFound(t *testing.T) {
 	}
 }
 
-// --- Visibility ---
-
-// TestVisibility_RolesOnly checks that target roles filter the inbox by title.
 func TestVisibility_RolesOnly(t *testing.T) {
 	d := openTestDB(t)
 	cat := newCat(d)
@@ -1109,7 +1050,6 @@ func TestVisibility_RolesOnly(t *testing.T) {
 	}
 }
 
-// TestVisibility_KeywordsOnly checks that keywords filter the inbox by title, tags and text.
 func TestVisibility_KeywordsOnly(t *testing.T) {
 	d := openTestDB(t)
 	cat := newCat(d)
@@ -1131,28 +1071,22 @@ func TestVisibility_KeywordsOnly(t *testing.T) {
 	}
 }
 
-// TestVisibility_RolesAndKeywords checks that both role and keyword must match
-// when the profile has both.
 func TestVisibility_RolesAndKeywords(t *testing.T) {
 	d := openTestDB(t)
 	cat := newCat(d)
 	setProfileData(t, d, []string{"engineer"}, []string{"backend"}, nil)
-	// Matches both: role "engineer" in title and keyword "backend" in title.
 	add(t, cat, listing.Posting{
 		URL: "https://example.com/jobs/rk1", Title: "Backend Engineer", Company: "Acme",
 		Text: "orchestration", TextState: listing.TextFull,
 	})
-	// Role matches, keyword does not appear anywhere.
 	add(t, cat, listing.Posting{
 		URL: "https://example.com/jobs/rk2", Title: "Frontend Engineer", Company: "Acme",
 		Text: "design systems", TextState: listing.TextFull,
 	})
-	// Keyword matches by title, role does not appear anywhere.
 	add(t, cat, listing.Posting{
 		URL: "https://example.com/jobs/rk3", Title: "Backend Specialist", Company: "Acme",
 		Text: "cloud services", TextState: listing.TextFull,
 	})
-	// Neither matches.
 	add(t, cat, listing.Posting{
 		URL: "https://example.com/jobs/rk4", Title: "Product Manager", Company: "Acme",
 		Text: "roadmap planning", TextState: listing.TextFull,
@@ -1166,8 +1100,6 @@ func TestVisibility_RolesAndKeywords(t *testing.T) {
 	}
 }
 
-// TestVisibility_NeitherEmpty checks that a profile with no roles and no keywords
-// sees an empty Inbox.
 func TestVisibility_NeitherEmpty(t *testing.T) {
 	d := openTestDB(t)
 	cat := newCat(d)
@@ -1182,23 +1114,18 @@ func TestVisibility_NeitherEmpty(t *testing.T) {
 	}
 }
 
-// TestVisibility_AllOf checks that every "All of these" term must appear in a vacancy
-// for it to be visible in the inbox.
 func TestVisibility_AllOf(t *testing.T) {
 	d := openTestDB(t)
 	cat := newCat(d)
 	setProfileData(t, d, nil, []string{"senior"}, []string{"typescript"})
-	// Keyword "senior" and allOf term "typescript" both present in title.
 	add(t, cat, listing.Posting{
 		URL: "https://example.com/jobs/alof1", Title: "Senior TypeScript Developer", Company: "Acme",
 		Text: "frontend work", TextState: listing.TextFull,
 	})
-	// Keyword matches but allOf term absent everywhere.
 	add(t, cat, listing.Posting{
 		URL: "https://example.com/jobs/alof2", Title: "Senior Python Developer", Company: "Acme",
 		Text: "data work", TextState: listing.TextFull,
 	})
-	// Neither keyword nor allOf term present.
 	add(t, cat, listing.Posting{
 		URL: "https://example.com/jobs/alof3", Title: "Junior Developer", Company: "Acme",
 		Text: "learning path", TextState: listing.TextFull,
@@ -1212,24 +1139,18 @@ func TestVisibility_AllOf(t *testing.T) {
 	}
 }
 
-// TestVisibility_ShortTerm checks that a term shorter than three characters
-// matches as a whole word in the title, tags and text; it does not match a
-// vacancy where the letters appear only inside a longer word.
 func TestVisibility_ShortTerm(t *testing.T) {
 	d := openTestDB(t)
 	cat := newCat(d)
-	setProfileData(t, d, nil, []string{"ai"}, nil) // "ai" is 2 chars: whole-word match
-	// "ai" appears in the title.
+	setProfileData(t, d, nil, []string{"ai"}, nil)
 	add(t, cat, listing.Posting{
 		URL: "https://example.com/jobs/sh1", Title: "AI Researcher", Company: "Acme",
 		Text: "language models", TextState: listing.TextFull,
 	})
-	// "ai" appears as a whole word in the body text.
 	add(t, cat, listing.Posting{
 		URL: "https://example.com/jobs/sh2", Title: "Data Scientist", Company: "Acme",
 		Text: "working with ai systems daily", TextState: listing.TextFull,
 	})
-	// "ai" appears only inside longer words; should not match.
 	add(t, cat, listing.Posting{
 		URL: "https://example.com/jobs/sh3", Title: "Engineer", Company: "Acme",
 		Text: "detail-oriented daily work", TextState: listing.TextFull,
@@ -1244,8 +1165,6 @@ func TestVisibility_ShortTerm(t *testing.T) {
 	}
 }
 
-// TestVisibility_PerProfileExclusion checks that a word exclusion scoped to one profile
-// hides a vacancy for that profile only.
 func TestVisibility_PerProfileExclusion(t *testing.T) {
 	d := openTestDB(t)
 	cat := newCat(d)
@@ -1258,8 +1177,7 @@ func TestVisibility_PerProfileExclusion(t *testing.T) {
 		URL: "https://example.com/jobs/pe2", Title: "Open Role", Company: "Acme",
 		Text: "other work", TextState: listing.TextFull,
 	})
-	// Add a word exclusion for profile 1 only (not all profiles).
-	d.Exec(`INSERT INTO exclusion (kind,value,norm,profile_id,created) VALUES ('word','restricted','restricted',1,'2026-01-01T00:00:00Z')`) //nolint:errcheck
+	d.Exec(`INSERT INTO exclusion (kind,value,norm,profile_id,created) VALUES ('word','restricted','restricted',1,'2026-01-01T00:00:00Z')`)
 
 	rs := getRows(apiGet(t, newTestServer(t, d), "/api/vacancies"))
 	if len(rs) != 1 {
@@ -1270,9 +1188,6 @@ func TestVisibility_PerProfileExclusion(t *testing.T) {
 	}
 }
 
-// TestVisibility_DecidedVacancyStaysWhenSearchNoLongerFits checks that a vacancy
-// in Shortlist remains there even after the profile search changes so the vacancy
-// no longer matches, and that the inbox count is 0.
 func TestVisibility_DecidedVacancyStaysWhenSearchNoLongerFits(t *testing.T) {
 	d := openTestDB(t)
 	cat := newCat(d)
@@ -1283,18 +1198,14 @@ func TestVisibility_DecidedVacancyStaysWhenSearchNoLongerFits(t *testing.T) {
 	})
 	ts := newTestServer(t, d)
 	now := testNow.UTC().Format(time.RFC3339)
-	// Move to Shortlist while the vacancy fits the search.
-	d.Exec(`INSERT INTO decision (profile,vacancy,stage,reason,decided_at) VALUES (1,?,?,?,?)`, //nolint:errcheck
+	d.Exec(`INSERT INTO decision (profile,vacancy,stage,reason,decided_at) VALUES (1,?,?,?,?)`,
 		id1, "shortlist", "", now)
 
-	// Change profile search so the vacancy no longer fits Inbox.
 	setProfileData(t, d, nil, []string{"python"}, nil)
 
-	// Shortlist still contains the vacancy.
 	if rs := getRows(apiGet(t, ts, "/api/vacancies?stage=shortlist")); len(rs) != 1 {
 		t.Errorf("shortlist after search change: rows %d, want 1", len(rs))
 	}
-	// Inbox is empty (vacancy is decided; no other vacancies match "python").
 	body := apiGet(t, ts, "/api/vacancies?stage=inbox")
 	if countOf(body, "inbox") != 0 {
 		t.Errorf("inbox count after search change: %v, want 0", countOf(body, "inbox"))
@@ -1304,11 +1215,6 @@ func TestVisibility_DecidedVacancyStaysWhenSearchNoLongerFits(t *testing.T) {
 	}
 }
 
-// --- Whole-word FTS matching tests ---
-
-// TestVisibility_WholeWordRole checks that a target role matches whole words
-// only: "CTO" finds a vacancy titled "Interim CTO (remote)" but not one titled
-// "Director of Sales".
 func TestVisibility_WholeWordRole(t *testing.T) {
 	d := openTestDB(t)
 	cat := newCat(d)
@@ -1328,9 +1234,6 @@ func TestVisibility_WholeWordRole(t *testing.T) {
 	}
 }
 
-// TestVisibility_ShortTermInText checks that a two-character keyword matches
-// whole words in the text column; "JS" should find a vacancy whose text
-// contains "JS" even though the term is shorter than three characters.
 func TestVisibility_ShortTermInText(t *testing.T) {
 	d := openTestDB(t)
 	cat := newCat(d)
@@ -1346,9 +1249,6 @@ func TestVisibility_ShortTermInText(t *testing.T) {
 	}
 }
 
-// TestVisibility_PhraseWithPunctuation checks that a keyword containing
-// punctuation matches a vacancy where the same words appear without that
-// punctuation: "Web3.js" matches a title "Web3 JS developer".
 func TestVisibility_PhraseWithPunctuation(t *testing.T) {
 	d := openTestDB(t)
 	cat := newCat(d)
@@ -1364,9 +1264,6 @@ func TestVisibility_PhraseWithPunctuation(t *testing.T) {
 	}
 }
 
-// TestSearch_NormalizationInText checks that the search query "node.js" is
-// normalised to "node js" before the full-text search, so it finds a vacancy
-// whose text contains "Node.js".
 func TestSearch_NormalizationInText(t *testing.T) {
 	d := openTestDB(t)
 	cat := newCat(d)

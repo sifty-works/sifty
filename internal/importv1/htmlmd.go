@@ -7,10 +7,6 @@ import (
 	"golang.org/x/net/html/atom"
 )
 
-// htmlToMarkdown converts a simple HTML fragment to Markdown.
-// Supported elements: p, br, strong/b, em/i, ul, ol, li, a, h1–h6.
-// Other elements are unwrapped (their children are still rendered).
-// Consecutive blank lines are collapsed to one.
 func htmlToMarkdown(h string) string {
 	if strings.TrimSpace(h) == "" {
 		return ""
@@ -28,22 +24,18 @@ func htmlToMarkdown(h string) string {
 		renderMDNode(n, &sb, 0, false)
 	}
 	out := strings.TrimSpace(sb.String())
-	// Collapse runs of more than one blank line.
 	for strings.Contains(out, "\n\n\n") {
 		out = strings.ReplaceAll(out, "\n\n\n", "\n\n")
 	}
 	return out
 }
 
-// renderMDNode renders a single HTML node into Markdown, appending to sb.
-// listDepth tracks nesting; inInline is true when we are inside a paragraph/li.
 func renderMDNode(n *xhtml.Node, sb *strings.Builder, listDepth int, inInline bool) {
 	switch n.Type {
 	case xhtml.TextNode:
 		sb.WriteString(n.Data)
 		return
 	case xhtml.ElementNode:
-		// noop
 	default:
 		for c := n.FirstChild; c != nil; c = c.NextSibling {
 			renderMDNode(c, sb, listDepth, inInline)
@@ -120,7 +112,6 @@ func renderMDNode(n *xhtml.Node, sb *strings.Builder, listDepth int, inInline bo
 				indent := strings.Repeat("  ", listDepth)
 				if a == atom.Ol {
 					sb.WriteString(indent)
-					// just use dash for ordered lists too — simple conversion
 					sb.WriteString("- ")
 				} else {
 					sb.WriteString(indent)
@@ -137,14 +128,12 @@ func renderMDNode(n *xhtml.Node, sb *strings.Builder, listDepth int, inInline bo
 		}
 
 	default:
-		// Unwrap: render children without the tag.
 		for c := n.FirstChild; c != nil; c = c.NextSibling {
 			renderMDNode(c, sb, listDepth, inInline)
 		}
 	}
 }
 
-// ensureBlankLine ensures sb ends with \n\n (a blank line before the next block).
 func ensureBlankLine(sb *strings.Builder) {
 	s := sb.String()
 	if s == "" {
@@ -160,7 +149,6 @@ func ensureBlankLine(sb *strings.Builder) {
 	sb.WriteString("\n\n")
 }
 
-// ensureNewLine ensures sb ends with \n.
 func ensureNewLine(sb *strings.Builder) {
 	s := sb.String()
 	if s == "" || strings.HasSuffix(s, "\n") {
@@ -169,7 +157,6 @@ func ensureNewLine(sb *strings.Builder) {
 	sb.WriteByte('\n')
 }
 
-// attrVal returns the value of attribute key on node n, or "".
 func attrVal(n *xhtml.Node, key string) string {
 	for _, a := range n.Attr {
 		if a.Key == key {

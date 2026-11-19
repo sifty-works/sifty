@@ -17,7 +17,6 @@ func rules() fit.Rules {
 	return fit.Rules{Weights: d.Weights, Rates: d.Rates}
 }
 
-// score reads an invented vacancy by code and scores it for p.
 func score(p fit.ProfileView, v reading.Vacancy) fit.Fit {
 	v.Full = true
 	return fit.Score(p, reading.FromCode(v), rules())
@@ -48,7 +47,7 @@ func TestEachCriterionMatchesMismatchesOrCannotBeCompared(t *testing.T) {
 		name, criterion string
 		p               fit.ProfileView
 		v               reading.Vacancy
-		want            float64 // -1: cannot be compared
+		want            float64
 	}{
 		{"role overlap", "role", goals(candidate.GoalsView{TargetRoles: []string{"Backend Engineer"}}), reading.Vacancy{Title: "Senior Backend Engineer"}, 0.8},
 		{"role disjoint", "role", goals(candidate.GoalsView{TargetRoles: []string{"Designer"}}), reading.Vacancy{Title: "Go Engineer"}, 0},
@@ -151,7 +150,6 @@ func TestNumberIsWeightedMeanWithUnknownAsHalfAndZeroWeightLeftOut(t *testing.T)
 	v := reading.Vacancy{Title: "Go Engineer", Text: "Salary: EUR 100,000 per year"}
 	r := rules()
 	f := fit.Score(p, reading.FromCode(reading.Vacancy{Title: v.Title, Text: v.Text, Full: true}), r)
-	// role 1 and money 1 at 0.45; six unknown criteria at 0.5 for 0.35.
 	if want := int(math.Round((0.45 + 0.5*0.35) / 0.8 * 100)); f.State != fit.Scored || f.Score != want || len(f.Criteria) != 8 {
 		t.Fatalf("got %s %d with %d criteria, want scored %d", f.State, f.Score, len(f.Criteria), want)
 	}

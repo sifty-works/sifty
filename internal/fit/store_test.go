@@ -16,7 +16,6 @@ import (
 
 var ctx = context.Background()
 
-// fixture holds two profiles and two vacancies, one without its full text.
 func fixture(t *testing.T) (*db.DB, *catalog.Catalog, []int64) {
 	t.Helper()
 	d, err := db.Open(filepath.Join(t.TempDir(), "fit.db"), db.Migrations)
@@ -24,8 +23,8 @@ func fixture(t *testing.T) (*db.DB, *catalog.Catalog, []int64) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { d.Close() })
-	d.Exec(`UPDATE profile SET data='{"name":"One","targetRoles":["Backend Engineer"]}' WHERE id=1`) //nolint:errcheck
-	d.Exec(`INSERT INTO profile (data) VALUES ('{"name":"Two","targetRoles":["Data Analyst"]}')`)    //nolint:errcheck
+	d.Exec(`UPDATE profile SET data='{"name":"One","targetRoles":["Backend Engineer"]}' WHERE id=1`)
+	d.Exec(`INSERT INTO profile (data) VALUES ('{"name":"Two","targetRoles":["Data Analyst"]}')`)
 	cat := catalog.New(d, func() time.Time { return time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC) })
 	var ids []int64
 	for i, p := range []listing.Posting{
@@ -90,14 +89,13 @@ func TestRecomputeStoresTheResultOfScoreForEveryProfileAndVacancy(t *testing.T) 
 }
 
 func TestRecomputeOnlyRecomputesResultsThatAreOutOfDate(t *testing.T) {
-	// Profile 2 and the text of vacancy 2 change, and a vacancy is added.
 	d, cat, ids := fixture(t)
 	recompute(t, d, nil)
-	d.Exec(`UPDATE fit SET score=7 WHERE profile=1`)                                                                  //nolint:errcheck
-	d.Exec(`UPDATE profile SET data='{"name":"Two","targetRoles":["Backend Engineer"]}' WHERE id=2`)                  //nolint:errcheck
-	cat.Upsert(ctx, listing.Posting{URL: "https://jobs.example.org/3", Title: "Backend Engineer", Company: "Initech", //nolint:errcheck
+	d.Exec(`UPDATE fit SET score=7 WHERE profile=1`)
+	d.Exec(`UPDATE profile SET data='{"name":"Two","targetRoles":["Backend Engineer"]}' WHERE id=2`)
+	cat.Upsert(ctx, listing.Posting{URL: "https://jobs.example.org/3", Title: "Backend Engineer", Company: "Initech",
 		Text: "<p>Remote role</p>", TextState: listing.TextFull}, "fixture")
-	cat.Upsert(ctx, listing.Posting{URL: "https://jobs.example.org/2", Title: "Data Analyst", Company: "Globex", //nolint:errcheck
+	cat.Upsert(ctx, listing.Posting{URL: "https://jobs.example.org/2", Title: "Data Analyst", Company: "Globex",
 		Text: "<p>A longer note</p>", TextState: listing.TextFull}, "fixture")
 	recompute(t, d, nil)
 	if got := stored(t, d, 1, ids[1]); got.version != 2 || got.state != fit.Scored {
@@ -111,7 +109,7 @@ func TestRecomputeOnlyRecomputesResultsThatAreOutOfDate(t *testing.T) {
 		t.Errorf("result of the changed profile not recomputed: %+v", got)
 	}
 	var n int
-	d.QueryRow(`SELECT count(*) FROM fit`).Scan(&n) //nolint:errcheck
+	d.QueryRow(`SELECT count(*) FROM fit`).Scan(&n)
 	if n != 6 {
 		t.Errorf("rows after a new vacancy: %d, want 6", n)
 	}
@@ -123,7 +121,7 @@ func TestProfileChangedWhileRecomputingIsApplied(t *testing.T) {
 	recompute(t, d, func(int, int, string) {
 		if !changed {
 			changed = true
-			d.Exec(`UPDATE profile SET data='{"name":"One","targetRoles":["Designer"]}' WHERE id=1`) //nolint:errcheck
+			d.Exec(`UPDATE profile SET data='{"name":"One","targetRoles":["Designer"]}' WHERE id=1`)
 		}
 	})
 	p, _ := fit.LoadProfile(ctx, d, 1, rules())
@@ -135,8 +133,8 @@ func TestProfileChangedWhileRecomputingIsApplied(t *testing.T) {
 func TestListingChangeWithoutTextChangeIsRecomputed(t *testing.T) {
 	d, cat, ids := fixture(t)
 	recompute(t, d, nil)
-	d.Exec(`UPDATE fit SET score=7 WHERE profile=1`)                                                                                            //nolint:errcheck
-	cat.Upsert(ctx, listing.Posting{URL: "https://jobs.example.org/1", Title: "Backend Engineer", Company: "Acme", Location: "Berlin, Germany", //nolint:errcheck
+	d.Exec(`UPDATE fit SET score=7 WHERE profile=1`)
+	cat.Upsert(ctx, listing.Posting{URL: "https://jobs.example.org/1", Title: "Backend Engineer", Company: "Acme", Location: "Berlin, Germany",
 		Text: "<p>Salary: EUR 90,000 per year. Fully remote.</p>", TextState: listing.TextFull}, "fixture")
 	recompute(t, d, nil)
 	if got := stored(t, d, 1, ids[0]); got.version != 1 || got.score.Int64 == 7 {

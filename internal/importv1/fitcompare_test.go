@@ -22,9 +22,6 @@ CREATE TABLE match_job_facts(job_id INTEGER PRIMARY KEY, facts_hash TEXT, raw_so
   schema_version TEXT, extractor_version TEXT, source_policy_version TEXT, facts TEXT, updated_at TEXT);
 `
 
-// oldRecord is a breakdown of the previous version: role, location, remote
-// restriction and work mode matched, money, time zone and engagement unknown,
-// with some criteria changed ("money": "1,true").
 func oldRecord(score int, changes map[string]string) string {
 	groups := map[string]string{"role.title": "1,true,0.25", "compensation.cash": "0.5,false,0.2", "geography.location": "1,true,0.075",
 		"geography.remote_restriction": "1,true,0.075", "conditions.timezone": "0.5,false,0.1", "conditions.work_mode": "1,true,0.04",
@@ -76,21 +73,21 @@ func TestImport_FitsYouComparedWithPreviousResultsByCause(t *testing.T) {
 		description, status, location string
 		record, extraction            string
 	}{
-		{1, "p1", 2, remote, "available", "", oldRecord(79, nil), ""},                                             // equal; a single newline keeps the label
-		{2, "p1", 2, remote, "feed description; may be excerpt", "", oldRecord(79, nil), ""},                      // a feed text is full
-		{3, "p1", 2, "Go Engineer", "available structured description", "", unavailable, ""},                      // S1
-		{4, "p1", 2, "", "available structured description", "", unavailable, ""},                                 // no text either side
-		{5, "p1", 2, remote + "\nSalary: EUR 80,000 - 100,000 per year", "available", "", oldRecord(79, nil), ""}, // E11
+		{1, "p1", 2, remote, "available", "", oldRecord(79, nil), ""},
+		{2, "p1", 2, remote, "feed description; may be excerpt", "", oldRecord(79, nil), ""},
+		{3, "p1", 2, "Go Engineer", "available structured description", "", unavailable, ""},
+		{4, "p1", 2, "", "available structured description", "", unavailable, ""},
+		{5, "p1", 2, remote + "\nSalary: EUR 80,000 - 100,000 per year", "available", "", oldRecord(79, nil), ""},
 		{6, "p1", 2, remote, "available", "Berlin, Germany", oldRecord(66, map[string]string{
-			"geography.location": "0.5,false,0.075", "geography.remote_restriction": "0.5,false,0.075", "conditions.work_mode": "0.5,false,0.04"}), ""}, // E12
-		{7, "p1", 2, remote, "available", "", oldRecord(92, map[string]string{"compensation.cash": "1,true,0.2"}), model},                                     // E1
-		{8, "p1", 2, remote + "\nSalary: EUR 72,000 per year", "available", "", oldRecord(92, map[string]string{"compensation.cash": "1,true,0.2"}), model},   // read now: unexplained
-		{9, "p1", 2, remote + "\n- Salary: EUR 100,000 per year", "available", "", oldRecord(79, nil), ""},                                                    // E3
-		{10, "p1", 2, remote + "\nSalary: EUR 80,000 - 100,000 per year", "available", "", oldRecord(46, map[string]string{"role.title": "0,true,0.25"}), ""}, // one cause of two
-		{13, "p1", 2, "We build tools.", "available", "Remote", oldRecord(74, map[string]string{"geography.remote_restriction": "0.5,false,0.075"}), ""},      // E4
-		{14, "p1", 2, remote, "available", "", oldRecord(80, map[string]string{"role.title": "1,true,0.3"}), ""},                                              // W1
-		{11, "p1", 1, remote, "available", "", oldRecord(10, nil), ""},                                                                                        // older profile revision: not current
-		{12, "p2", 1, remote, "available", "", oldRecord(79, nil), ""},                                                                                        // archived profile: not comparable
+			"geography.location": "0.5,false,0.075", "geography.remote_restriction": "0.5,false,0.075", "conditions.work_mode": "0.5,false,0.04"}), ""},
+		{7, "p1", 2, remote, "available", "", oldRecord(92, map[string]string{"compensation.cash": "1,true,0.2"}), model},
+		{8, "p1", 2, remote + "\nSalary: EUR 72,000 per year", "available", "", oldRecord(92, map[string]string{"compensation.cash": "1,true,0.2"}), model},
+		{9, "p1", 2, remote + "\n- Salary: EUR 100,000 per year", "available", "", oldRecord(79, nil), ""},
+		{10, "p1", 2, remote + "\nSalary: EUR 80,000 - 100,000 per year", "available", "", oldRecord(46, map[string]string{"role.title": "0,true,0.25"}), ""},
+		{13, "p1", 2, "We build tools.", "available", "Remote", oldRecord(74, map[string]string{"geography.remote_restriction": "0.5,false,0.075"}), ""},
+		{14, "p1", 2, remote, "available", "", oldRecord(80, map[string]string{"role.title": "1,true,0.3"}), ""},
+		{11, "p1", 1, remote, "available", "", oldRecord(10, nil), ""},
+		{12, "p2", 1, remote, "available", "", oldRecord(79, nil), ""},
 	}
 	for _, c := range cases {
 		insertJob(t, old, c.job, fmt.Sprintf("https://jobs.example.org/role/%d", c.job))

@@ -19,8 +19,6 @@ import (
 	"github.com/sifty-works/sifty-server/internal/fetch/fetchtest"
 )
 
-// --- helpers ---
-
 type fakeClock struct {
 	now time.Time
 }
@@ -41,7 +39,6 @@ func (s *sleepRecorder) Sleep(_ context.Context, d time.Duration) error {
 	return nil
 }
 
-// testBlocks opens a fresh fixture database and returns a DomainBlocks backed by it.
 func testBlocks(t *testing.T) *fetch.DomainBlocks {
 	t.Helper()
 	database, err := db.Open(filepath.Join(t.TempDir(), "test.db"), db.Migrations)
@@ -52,21 +49,17 @@ func testBlocks(t *testing.T) *fetch.DomainBlocks {
 	return fetch.NewDomainBlocks(database)
 }
 
-// newTestFetcher builds a client wired with a loopback policy, fake clock,
-// and sleep recorder. The httptest server address is not needed here since
-// we pass the URL explicitly.
 func newTestFetcher(bs *fetch.DomainBlocks, clk *fakeClock, sl *sleepRecorder) fetch.Fetcher {
 	return fetch.New(fetch.Options{
 		Blocks:  bs,
 		Clock:   clk.Now,
 		Sleep:   sl.Sleep,
-		Rand:    rand.New(rand.NewSource(0)), //nolint:gosec
+		Rand:    rand.New(rand.NewSource(0)),
 		Policy:  fetch.AllowLoopback,
 		Timeout: 5 * time.Second,
 	})
 }
 
-// newTestFetcherWithPolicy builds a client with a custom policy.
 func newTestFetcherWithPolicy(t *testing.T, policy fetch.AddressPolicy) fetch.Fetcher {
 	return fetch.New(fetch.Options{
 		Blocks: testBlocks(t),
@@ -74,7 +67,7 @@ func newTestFetcherWithPolicy(t *testing.T, policy fetch.AddressPolicy) fetch.Fe
 		Sleep: func(_ context.Context, _ time.Duration) error {
 			return nil
 		},
-		Rand:    rand.New(rand.NewSource(0)), //nolint:gosec
+		Rand:    rand.New(rand.NewSource(0)),
 		Policy:  policy,
 		Timeout: 5 * time.Second,
 	})
@@ -87,8 +80,6 @@ func okServer(t *testing.T, body string) *httptest.Server {
 		fmt.Fprint(w, body)
 	}))
 }
-
-// --- address policy ---
 
 func TestPublicOnly(t *testing.T) {
 	cases := []struct {
@@ -110,8 +101,6 @@ func TestPublicOnly(t *testing.T) {
 		}
 	}
 }
-
-// --- URL validation ---
 
 func TestGet_refused_conditions(t *testing.T) {
 	loopback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -139,8 +128,6 @@ func TestGet_refused_conditions(t *testing.T) {
 	}
 }
 
-// --- response status codes ---
-
 func TestGet_block_survives_restart_and_expires(t *testing.T) {
 	var calls atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -151,33 +138,28 @@ func TestGet_block_survives_restart_and_expires(t *testing.T) {
 	clk := newFakeClock()
 	blocks := testBlocks(t)
 	ctx := context.Background()
-	// First 403 blocks the domain and writes the row.
-	newTestFetcher(blocks, clk, &sleepRecorder{}).Get(ctx, srv.URL+"/", fetch.Opt{}) //nolint:errcheck
+	newTestFetcher(blocks, clk, &sleepRecorder{}).Get(ctx, srv.URL+"/", fetch.Opt{})
 	n := calls.Load()
-	// A new fetcher on the same database (simulates a restart) refuses without a request.
 	if _, err := newTestFetcher(blocks, clk, &sleepRecorder{}).Get(ctx, srv.URL+"/", fetch.Opt{}); !errors.Is(err, fetch.ErrBlocked) {
 		t.Fatalf("new fetcher: want ErrBlocked, got %v", err)
 	}
 	if calls.Load() != n {
 		t.Error("new fetcher made HTTP request during block")
 	}
-	// After 24 hours the block expires; the domain is requested again.
 	clk.Advance(25 * time.Hour)
-	newTestFetcher(blocks, clk, &sleepRecorder{}).Get(ctx, srv.URL+"/", fetch.Opt{}) //nolint:errcheck
+	newTestFetcher(blocks, clk, &sleepRecorder{}).Get(ctx, srv.URL+"/", fetch.Opt{})
 	if calls.Load() == n {
 		t.Error("after 24h, no request made; block should have expired")
 	}
 }
 
-// TestStatusRule verifies that the real Fetcher and fetchtest.Map return the
-// same error for each response pattern that StatusError classifies.
 func TestStatusRule(t *testing.T) {
 	cases := []struct {
 		name    string
 		status  int
 		header  http.Header
 		body    []byte
-		wantErr error // nil means expect content
+		wantErr error
 	}{
 		{"403 is blocked", 403, nil, nil, fetch.ErrBlocked},
 		{"cf-mitigated is blocked", 200, http.Header{"Cf-Mitigated": {"challenge"}}, nil, fetch.ErrBlocked},
@@ -195,7 +177,7 @@ func TestStatusRule(t *testing.T) {
 					w.Header()[k] = vs
 				}
 				w.WriteHeader(tc.status)
-				w.Write(tc.body) //nolint:errcheck
+				w.Write(tc.body)
 			}))
 			defer srv.Close()
 			f := newTestFetcher(testBlocks(t), newFakeClock(), &sleepRecorder{})
@@ -215,8 +197,6 @@ func TestStatusRule(t *testing.T) {
 		})
 	}
 }
-
-// --- back-off ---
 
 func TestGet_backoff_exponential_then_reset(t *testing.T) {
 	var calls atomic.Int32
@@ -240,22 +220,22 @@ func TestGet_backoff_exponential_then_reset(t *testing.T) {
 		}
 	}
 
-	mustTransient("/fail") // first 503: back-off 30 s
+	mustTransient("/fail")
 	n := calls.Load()
 	clk.Advance(10 * time.Second)
-	mustTransient("/fail") // during back-off: no HTTP request
+	mustTransient("/fail")
 	if calls.Load() != n {
 		t.Errorf("call during back-off made HTTP request")
 	}
-	clk.Advance(21 * time.Second) // back-off expired
-	mustTransient("/fail")        // second 503: back-off 60 s
+	clk.Advance(21 * time.Second)
+	mustTransient("/fail")
 	clk.Advance(61 * time.Second)
 	if _, err := f.Get(ctx, srv.URL+"/ok", fetch.Opt{}); err != nil {
 		t.Fatalf("after success: %v", err)
 	}
 	n = calls.Load()
 	clk.Advance(time.Second)
-	f.Get(ctx, srv.URL+"/fail", fetch.Opt{}) //nolint:errcheck
+	f.Get(ctx, srv.URL+"/fail", fetch.Opt{})
 	if calls.Load() == n {
 		t.Errorf("after back-off reset, no request made")
 	}
@@ -287,8 +267,6 @@ func TestGet_backoff_cap_at_one_hour(t *testing.T) {
 	}
 }
 
-// --- spacing ---
-
 func TestGet_spacing_within_domain(t *testing.T) {
 	srv := okServer(t, "hi")
 	defer srv.Close()
@@ -297,7 +275,6 @@ func TestGet_spacing_within_domain(t *testing.T) {
 	sl := &sleepRecorder{}
 	f := newTestFetcher(testBlocks(t), clk, sl)
 
-	// First request: no sleep.
 	_, err := f.Get(context.Background(), srv.URL+"/a", fetch.Opt{})
 	if err != nil {
 		t.Fatal(err)
@@ -306,7 +283,6 @@ func TestGet_spacing_within_domain(t *testing.T) {
 		t.Errorf("first request: unexpected sleep %v", sl.pauses)
 	}
 
-	// Second request to same domain: sleep of 3–6 s.
 	_, err = f.Get(context.Background(), srv.URL+"/b", fetch.Opt{})
 	if err != nil {
 		t.Fatal(err)
@@ -319,14 +295,12 @@ func TestGet_spacing_within_domain(t *testing.T) {
 	}
 }
 
-// --- body limit and timeout ---
-
 func TestGet_body_over_8MB_is_transient(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
 		w.WriteHeader(200)
 		chunk := strings.Repeat("x", 1024)
-		for i := 0; i < 8193; i++ { // > 8 MB
+		for i := 0; i < 8193; i++ {
 			fmt.Fprint(w, chunk)
 		}
 	}))
@@ -343,7 +317,7 @@ func TestGet_body_over_8MB_is_transient(t *testing.T) {
 func TestGet_timeout_is_transient(t *testing.T) {
 	done := make(chan struct{})
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		<-done // block until test finishes
+		<-done
 	}))
 	defer srv.Close()
 	defer close(done)
@@ -354,9 +328,9 @@ func TestGet_timeout_is_transient(t *testing.T) {
 		Sleep: func(_ context.Context, _ time.Duration) error {
 			return nil
 		},
-		Rand:    rand.New(rand.NewSource(0)), //nolint:gosec
+		Rand:    rand.New(rand.NewSource(0)),
 		Policy:  fetch.AllowLoopback,
-		Timeout: 50 * time.Millisecond, // very short
+		Timeout: 50 * time.Millisecond,
 	})
 	_, err := f.Get(context.Background(), srv.URL+"/", fetch.Opt{})
 	if !errors.Is(err, fetch.ErrTransient) {
@@ -379,14 +353,11 @@ func TestGet_cancellation_does_not_trigger_backoff(t *testing.T) {
 		t.Fatalf("cancelled ctx: got %v, want context error (not ErrTransient)", err)
 	}
 
-	// Back-off must not have been recorded; second request goes straight through.
 	_, err = f.Get(context.Background(), srv.URL+"/", fetch.Opt{})
 	if errors.Is(err, fetch.ErrTransient) {
 		t.Errorf("after cancellation, domain is in back-off")
 	}
 }
-
-// --- offline ---
 
 func TestGet_offline_returns_ErrOffline_no_request(t *testing.T) {
 	var calls atomic.Int32
@@ -402,7 +373,7 @@ func TestGet_offline_returns_ErrOffline_no_request(t *testing.T) {
 		Sleep: func(_ context.Context, _ time.Duration) error {
 			return nil
 		},
-		Rand:    rand.New(rand.NewSource(0)), //nolint:gosec
+		Rand:    rand.New(rand.NewSource(0)),
 		Policy:  fetch.AllowLoopback,
 		Timeout: 5 * time.Second,
 		Offline: true,
@@ -415,8 +386,6 @@ func TestGet_offline_returns_ErrOffline_no_request(t *testing.T) {
 		t.Errorf("offline: made %d HTTP request(s), want 0", calls.Load())
 	}
 }
-
-// --- UserText ---
 
 func TestUserText(t *testing.T) {
 	cases := []struct {
@@ -439,8 +408,6 @@ func TestUserText(t *testing.T) {
 	}
 }
 
-// --- User-Agent ---
-
 func TestGet_user_agent(t *testing.T) {
 	var got string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -460,10 +427,6 @@ func TestGet_user_agent(t *testing.T) {
 	}
 }
 
-// --- redirect behaviour ---
-
-// buildRedirectChain builds a chain of n redirectors (each pointing to the next)
-// and returns the first server. The final server in the chain is final.
 func buildRedirectChain(t *testing.T, n int, final string) *httptest.Server {
 	t.Helper()
 	var first *httptest.Server

@@ -1,8 +1,5 @@
 package importv1_test
 
-// Tests for the extended profile import: My data, profile fields, active
-// profile, photo and Q&A.
-
 import (
 	"encoding/json"
 	"fmt"
@@ -14,9 +11,6 @@ import (
 	"github.com/sifty-works/sifty-server/internal/candidate"
 )
 
-// --- helpers ---
-
-// insertUserRow inserts a user into the old test database.
 func insertUserRow(t *testing.T, fromDir string, data string) {
 	t.Helper()
 	odb := openOldDB(t, fromDir)
@@ -52,7 +46,6 @@ func setActiveProfileSetting(t *testing.T, fromDir, profileID string) {
 	}
 }
 
-// readMeData reads the me record from the new database.
 func readMeData(t *testing.T, targetDir string) candidate.MeData {
 	t.Helper()
 	newDB := openNewDB(t, targetDir)
@@ -68,7 +61,6 @@ func readMeData(t *testing.T, targetDir string) candidate.MeData {
 	return me
 }
 
-// readProfileData reads one profile's data from the new database.
 func readProfileData(t *testing.T, targetDir string, id int64) candidate.ProfileData {
 	t.Helper()
 	newDB := openNewDB(t, targetDir)
@@ -83,8 +75,6 @@ func readProfileData(t *testing.T, targetDir string, id int64) candidate.Profile
 	}
 	return pd
 }
-
-// --- My data tests ---
 
 func TestImport_MyDataIdentityFields(t *testing.T) {
 	fromDir := makeOldDir(t, "")
@@ -160,7 +150,6 @@ func TestImport_SkillLevelMapping(t *testing.T) {
 			t.Errorf("skill %q level: got %q, want %q", sk.Name, sk.Level, want)
 		}
 	}
-	// Source (provenance) is kept.
 	for _, sk := range me.Skills {
 		if sk.Source == "" {
 			t.Errorf("skill %q source: empty, want provenance kind", sk.Name)
@@ -170,7 +159,6 @@ func TestImport_SkillLevelMapping(t *testing.T) {
 
 func TestImport_ExperienceCurrentRole(t *testing.T) {
 	fromDir := makeOldDir(t, "")
-	// A role with no end becomes "currently working here".
 	userData := `{
 		"experience": [
 			{"id":"e1","company":"Acme","title":"Engineer","start":"2022-03","end":""},
@@ -185,14 +173,12 @@ func TestImport_ExperienceCurrentRole(t *testing.T) {
 	if len(me.Experience) != 2 {
 		t.Fatalf("experience count: got %d, want 2", len(me.Experience))
 	}
-	// First entry (no end) → current=true.
 	if !me.Experience[0].Current {
 		t.Errorf("experience[0].Current: got false, want true (no end date)")
 	}
 	if me.Experience[0].End != "" {
 		t.Errorf("experience[0].End: got %q, want empty", me.Experience[0].End)
 	}
-	// Second entry has an end date.
 	if me.Experience[1].Current {
 		t.Errorf("experience[1].Current: got true, want false")
 	}
@@ -325,8 +311,6 @@ func TestImport_MyDataDemographics(t *testing.T) {
 	}
 }
 
-// --- Profile field tests ---
-
 func TestImport_ProfileOfficeBecomesOnsite(t *testing.T) {
 	fromDir := makeOldDir(t, "")
 	odb := openOldDB(t, fromDir)
@@ -363,9 +347,8 @@ func TestImport_ProfileRelocationMapping(t *testing.T) {
 	insertProfile(t, odb, "p2", "Two", "2024-02-01T00:00:00Z", false)
 	insertProfile(t, odb, "p3", "Three", "2024-03-01T00:00:00Z", false)
 
-	odb.Exec(`UPDATE user_profiles SET data=? WHERE id='p1'`, `{"geography":{"willingToRelocate":true}}`)  //nolint:errcheck
-	odb.Exec(`UPDATE user_profiles SET data=? WHERE id='p2'`, `{"geography":{"willingToRelocate":false}}`) //nolint:errcheck
-	// p3: null (not set) — no relocation field.
+	odb.Exec(`UPDATE user_profiles SET data=? WHERE id='p1'`, `{"geography":{"willingToRelocate":true}}`)
+	odb.Exec(`UPDATE user_profiles SET data=? WHERE id='p2'`, `{"geography":{"willingToRelocate":false}}`)
 
 	targetDir := t.TempDir()
 	runImport(t, fromDir, targetDir)
@@ -389,7 +372,7 @@ func TestImport_ProfileTimeZoneBandIDs(t *testing.T) {
 	fromDir := makeOldDir(t, "")
 	odb := openOldDB(t, fromDir)
 	insertProfile(t, odb, "p1", "Zeal", "2024-01-01T00:00:00Z", false)
-	odb.Exec(`UPDATE user_profiles SET data=? WHERE id='p1'`, //nolint:errcheck
+	odb.Exec(`UPDATE user_profiles SET data=? WHERE id='p1'`,
 		`{"geography":{"timezoneIds":["tz-americas","tz-europe"]}}`)
 
 	targetDir := t.TempDir()
@@ -408,7 +391,7 @@ func TestImport_ProfileCompensation(t *testing.T) {
 	fromDir := makeOldDir(t, "")
 	odb := openOldDB(t, fromDir)
 	insertProfile(t, odb, "p1", "Pay", "2024-01-01T00:00:00Z", false)
-	odb.Exec(`UPDATE user_profiles SET data=? WHERE id='p1'`, //nolint:errcheck
+	odb.Exec(`UPDATE user_profiles SET data=? WHERE id='p1'`,
 		`{"compensation":{"cashMin":80000,"cashTarget":100000,"currency":"EUR","grossNet":"gross","period":"year","equityOnTop":true,"dayRates":{"min":500,"target":650,"currency":"EUR"}}}`)
 
 	targetDir := t.TempDir()
@@ -439,7 +422,7 @@ func TestImport_ProfileOtherRequirementsRichText(t *testing.T) {
 	fromDir := makeOldDir(t, "")
 	odb := openOldDB(t, fromDir)
 	insertProfile(t, odb, "p1", "Req", "2024-01-01T00:00:00Z", false)
-	odb.Exec(`UPDATE user_profiles SET data=? WHERE id='p1'`, //nolint:errcheck
+	odb.Exec(`UPDATE user_profiles SET data=? WHERE id='p1'`,
 		`{"otherRequirements":{"text":"<p>Must allow <strong>remote work</strong>.</p>"}}`)
 
 	targetDir := t.TempDir()
@@ -452,11 +435,10 @@ func TestImport_ProfileOtherRequirementsRichText(t *testing.T) {
 }
 
 func TestImport_ProfileLegacyOnlyAppended(t *testing.T) {
-	// A profile with only legacy location text (no structured preferredLocations).
 	fromDir := makeOldDir(t, "")
 	odb := openOldDB(t, fromDir)
 	insertProfile(t, odb, "p1", "Leg", "2024-01-01T00:00:00Z", false)
-	odb.Exec(`UPDATE user_profiles SET data=? WHERE id='p1'`, //nolint:errcheck
+	odb.Exec(`UPDATE user_profiles SET data=? WHERE id='p1'`,
 		`{"geography":{"current":"Europe","desired":["UK","Germany"]}}`)
 
 	targetDir := t.TempDir()
@@ -475,22 +457,19 @@ func TestImport_ProfileLegacyOnlyAppended(t *testing.T) {
 }
 
 func TestImport_ProfileStructuredLocDropsLegacy(t *testing.T) {
-	// A profile with both structured and legacy location: legacy dropped.
 	fromDir := makeOldDir(t, "")
 	odb := openOldDB(t, fromDir)
 	insertProfile(t, odb, "p1", "Both", "2024-01-01T00:00:00Z", false)
-	odb.Exec(`UPDATE user_profiles SET data=? WHERE id='p1'`, //nolint:errcheck
+	odb.Exec(`UPDATE user_profiles SET data=? WHERE id='p1'`,
 		`{"geography":{"preferredLocationsSet":true,"preferredLocations":[{"country":"DE","city":"Berlin"}],"current":"Old Europe"}}`)
 
 	targetDir := t.TempDir()
 	report := runImport(t, fromDir, targetDir)
 
 	pd := readProfileData(t, targetDir, 1)
-	// Structured preferred location present.
 	if len(pd.PreferredLocations) != 1 {
 		t.Errorf("PreferredLocations: got %d, want 1", len(pd.PreferredLocations))
 	}
-	// Legacy current should NOT appear in OtherRequirements.
 	if strings.Contains(pd.OtherRequirements, "Old Europe") {
 		t.Errorf("OtherRequirements should not contain dropped legacy: %q", pd.OtherRequirements)
 	}
@@ -526,7 +505,7 @@ func TestImport_ProfileHeadlineImported(t *testing.T) {
 	fromDir := makeOldDir(t, "")
 	odb := openOldDB(t, fromDir)
 	insertProfile(t, odb, "p1", "Solo", "2024-01-01T00:00:00Z", false)
-	odb.Exec(`UPDATE user_profiles SET headline='Senior Backend Engineer' WHERE id='p1'`) //nolint:errcheck
+	odb.Exec(`UPDATE user_profiles SET headline='Senior Backend Engineer' WHERE id='p1'`)
 
 	targetDir := t.TempDir()
 	runImport(t, fromDir, targetDir)
@@ -538,7 +517,6 @@ func TestImport_ProfileHeadlineImported(t *testing.T) {
 }
 
 func TestImport_ProfileHeadlineFallsBackToUserHeadline(t *testing.T) {
-	// When no profile has a headline, the user headline goes to the first profile.
 	fromDir := makeOldDir(t, "")
 	odb := openOldDB(t, fromDir)
 	insertProfile(t, odb, "p1", "One", "2024-01-01T00:00:00Z", false)
@@ -565,7 +543,7 @@ func TestImport_ProfileEngagementAndHours(t *testing.T) {
 	fromDir := makeOldDir(t, "")
 	odb := openOldDB(t, fromDir)
 	insertProfile(t, odb, "p1", "Hours", "2024-01-01T00:00:00Z", false)
-	odb.Exec(`UPDATE user_profiles SET data=? WHERE id='p1'`, //nolint:errcheck
+	odb.Exec(`UPDATE user_profiles SET data=? WHERE id='p1'`,
 		`{"engagement":{"types":["employment","contract"]},"hours":{"mode":"full_time"}}`)
 
 	targetDir := t.TempDir()
@@ -584,19 +562,17 @@ func TestImport_ProfileTargetIndustriesListedNotImported(t *testing.T) {
 	fromDir := makeOldDir(t, "")
 	odb := openOldDB(t, fromDir)
 	insertProfile(t, odb, "p1", "Ind", "2024-01-01T00:00:00Z", false)
-	odb.Exec(`UPDATE user_profiles SET data=? WHERE id='p1'`, //nolint:errcheck
+	odb.Exec(`UPDATE user_profiles SET data=? WHERE id='p1'`,
 		`{"targetIndustries":["fintech","healthtech"]}`)
 
 	targetDir := t.TempDir()
 	report := runImport(t, fromDir, targetDir)
 
-	// Target industries from the previous version are not imported into profiles.
 	pd := readProfileData(t, targetDir, 1)
 	if len(pd.TargetIndustries) != 0 {
 		t.Errorf("TargetIndustries: got %d, want 0 (not imported)", len(pd.TargetIndustries))
 	}
 
-	// The previous values are listed in the import report.
 	if !strings.Contains(report, "fintech") || !strings.Contains(report, "healthtech") {
 		t.Errorf("report does not list previous target industries; got:\n%s", report)
 	}
@@ -604,8 +580,6 @@ func TestImport_ProfileTargetIndustriesListedNotImported(t *testing.T) {
 		t.Errorf("report does not say 'not imported'; got:\n%s", report)
 	}
 }
-
-// --- Active profile test ---
 
 func TestImport_ActiveProfileMapped(t *testing.T) {
 	fromDir := makeOldDir(t, "")
@@ -620,8 +594,7 @@ func TestImport_ActiveProfileMapped(t *testing.T) {
 	newDB := openNewDB(t, targetDir)
 
 	var activeVal string
-	newDB.QueryRow(`SELECT value FROM settings WHERE key='active_profile'`).Scan(&activeVal) //nolint:errcheck
-	// old-p2 was second by creation → new id 2.
+	newDB.QueryRow(`SELECT value FROM settings WHERE key='active_profile'`).Scan(&activeVal)
 	if activeVal != "2" {
 		t.Errorf("active_profile: got %q, want 2", activeVal)
 	}
@@ -630,21 +603,18 @@ func TestImport_ActiveProfileMapped(t *testing.T) {
 	}
 }
 
-// --- Photo tests ---
-
 func TestImport_PhotoCopied(t *testing.T) {
 	fromDir := makeOldDir(t, "")
 
-	// Create a minimal valid PNG (1x1 pixel).
 	pngData := []byte{
-		0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, // PNG signature
-		0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52, // IHDR length + type
-		0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, // 1x1
-		0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53, 0xDE, // bit depth, etc.
-		0x00, 0x00, 0x00, 0x0C, 0x49, 0x44, 0x41, 0x54, // IDAT
+		0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+		0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+		0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+		0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53, 0xDE,
+		0x00, 0x00, 0x00, 0x0C, 0x49, 0x44, 0x41, 0x54,
 		0x08, 0xD7, 0x63, 0xF8, 0xCF, 0xC0, 0x00, 0x00, 0x00, 0x02, 0x00, 0x01,
 		0xE2, 0x21, 0xBC, 0x33,
-		0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82, // IEND
+		0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
 	}
 	avatarDir := filepath.Join(fromDir, "profile-avatar")
 	if err := os.MkdirAll(avatarDir, 0700); err != nil {
@@ -662,7 +632,6 @@ func TestImport_PhotoCopied(t *testing.T) {
 	targetDir := t.TempDir()
 	report := runImport(t, fromDir, targetDir)
 
-	// Photo should be at <data>/files/me_photo.
 	photoPath := filepath.Join(targetDir, "files", "me_photo")
 	if _, err := os.Stat(photoPath); os.IsNotExist(err) {
 		t.Errorf("photo not copied to %s", photoPath)
@@ -675,13 +644,12 @@ func TestImport_PhotoCopied(t *testing.T) {
 func TestImport_PhotoSkippedWrongType(t *testing.T) {
 	fromDir := makeOldDir(t, "")
 
-	// A file named .jpg but actually plain text.
 	avatarDir := filepath.Join(fromDir, "profile-avatar")
-	os.MkdirAll(avatarDir, 0700) //nolint:errcheck
+	os.MkdirAll(avatarDir, 0700)
 	fakeName := "profile-avatar/not-an-image.jpg"
-	os.WriteFile(filepath.Join(fromDir, fakeName), []byte("not an image at all"), 0600) //nolint:errcheck
+	os.WriteFile(filepath.Join(fromDir, fakeName), []byte("not an image at all"), 0600)
 	meta := `{"storagePath":"` + fakeName + `","contentType":"image/jpeg","byteSize":19}`
-	os.WriteFile(filepath.Join(fromDir, "profile-avatar.json"), []byte(meta), 0600) //nolint:errcheck
+	os.WriteFile(filepath.Join(fromDir, "profile-avatar.json"), []byte(meta), 0600)
 
 	targetDir := t.TempDir()
 	report := runImport(t, fromDir, targetDir)
@@ -695,8 +663,6 @@ func TestImport_PhotoSkippedWrongType(t *testing.T) {
 	}
 }
 
-// --- Q&A tests ---
-
 func TestImport_QAImported(t *testing.T) {
 	fromDir := makeOldDir(t, "")
 	insertUserRow(t, fromDir, `{}`)
@@ -708,13 +674,13 @@ func TestImport_QAImported(t *testing.T) {
 	newDB := openNewDB(t, targetDir)
 
 	var count int
-	newDB.QueryRow(`SELECT count(*) FROM qa`).Scan(&count) //nolint:errcheck
+	newDB.QueryRow(`SELECT count(*) FROM qa`).Scan(&count)
 	if count != 2 {
 		t.Errorf("qa count: got %d, want 2", count)
 	}
 
 	var q1, a1 string
-	newDB.QueryRow(`SELECT question, answer FROM qa ORDER BY id LIMIT 1`).Scan(&q1, &a1) //nolint:errcheck
+	newDB.QueryRow(`SELECT question, answer FROM qa ORDER BY id LIMIT 1`).Scan(&q1, &a1)
 	if q1 != "What is your notice period?" {
 		t.Errorf("qa[0].question: got %q", q1)
 	}
@@ -726,19 +692,14 @@ func TestImport_QAImported(t *testing.T) {
 	}
 }
 
-// --- Normalization / inheritance tests ---
-
 func TestImport_EmptyCompensationInheritsFromFirst(t *testing.T) {
-	// Profile 1 has compensation; profile 2 has an all-null compensation section.
-	// After normalization the second profile stores no compensation so it inherits.
 	fromDir := makeOldDir(t, "")
 	odb := openOldDB(t, fromDir)
 	insertProfile(t, odb, "p1", "One", "2024-01-01T00:00:00Z", false)
 	insertProfile(t, odb, "p2", "Two", "2024-02-01T00:00:00Z", false)
-	odb.Exec(`UPDATE user_profiles SET data=? WHERE id='p1'`, //nolint:errcheck
+	odb.Exec(`UPDATE user_profiles SET data=? WHERE id='p1'`,
 		`{"compensation":{"cashMin":80000,"cashTarget":100000,"currency":"EUR","grossNet":"gross","period":"year"}}`)
-	// Profile 2: all-null compensation; dayRates also all-null.
-	odb.Exec(`UPDATE user_profiles SET data=? WHERE id='p2'`, //nolint:errcheck
+	odb.Exec(`UPDATE user_profiles SET data=? WHERE id='p2'`,
 		`{"compensation":{"cashMin":null,"cashTarget":null,"equityOnTop":null,"dayRates":{"min":null,"target":null}}}`)
 
 	targetDir := t.TempDir()
@@ -750,11 +711,9 @@ func TestImport_EmptyCompensationInheritsFromFirst(t *testing.T) {
 	if pd1.Compensation == nil {
 		t.Fatal("profile 1 Compensation: nil, want set")
 	}
-	// Profile 2 own compensation must be absent (normalized away).
 	if pd2.Compensation != nil {
 		t.Errorf("profile 2 own Compensation: got %+v, want nil (should be absent for inheritance)", pd2.Compensation)
 	}
-	// Effective compensation for profile 2 is inherited from profile 1.
 	effective := candidate.Effective(pd2, pd1)
 	if effective.Compensation == nil {
 		t.Error("effective profile 2 Compensation: nil, want inherited from profile 1")
@@ -763,15 +722,11 @@ func TestImport_EmptyCompensationInheritsFromFirst(t *testing.T) {
 	}
 }
 
-// --- Relocation list tests ---
-
 func TestImport_RelocationListAlwaysFolded(t *testing.T) {
-	// Even when willingToRelocate is set, the old geography.relocation list must be
-	// folded into Other requirements rather than dropped.
 	fromDir := makeOldDir(t, "")
 	odb := openOldDB(t, fromDir)
 	insertProfile(t, odb, "p1", "Solo", "2024-01-01T00:00:00Z", false)
-	odb.Exec(`UPDATE user_profiles SET data=? WHERE id='p1'`, //nolint:errcheck
+	odb.Exec(`UPDATE user_profiles SET data=? WHERE id='p1'`,
 		`{"geography":{"willingToRelocate":true,"relocation":["London","Berlin"]}}`)
 
 	targetDir := t.TempDir()
@@ -781,7 +736,6 @@ func TestImport_RelocationListAlwaysFolded(t *testing.T) {
 	if pd.Relocation != "yes" {
 		t.Errorf("Relocation: got %q, want yes", pd.Relocation)
 	}
-	// The relocation list must appear in Other requirements even though willingToRelocate is set.
 	if !strings.Contains(pd.OtherRequirements, "London") {
 		t.Errorf("OtherRequirements should contain folded relocation list, got: %q", pd.OtherRequirements)
 	}
@@ -790,14 +744,11 @@ func TestImport_RelocationListAlwaysFolded(t *testing.T) {
 	}
 }
 
-// --- Notice period free-text tests ---
-
 func TestImport_NoticePeriodFreeTextFolded(t *testing.T) {
-	// When no structured notice exists, the free-text noticePeriod is folded.
 	fromDir := makeOldDir(t, "")
 	odb := openOldDB(t, fromDir)
 	insertProfile(t, odb, "p1", "Solo", "2024-01-01T00:00:00Z", false)
-	odb.Exec(`UPDATE user_profiles SET data=? WHERE id='p1'`, //nolint:errcheck
+	odb.Exec(`UPDATE user_profiles SET data=? WHERE id='p1'`,
 		`{"availability":{"noticePeriod":"4 weeks notice required","startDate":""}}`)
 
 	targetDir := t.TempDir()
@@ -813,11 +764,10 @@ func TestImport_NoticePeriodFreeTextFolded(t *testing.T) {
 }
 
 func TestImport_NoticePeriodFreeTextDroppedWhenStructured(t *testing.T) {
-	// When structured notice exists in users.data, the profile's free-text noticePeriod is dropped.
 	fromDir := makeOldDir(t, "")
 	odb := openOldDB(t, fromDir)
 	insertProfile(t, odb, "p1", "Solo", "2024-01-01T00:00:00Z", false)
-	odb.Exec(`UPDATE user_profiles SET data=? WHERE id='p1'`, //nolint:errcheck
+	odb.Exec(`UPDATE user_profiles SET data=? WHERE id='p1'`,
 		`{"availability":{"noticePeriod":"old notice text","startDate":""}}`)
 	insertUserRow(t, fromDir, `{"availability":{"noticeSet":true,"noticeValue":4,"noticeUnit":"week","startDate":""}}`)
 
@@ -832,8 +782,6 @@ func TestImport_NoticePeriodFreeTextDroppedWhenStructured(t *testing.T) {
 		t.Errorf("report should mention dropped notice period: %s", report)
 	}
 }
-
-// --- User-level target roles / industries tests ---
 
 func TestImport_UserTargetRolesAndIndustriesReportedAsNotImported(t *testing.T) {
 	fromDir := makeOldDir(t, "")
@@ -856,7 +804,6 @@ func TestImport_UserTargetRolesAndIndustriesReportedAsNotImported(t *testing.T) 
 }
 
 func TestImport_EmptyUserTargetRolesNotReported(t *testing.T) {
-	// When targetRoles and targetIndustries are absent or empty, nothing is reported.
 	fromDir := makeOldDir(t, "")
 	insertUserRow(t, fromDir, `{"targetRoles":[],"targetIndustries":[]}`)
 	targetDir := t.TempDir()
@@ -866,8 +813,6 @@ func TestImport_EmptyUserTargetRolesNotReported(t *testing.T) {
 		t.Errorf("report should not mention empty targetRoles: %s", report)
 	}
 }
-
-// --- helper ---
 
 func containsStr(ss []string, s string) bool {
 	for _, v := range ss {

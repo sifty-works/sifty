@@ -9,12 +9,6 @@ import (
 	"golang.org/x/net/html/atom"
 )
 
-// FTSNorm normalises s for the full-text index: lowercases, replaces every run
-// of non-letter/non-digit characters with a single space, and pads the result
-// with a leading and trailing space. The padding ensures that even a one- or
-// two-character term becomes a phrase of at least three characters when wrapped
-// in its own spaces, so the trigram tokenizer can match it. An empty input
-// returns a single space.
 func FTSNorm(s string) string {
 	s = strings.ToLower(s)
 	var b strings.Builder
@@ -35,30 +29,10 @@ func FTSNorm(s string) string {
 	return b.String()
 }
 
-// Normalize converts raw HTML vacancy text into sanitised HTML.
-//
-// Output is limited to h2 h3 h4 p ul ol li strong em br elements, with no
-// attributes. Scripts, styles, HTML comments and their content are removed.
-// Other tags are unwrapped.
-//
-// Heading mapping: h1 → h2; h5, h6 → h4. Container block elements (div,
-// section, article, table rows/cells, etc.) become paragraph boundaries.
-// Loose text at the top level or inside containers is wrapped in p.
-//
-// Whitespace rules: runs of whitespace inside text nodes are collapsed to one
-// space; text is trimmed at block edges; whitespace-only text between blocks
-// is removed; br at the start or end of a block is dropped.
-//
-// A paragraph whose entire text (bold or not, with or without a trailing
-// colon) is a known section heading is promoted to h3. Empty elements are
-// removed. The output is deterministic.
 func Normalize(raw string) string {
 	return sanitise(raw)
 }
 
-// PlainText returns the plain text of sanitised HTML. Block elements are
-// separated by a single newline each. <br> becomes a newline. Never two
-// blank lines in a row.
 func PlainText(h string) string {
 	nodes, err := xhtml.ParseFragment(strings.NewReader(h), &xhtml.Node{
 		Type:     xhtml.ElementNode,
@@ -79,7 +53,6 @@ func PlainText(h string) string {
 	return text
 }
 
-// headingSet returns a lowercase lookup set for the known section headings.
 func headingSet() map[string]bool {
 	hset := make(map[string]bool, len(headings))
 	for _, h := range headings {
@@ -88,7 +61,6 @@ func headingSet() map[string]bool {
 	return hset
 }
 
-// sanitise parses HTML and returns cleaned output.
 func sanitise(htmlIn string) string {
 	nodes, err := xhtml.ParseFragment(strings.NewReader(htmlIn), &xhtml.Node{
 		Type:     xhtml.ElementNode,
@@ -101,8 +73,6 @@ func sanitise(htmlIn string) string {
 	return strings.Join(flattenToBlocks(nodes), "")
 }
 
-// containerBlocks is the set of block container elements whose children are
-// re-processed at top level (creating paragraph boundaries).
 var containerBlocks = map[atom.Atom]bool{
 	atom.Div: true, atom.Section: true, atom.Article: true,
 	atom.Table: true, atom.Tbody: true, atom.Thead: true, atom.Tfoot: true,
@@ -113,8 +83,6 @@ var containerBlocks = map[atom.Atom]bool{
 	atom.Main: true, atom.Nav: true, atom.Aside: true,
 }
 
-// mapHeadingTag maps a heading atom to its output tag. Returns "" otherwise.
-// h1 → h2; h5, h6 → h4; h2, h3, h4 unchanged.
 func mapHeadingTag(a atom.Atom) string {
 	switch a {
 	case atom.H1, atom.H2:
@@ -127,10 +95,6 @@ func mapHeadingTag(a atom.Atom) string {
 	return ""
 }
 
-// flattenToBlocks processes a slice of nodes in block context and returns a
-// slice of rendered block HTML strings. Container elements are flattened;
-// loose inline content is wrapped in p. A paragraph whose full text is a
-// known section heading is promoted to h3.
 func flattenToBlocks(nodes []*xhtml.Node) []string {
 	hset := headingSet()
 	var blocks []string
@@ -144,9 +108,6 @@ func flattenToBlocks(nodes []*xhtml.Node) []string {
 		}
 	}
 
-	// headingFromContent returns the plain-text heading if the paragraph
-	// content (after stripping strong/em and a trailing colon) is a known
-	// section heading; otherwise returns "".
 	headingFromContent := func(content string) string {
 		t := strings.ReplaceAll(content, "<strong>", "")
 		t = strings.ReplaceAll(t, "</strong>", "")
@@ -169,7 +130,6 @@ func flattenToBlocks(nodes []*xhtml.Node) []string {
 				inlineAcc.WriteString(html.EscapeString(n.Data))
 			}
 		case xhtml.CommentNode, xhtml.DoctypeNode:
-			// skip
 		case xhtml.ElementNode:
 			a := n.DataAtom
 			if a == atom.Script || a == atom.Style {
@@ -227,7 +187,6 @@ func flattenToBlocks(nodes []*xhtml.Node) []string {
 	return blocks
 }
 
-// renderInlineChildren renders all children of n as inline HTML.
 func renderInlineChildren(n *xhtml.Node) string {
 	var b strings.Builder
 	for c := n.FirstChild; c != nil; c = c.NextSibling {
@@ -236,8 +195,6 @@ func renderInlineChildren(n *xhtml.Node) string {
 	return b.String()
 }
 
-// renderInlineNode renders a single node as inline HTML. Block elements in
-// inline context are unwrapped. Empty strong and em elements are dropped.
 func renderInlineNode(n *xhtml.Node) string {
 	switch n.Type {
 	case xhtml.TextNode:
@@ -253,15 +210,14 @@ func renderInlineNode(n *xhtml.Node) string {
 		if a == atom.Strong || a == atom.Em {
 			inner := renderInlineChildren(n)
 			if inner == "" {
-				return "" // truly empty element
+				return ""
 			}
-			// If inner contains no visible text (only whitespace and/or <br>):
 			noText := strings.TrimSpace(strings.ReplaceAll(inner, "<br>", ""))
 			if noText == "" {
 				if strings.Contains(inner, "<br>") {
-					return "" // br-only content: drop element
+					return ""
 				}
-				return " " // whitespace-only text: replace element with one space
+				return " "
 			}
 			return "<" + n.Data + ">" + inner + "</" + n.Data + ">"
 		}
@@ -274,10 +230,6 @@ func renderInlineNode(n *xhtml.Node) string {
 	return ""
 }
 
-// collectListItems returns a flat slice of rendered inline strings, one per
-// list item, for the given ul or ol node. Items inside a sublist (whether a
-// direct child of this list or inside an li) are flattened into the same
-// sequence; there is no nesting in the result.
 func collectListItems(listNode *xhtml.Node) []string {
 	var items []string
 	for c := listNode.FirstChild; c != nil; c = c.NextSibling {
@@ -288,16 +240,12 @@ func collectListItems(listNode *xhtml.Node) []string {
 		case atom.Li:
 			items = append(items, renderLiAsItems(c)...)
 		case atom.Ul, atom.Ol:
-			// A list directly inside a list (not inside an li): flatten its items.
 			items = append(items, collectListItems(c)...)
 		}
 	}
 	return items
 }
 
-// renderLiAsItems returns the content strings for a single li element.
-// If the li contains a nested list, the li's own inline text (if any) becomes
-// the first item and the nested items follow, all in the same slice.
 func renderLiAsItems(liNode *xhtml.Node) []string {
 	var inlineB strings.Builder
 	var nested []string
@@ -319,9 +267,6 @@ func renderLiAsItems(liNode *xhtml.Node) []string {
 	return items
 }
 
-// normalizeInlineContent normalises inline HTML content:
-// collapses whitespace runs in text, trims edges, drops leading/trailing <br>,
-// collapses consecutive <br> to one.
 func normalizeInlineContent(s string) string {
 	s = collapseTextWhitespace(s)
 	s = strings.TrimSpace(s)
@@ -331,7 +276,6 @@ func normalizeInlineContent(s string) string {
 	for strings.HasSuffix(s, "<br>") {
 		s = strings.TrimSpace(s[:len(s)-4])
 	}
-	// Collapse consecutive <br> and strip space immediately after any <br>.
 	prev := ""
 	for s != prev {
 		prev = s
@@ -342,8 +286,6 @@ func normalizeInlineContent(s string) string {
 	return s
 }
 
-// collapseTextWhitespace collapses runs of ASCII whitespace in the text
-// portions of an HTML string (outside tag delimiters) to a single space.
 func collapseTextWhitespace(s string) string {
 	var b strings.Builder
 	inTag, prevSpace := false, false
@@ -371,8 +313,6 @@ func collapseTextWhitespace(s string) string {
 	return b.String()
 }
 
-// extractText walks a node tree and appends plain text to b, with a newline
-// after each block-level element. <br> becomes a newline.
 func extractText(n *xhtml.Node, b *strings.Builder) {
 	if n == nil {
 		return

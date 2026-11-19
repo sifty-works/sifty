@@ -14,11 +14,8 @@ import (
 	"github.com/sifty-works/sifty-server/internal/runner"
 )
 
-// TestAssignIndustriesAllVacanciesProcessed verifies that every vacancy in the
-// database is processed and that the job reports done=total when it finishes.
-// The vacancy count (207) is deliberately not a multiple of the batch size (200).
 func TestAssignIndustriesAllVacanciesProcessed(t *testing.T) {
-	const vacancyCount = 207 // not a multiple of 200
+	const vacancyCount = 207
 
 	d, err := db.Open(filepath.Join(t.TempDir(), "test.db"), db.Migrations)
 	if err != nil {
@@ -26,8 +23,6 @@ func TestAssignIndustriesAllVacanciesProcessed(t *testing.T) {
 	}
 	defer d.Close()
 
-	// Insert vacancies with invented titles; none match any industry keyword so
-	// each ends up with industries='[]', but all must be visited.
 	now := time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC).Format(time.RFC3339)
 	for i := 1; i <= vacancyCount; i++ {
 		_, err := d.Exec(
@@ -62,9 +57,8 @@ func TestAssignIndustriesAllVacanciesProcessed(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go r.Start(ctx) //nolint:errcheck
+	go r.Start(ctx)
 
-	// Poll until the job is done (up to 15 s).
 	deadline := time.Now().Add(15 * time.Second)
 	var job runner.Job
 	for time.Now().Before(deadline) {

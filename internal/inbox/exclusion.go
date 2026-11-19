@@ -12,8 +12,6 @@ import (
 	"github.com/sifty-works/sifty-server/internal/listing"
 )
 
-// notExcluded and notExcludedFor are SQL predicates from catalog used in
-// exclusion preview and in the list queries via repo.go.
 const notExcluded = catalog.NotExcluded
 const notExcludedFor = catalog.NotExcludedFor
 
@@ -22,7 +20,6 @@ type exclRow struct {
 	kind, value string
 }
 
-// normFor returns the stored norm for a given kind and value.
 func normFor(kind, value string) string {
 	if kind == "company" {
 		return strings.TrimSuffix(listing.Identity(value, ""), "|")
@@ -93,7 +90,7 @@ func previewCount(ctx context.Context, database *db.DB, kind, value string) (int
 	if err != nil {
 		return 0, fmt.Errorf("inbox: preview: begin tx: %w", err)
 	}
-	defer tx.Rollback() //nolint:errcheck
+	defer tx.Rollback()
 
 	var before int
 	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM vacancy WHERE `+notExcluded).Scan(&before); err != nil {
@@ -111,7 +108,6 @@ func previewCount(ctx context.Context, database *db.DB, kind, value string) (int
 	return before - after, nil
 }
 
-// ExclusionKind is the kind of an exclusion rule.
 type ExclusionKind string
 
 const (
@@ -119,7 +115,6 @@ const (
 	KindCompany ExclusionKind = "company"
 )
 
-// Exclusion is one exclusion rule as returned by the API.
 type Exclusion struct {
 	ID    int64         `json:"id"`
 	Kind  ExclusionKind `json:"kind"`
@@ -127,7 +122,6 @@ type Exclusion struct {
 	Scope string        `json:"scope"`
 }
 
-// ExclusionsResp is the response body for GET/POST/DELETE /api/exclusions.
 type ExclusionsResp struct {
 	Exclusions []Exclusion `json:"exclusions"`
 }

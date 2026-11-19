@@ -15,7 +15,7 @@ import (
 
 const (
 	userAgent      = "Sifty/1.0 (personal read-only job discovery)"
-	maxBodyBytes   = 8 * 1024 * 1024 // 8 MB
+	maxBodyBytes   = 8 * 1024 * 1024
 	defaultTimeout = 30 * time.Second
 	maxRedirects   = 6
 	spacingBase    = 3 * time.Second
@@ -25,33 +25,22 @@ const (
 	backoffMax     = 1 * time.Hour
 )
 
-// Options configure a fetcher built by New.
 type Options struct {
-	// Blocks is the persistent domain block store (required).
-	Blocks *DomainBlocks
-	// Clock returns the current time. Defaults to time.Now.
-	Clock func() time.Time
-	// Sleep pauses for d, honouring ctx. Defaults to a real sleep.
-	Sleep func(ctx context.Context, d time.Duration) error
-	// Rand is the random source for spacing jitter.
-	Rand *rand.Rand
-	// Policy decides whether a resolved or dialled IP may be used.
-	// Defaults to PublicOnly.
-	Policy AddressPolicy
-	// Timeout per request. Defaults to 30 s.
+	Blocks  *DomainBlocks
+	Clock   func() time.Time
+	Sleep   func(ctx context.Context, d time.Duration) error
+	Rand    *rand.Rand
+	Policy  AddressPolicy
 	Timeout time.Duration
-	// Offline makes every Get return ErrOffline.
 	Offline bool
 }
 
-// domainState tracks per-domain spacing and back-off.
 type domainState struct {
 	lastRequest  time.Time
-	backoff      time.Duration // 0 means no back-off; current step size
-	backoffUntil time.Time     // time after which the domain may be tried again
+	backoff      time.Duration
+	backoffUntil time.Time
 }
 
-// client implements Fetcher.
 type client struct {
 	blocks  *DomainBlocks
 	clock   func() time.Time
@@ -67,7 +56,6 @@ type client struct {
 	httpClient *http.Client
 }
 
-// New returns a Fetcher configured by opt.
 func New(opt Options) Fetcher {
 	if opt.Clock == nil {
 		opt.Clock = time.Now
@@ -76,7 +64,7 @@ func New(opt Options) Fetcher {
 		opt.Sleep = realSleep
 	}
 	if opt.Rand == nil {
-		opt.Rand = rand.New(rand.NewSource(time.Now().UnixNano())) //nolint:gosec
+		opt.Rand = rand.New(rand.NewSource(time.Now().UnixNano()))
 	}
 	if opt.Policy == nil {
 		opt.Policy = PublicOnly
@@ -110,8 +98,6 @@ func realSleep(ctx context.Context, d time.Duration) error {
 	}
 }
 
-// buildHTTPClient builds an http.Client with our policy-enforcing dialer and
-// a CheckRedirect that validates each hop and limits the chain to maxRedirects.
 func (c *client) buildHTTPClient() *http.Client {
 	dialer := &net.Dialer{
 		ControlContext: func(_ context.Context, _, address string, _ syscall.RawConn) error {
@@ -129,10 +115,6 @@ func (c *client) buildHTTPClient() *http.Client {
 
 	return &http.Client{
 		Transport: transport,
-		// CheckRedirect validates each hop: refuse after maxRedirects and
-		// reject any redirect to an unsupported scheme or a URL with credentials.
-		// The dialer's ControlContext checks every resolved IP, so private
-		// address redirection is caught there without an extra pre-check.
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if len(via) > maxRedirects {
 				return wrapErr(ErrTransient, "too many redirects (>%d)", maxRedirects)
@@ -145,8 +127,6 @@ func (c *client) buildHTTPClient() *http.Client {
 	}
 }
 
-// checkDialAddress is called by the dialer for each TCP dial.
-// address is "ip:port" with the actual resolved address.
 func (c *client) checkDialAddress(address string) error {
 	host, _, err := net.SplitHostPort(address)
 	if err != nil {
@@ -162,7 +142,6 @@ func (c *client) checkDialAddress(address string) error {
 	return nil
 }
 
-// Get fetches the given URL.
 func (c *client) Get(ctx context.Context, rawURL string, opt Opt) (Response, error) {
 	if c.offline {
 		return Response{}, ErrOffline
@@ -184,7 +163,6 @@ func (c *client) Get(ctx context.Context, rawURL string, opt Opt) (Response, err
 	}
 
 	if err := c.applySpacing(ctx, domain); err != nil {
-		// Spacing honours ctx; a cancellation here is not a transient error.
 		return Response{}, ctx.Err()
 	}
 
@@ -202,16 +180,12 @@ func (c *client) Get(ctx context.Context, rawURL string, opt Opt) (Response, err
 
 	httpResp, err := c.httpClient.Do(req)
 	if err != nil {
-		// Caller cancelled or its deadline passed: propagate as-is, no back-off.
 		if ctx.Err() != nil {
 			return Response{}, ctx.Err()
 		}
-		// Per-request timeout fired.
 		if reqCtx.Err() != nil {
 			return Response{}, ErrTimeout
 		}
-		// Do not record back-off for address refusals — only for genuine
-		// transient network failures.
 		if !errors.Is(err, ErrRefused) {
 			c.recordTransient(domain)
 		}
@@ -230,12 +204,10 @@ func (c *client) Get(ctx context.Context, rawURL string, opt Opt) (Response, err
 		return Response{}, wrapErr(ErrTransient, "response body exceeds 8 MB limit")
 	}
 
-	// resp.Request.URL is the final URL after all redirects.
 	finalURL := httpResp.Request.URL.String()
 	ct := httpResp.Header.Get("Content-Type")
 	resp, err := c.interpretResponse(httpResp.StatusCode, ct, httpResp.Header, body, finalURL)
 	if err != nil {
-		// Back-off: not for blocked (recordBlock already fired) or permanent not-found.
 		if !errors.Is(err, ErrBlocked) && !errors.Is(err, ErrNotFound) {
 			c.recordTransient(domain)
 		}
@@ -244,7 +216,6 @@ func (c *client) Get(ctx context.Context, rawURL string, opt Opt) (Response, err
 	return resp, nil
 }
 
-// parseAndCheckURL validates the scheme and absence of credentials.
 func parseAndCheckURL(raw string) (*url.URL, error) {
 	u, err := url.Parse(raw)
 	if err != nil {
@@ -259,9 +230,6 @@ func parseAndCheckURL(raw string) (*url.URL, error) {
 	return u, nil
 }
 
-// interpretResponse maps an HTTP response to a Response or error.
-// It applies StatusError for the classification and records the block or
-// success on the domain as a side effect.
 func (c *client) interpretResponse(status int, ct string, header http.Header, body []byte, finalURL string) (Response, error) {
 	domain := domainKey(hostOf(finalURL))
 	if err := StatusError(status, header, body); err != nil {
@@ -274,7 +242,6 @@ func (c *client) interpretResponse(status int, ct string, header http.Header, bo
 	return Response{URL: finalURL, Status: status, ContentType: ct, Body: body}, nil
 }
 
-// hostOf returns the host from a URL string.
 func hostOf(rawURL string) string {
 	u, err := url.Parse(rawURL)
 	if err != nil {
@@ -282,8 +249,6 @@ func hostOf(rawURL string) string {
 	}
 	return u.Host
 }
-
-// --- Blocking ---
 
 func (c *client) checkBlocked(domain string) error {
 	until, ok := c.blocks.Blocked(domain)
@@ -300,11 +265,6 @@ func (c *client) recordBlock(domain string) {
 	c.blocks.Block(domain, c.clock().Add(blockDuration))
 }
 
-// --- Back-off ---
-
-// checkBackoff returns ErrTransient immediately if the domain is still in
-// its back-off period. When the period has passed the state is left as-is so
-// the next recordTransient doubles from the current step.
 func (c *client) checkBackoff(domain string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -341,8 +301,6 @@ func (c *client) recordSuccess(domain string) {
 	ds.backoffUntil = time.Time{}
 }
 
-// --- Spacing ---
-
 func (c *client) applySpacing(ctx context.Context, domain string) error {
 	c.mu.Lock()
 	ds := c.getOrCreate(domain)
@@ -357,7 +315,6 @@ func (c *client) applySpacing(ctx context.Context, domain string) error {
 			wait = required - elapsed
 		}
 	}
-	// Record intended next request time before releasing the lock.
 	ds.lastRequest = now.Add(wait)
 	c.mu.Unlock()
 

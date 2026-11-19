@@ -14,8 +14,6 @@ import (
 	"time"
 )
 
-// startServe launches 'sifty serve --offline --data-dir <dir> --port 0',
-// reads the "Listening on" line, and returns the port and a cancel func.
 func startServe(t *testing.T, dataDir string) (port int, cancel func()) {
 	t.Helper()
 	ctx, cancelCtx := context.WithCancel(context.Background())
@@ -95,7 +93,6 @@ func TestSecondServeOnSameFolderIsRefused(t *testing.T) {
 	_, cancel := startServe(t, dir)
 	defer cancel()
 
-	// Try to start a second server on the same folder.
 	var stderr bytes.Buffer
 	ctx := context.Background()
 	err := run(ctx, []string{"serve", "--data-dir", dir, "--port", "0"}, io.Discard, &stderr)
@@ -145,7 +142,6 @@ func TestPortZeroTakesAFreePortNotDefaultPort(t *testing.T) {
 	port, cancel := startServe(t, dir)
 	defer cancel()
 
-	// --port 0 must have resolved to a free ephemeral port, not the default 7373.
 	if port == 7373 {
 		t.Error("--port 0 should not listen on the default port 7373")
 	}
@@ -155,7 +151,6 @@ func TestPortZeroTakesAFreePortNotDefaultPort(t *testing.T) {
 }
 
 func TestReplayFetchesFromFixtureAndLogsUnrecordedAddress(t *testing.T) {
-	// Build a replay fixture with one Greenhouse board recorded and nothing else.
 	replayDir := t.TempDir()
 	boardBody := `{"company":{"name":"TestCo"},"jobs":[{"id":1,"title":"Engineer","absolute_url":"https://boards.greenhouse.io/testco/jobs/1","content":"<p>Job</p>"}]}`
 	if err := os.WriteFile(filepath.Join(replayDir, "board.json"), []byte(boardBody), 0600); err != nil {
@@ -218,14 +213,11 @@ func TestReplayFetchesFromFixtureAndLogsUnrecordedAddress(t *testing.T) {
 		resp.Body.Close()
 	}
 
-	// Add a source in the index; add a second source that is NOT recorded.
 	postJSON("/api/sources", `{"url":"https://boards.greenhouse.io/testco"}`)
 	postJSON("/api/sources", `{"url":"https://feeds.unrecorded.example.com/jobs.xml"}`)
 
-	// Force a run.
 	postJSON("/api/collect", `{"force":true}`)
 
-	// Poll /api/status until lastRun appears (up to 10 s).
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
 		resp, err := http.Get(base + "/api/status")
@@ -241,7 +233,6 @@ func TestReplayFetchesFromFixtureAndLogsUnrecordedAddress(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 	}
 
-	// The log file must record the unrecorded address.
 	logPath := filepath.Join(dataDir, "logs", "sifty.log")
 	logBytes, err := os.ReadFile(logPath)
 	if err != nil {

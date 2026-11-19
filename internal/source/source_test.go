@@ -14,7 +14,6 @@ import (
 	"github.com/sifty-works/sifty-server/internal/source"
 )
 
-// TestFor_routing checks that For returns the source that requests exactly one URL.
 func TestFor_routing(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -41,7 +40,7 @@ func TestFor_routing(t *testing.T) {
 				Response: fetch.Response{URL: tc.apiURL, Status: 200, Body: []byte(tc.body)},
 			})
 			cfg := source.SiteConfig{URL: tc.addr}
-			source.For(mustParseURL(t, tc.addr)).List(context.Background(), m, cfg) //nolint:errcheck
+			source.For(mustParseURL(t, tc.addr)).List(context.Background(), m, cfg)
 			reqs := m.Requests()
 			if len(reqs) != 1 || reqs[0] != tc.apiURL {
 				t.Errorf("requested %v, want [%s]", reqs, tc.apiURL)
@@ -50,7 +49,6 @@ func TestFor_routing(t *testing.T) {
 	}
 }
 
-// TestList_unrecognised_format checks that invalid or unknown response bodies return ErrNothingRecognised.
 func TestList_unrecognised_format(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -88,8 +86,6 @@ func TestList_fetcher_error_returned(t *testing.T) {
 	}
 }
 
-// --- Feed source: RSS ---
-
 func TestFeed_RSS_maps_all_fields(t *testing.T) {
 	body := mustReadFile(t, "testdata/rss.xml")
 	feedURL := "http://feeds.acme.example.com/jobs"
@@ -106,7 +102,6 @@ func TestFeed_RSS_maps_all_fields(t *testing.T) {
 		t.Fatalf("got %d postings, want 2", len(postings))
 	}
 
-	// First item: "Acme: Senior Developer" — company from title split, content:encoded preferred.
 	p := postings[0]
 	if p.Title != "Senior Developer" {
 		t.Errorf("title = %q, want %q", p.Title, "Senior Developer")
@@ -130,12 +125,10 @@ func TestFeed_RSS_maps_all_fields(t *testing.T) {
 	if p.PublishedBasis != "pubDate" {
 		t.Errorf("basis = %q, want pubDate", p.PublishedBasis)
 	}
-	// Relative link /post/1 must resolve against the response URL.
 	if want := "http://feeds.acme.example.com/post/1"; p.URL != want {
 		t.Errorf("URL = %q, want %q (relative link not resolved)", p.URL, want)
 	}
 
-	// Second item: company from job:company element.
 	p2 := postings[1]
 	if p2.Company != "Example Co" {
 		t.Errorf("item2 company = %q, want %q", p2.Company, "Example Co")
@@ -144,8 +137,6 @@ func TestFeed_RSS_maps_all_fields(t *testing.T) {
 		t.Errorf("item2 title = %q", p2.Title)
 	}
 }
-
-// --- Feed source: Atom ---
 
 func TestFeed_Atom_maps_all_fields(t *testing.T) {
 	body := mustReadFile(t, "testdata/atom.xml")
@@ -166,14 +157,12 @@ func TestFeed_Atom_maps_all_fields(t *testing.T) {
 	if p.Title != "DevOps Engineer" {
 		t.Errorf("title = %q", p.Title)
 	}
-	// link rel=alternate preferred and resolved from relative to absolute.
 	if want := "http://jobs.example.com/devops-engineer"; p.URL != want {
 		t.Errorf("URL = %q, want %q", p.URL, want)
 	}
 	if p.Text != "<p>DevOps role at Example Corp.</p>" {
 		t.Errorf("text = %q", p.Text)
 	}
-	// published only, not updated.
 	wantDate := time.Date(2024, 3, 5, 12, 0, 0, 0, time.UTC)
 	if !p.Published.Equal(wantDate) {
 		t.Errorf("published = %v, want %v (should use published, not updated)", p.Published, wantDate)
@@ -189,8 +178,6 @@ func TestFeed_Atom_maps_all_fields(t *testing.T) {
 		t.Errorf("tags = %v, want %v", p.Tags, want)
 	}
 }
-
-// --- Feed title splitting ---
 
 func TestFeed_title_split(t *testing.T) {
 	for _, tc := range []struct {
@@ -245,8 +232,6 @@ func TestFeed_title_split(t *testing.T) {
 	}
 }
 
-// --- Greenhouse ---
-
 func TestGreenhouse_maps_all_fields(t *testing.T) {
 	body := mustReadFile(t, "testdata/greenhouse.json")
 	apiURL := "https://boards-api.greenhouse.io/v1/boards/brightway/jobs?content=true"
@@ -273,7 +258,6 @@ func TestGreenhouse_maps_all_fields(t *testing.T) {
 	if p.Title != "Backend Engineer" {
 		t.Errorf("title = %q", p.Title)
 	}
-	// company_name present → use it, not the board name.
 	if p.Company != "Brightway Corp" {
 		t.Errorf("company = %q, want Brightway Corp (from company_name)", p.Company)
 	}
@@ -283,12 +267,11 @@ func TestGreenhouse_maps_all_fields(t *testing.T) {
 	if len(p.Tags) != 1 || p.Tags[0] != "Engineering" {
 		t.Errorf("tags = %v, want [Engineering]", p.Tags)
 	}
-	// first_published only, not updated_at.
 	wantDate := time.Date(2024, 3, 1, 9, 0, 0, 0, time.UTC)
 	if !p.Published.Equal(wantDate) {
 		t.Errorf("published = %v, want %v", p.Published, wantDate)
 	}
-	notUpdated := time.Date(2024, 3, 15, 12, 0, 0, 0, time.UTC) // updated_at in fixture
+	notUpdated := time.Date(2024, 3, 15, 12, 0, 0, 0, time.UTC)
 	if p.Published.Equal(notUpdated) {
 		t.Errorf("published uses updated_at %v; must use first_published only", notUpdated)
 	}
@@ -302,12 +285,10 @@ func TestGreenhouse_maps_all_fields(t *testing.T) {
 		t.Errorf("text state = %q, want full", p.TextState)
 	}
 
-	// First posting: company_name present → not guessed.
 	if p.CompanyGuessed {
 		t.Error("CompanyGuessed should be false when company_name is set")
 	}
 
-	// Second posting: company_name empty → fall back to board company name, guessed.
 	p2 := postings[1]
 	if p2.Company != "Brightway Software" {
 		t.Errorf("item2 company = %q, want Brightway Software (board name fallback)", p2.Company)
@@ -319,8 +300,6 @@ func TestGreenhouse_maps_all_fields(t *testing.T) {
 		t.Error("CompanyGuessed should be true when company_name is absent")
 	}
 }
-
-// --- Lever ---
 
 func TestLever_maps_all_fields(t *testing.T) {
 	body := mustReadFile(t, "testdata/lever.json")
@@ -365,7 +344,6 @@ func TestLever_maps_all_fields(t *testing.T) {
 	if p.Fields["salary"] == "" {
 		t.Errorf("salary field empty")
 	}
-	// 1709280000000 ms = 2024-03-01T08:00:00Z
 	wantDate := time.UnixMilli(1709280000000).UTC()
 	if !p.Published.Equal(wantDate) {
 		t.Errorf("published = %v, want %v", p.Published, wantDate)
@@ -373,7 +351,6 @@ func TestLever_maps_all_fields(t *testing.T) {
 	if p.PublishedBasis != "createdAt" {
 		t.Errorf("basis = %q, want createdAt", p.PublishedBasis)
 	}
-	// text: description + lists + additional.
 	if p.Text == "" {
 		t.Errorf("text is empty")
 	}
@@ -382,7 +359,6 @@ func TestLever_maps_all_fields(t *testing.T) {
 			t.Errorf("text missing %q", want)
 		}
 	}
-	// Source name set → not guessed.
 	if p.CompanyGuessed {
 		t.Error("CompanyGuessed should be false when source name is set")
 	}
@@ -394,7 +370,6 @@ func TestLever_company_falls_back_to_site_slug(t *testing.T) {
 	m.Set(apiURL, fetchtest.MapEntry{
 		Response: fetch.Response{URL: apiURL, Status: 200, Body: mustReadFile(t, "testdata/lever.json")},
 	})
-	// SiteConfig.Name empty → company = site slug.
 	cfg := source.SiteConfig{Name: "", URL: "https://jobs.lever.co/techstartup"}
 	postings, err := source.For(mustParseURL(t, cfg.URL)).List(context.Background(), m, cfg)
 	if err != nil {
@@ -406,13 +381,10 @@ func TestLever_company_falls_back_to_site_slug(t *testing.T) {
 	if postings[0].Company != "techstartup" {
 		t.Errorf("company = %q, want techstartup (site slug)", postings[0].Company)
 	}
-	// No source name → guessed.
 	if !postings[0].CompanyGuessed {
 		t.Error("CompanyGuessed should be true without source name")
 	}
 }
-
-// --- Ashby ---
 
 func TestAshby_maps_all_fields(t *testing.T) {
 	body := mustReadFile(t, "testdata/ashby.json")
@@ -426,7 +398,6 @@ func TestAshby_maps_all_fields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("List error: %v", err)
 	}
-	// unlisted posting (isListed:false) must be skipped.
 	if len(postings) != 1 {
 		t.Fatalf("got %d postings, want 1 (unlisted skipped)", len(postings))
 	}
@@ -443,7 +414,6 @@ func TestAshby_maps_all_fields(t *testing.T) {
 	if p.Company != "NexGen" {
 		t.Errorf("company = %q, want NexGen (source name)", p.Company)
 	}
-	// isRemote:true + location "Austin, TX" → append ", Remote".
 	if !strings.Contains(p.Location, "Austin, TX") || !strings.Contains(p.Location, "Remote") {
 		t.Errorf("location = %q, want Austin TX + Remote", p.Location)
 	}
@@ -466,7 +436,6 @@ func TestAshby_maps_all_fields(t *testing.T) {
 	if p.Text != "<p>Join our AI research team.</p>" {
 		t.Errorf("text = %q", p.Text)
 	}
-	// Source name set → not guessed.
 	if p.CompanyGuessed {
 		t.Error("CompanyGuessed should be false when source name is set")
 	}
@@ -478,7 +447,6 @@ func TestAshby_company_falls_back_to_board_name(t *testing.T) {
 	m.Set(apiURL, fetchtest.MapEntry{
 		Response: fetch.Response{URL: apiURL, Status: 200, Body: mustReadFile(t, "testdata/ashby.json")},
 	})
-	// Name empty → use API organization.name.
 	cfg := source.SiteConfig{Name: "", URL: "https://jobs.ashbyhq.com/nexgen"}
 	postings, err := source.For(mustParseURL(t, cfg.URL)).List(context.Background(), m, cfg)
 	if err != nil {
@@ -490,20 +458,15 @@ func TestAshby_company_falls_back_to_board_name(t *testing.T) {
 	if postings[0].Company != "NexGen AI" {
 		t.Errorf("company = %q, want NexGen AI (org name from API)", postings[0].Company)
 	}
-	// No source name → guessed.
 	if !postings[0].CompanyGuessed {
 		t.Error("CompanyGuessed should be true without source name")
 	}
 }
 
-// --- Hacker News ---
-
 func TestHN_list(t *testing.T) {
 	searchURL := "https://hn.algolia.com/api/v1/search_by_date?tags=story,author_whoishiring&hitsPerPage=5"
 	storyURL := "https://hn.algolia.com/api/v1/items/42"
-	// Search hits: "wants to be hired" first, "who is hiring" second; must pick second.
 	searchBody := `{"hits":[{"objectID":"99","title":"Ask HN: Who wants to be hired? (Jan 2026)"},{"objectID":"42","title":"Ask HN: Who is hiring? (Jan 2026)"}]}`
-	// Comments: one valid (with a link and a bare domain before the title), one no-pipe (skipped), one deleted (skipped), one no title (skipped).
 	storyBody := `{"id":42,"children":[
 		{"id":101,"text":"Acme Corp | <a href=\"https:&#x2F;&#x2F;acme.example.com\">https:&#x2F;&#x2F;acme.example.com</a> | acme.example | Engineer &amp; Lead | Berlin<p>More text","created_at":"2026-01-01T00:00:00Z","children":[]},
 		{"id":102,"text":"No pipes here","created_at":"2026-01-02T00:00:00Z","children":[]},
@@ -537,8 +500,6 @@ func TestHN_list(t *testing.T) {
 		t.Errorf("URL = %q, want comment id 101", ps[0].URL)
 	}
 }
-
-// ── Detail: company recovery from JSON-LD items and page title ───────────────
 
 func TestDetail_company_recovery(t *testing.T) {
 	cases := []struct {
@@ -581,8 +542,6 @@ func TestDetail_company_recovery(t *testing.T) {
 		})
 	}
 }
-
-// --- helpers ---
 
 func mustParseURL(t *testing.T, s string) *url.URL {
 	t.Helper()

@@ -3,10 +3,8 @@ VERSION  := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev
 LDFLAGS  := -X main.version=$(VERSION)
 GO_BUILD := go build -ldflags "$(LDFLAGS)"
 
-.PHONY: build dev check budget clean web release
+.PHONY: build dev check budget clean web release uncomment
 
-# web: download the pinned web client archive, verify its SHA-256, and unpack
-# into web/dist. Skipped when web/dist already holds the pinned version.
 web:
 	@set -euo pipefail; \
 	version=$$(grep '^version=' web/release.txt | cut -d= -f2); \
@@ -48,9 +46,9 @@ dev:
 dev-reset:
 	rm -rf .dev/data
 
-# release: verify the pinned web client matches the current API description,
-# then build the release binary. Refuses when web/dist/api.sha256 differs from
-# the SHA-256 of api/openapi.yaml.
+uncomment:
+	@go run ./cmd/uncomment -w $$(git ls-files --cached '*.go' | grep -v 'testdata/' | grep -v 'web/dist')
+
 release: web
 	@set -euo pipefail; \
 	api_sha=$$(shasum -a 256 api/openapi.yaml | awk '{print $$1}'); \
@@ -88,6 +86,25 @@ check: build
 	   rm -f "$$tmp"; exit 1; \
 	 fi; \
 	 rm -f "$$tmp"
+	@echo "--- no comments ---"
+	@gofiles=$$(git ls-files --cached '*.go' | grep -v 'testdata/' | grep -v 'web/dist'); \
+	 if [ -n "$$gofiles" ]; then \
+	   go run ./cmd/uncomment -l $$gofiles || { echo "Go files above contain comments; run 'make uncomment'"; exit 1; }; \
+	 fi
+	@if git ls-files --cached 'internal/db/migrations/*.sql' | xargs grep -l -- '--' 2>/dev/null | grep -q .; then \
+	   git ls-files --cached 'internal/db/migrations/*.sql' | xargs grep -n -- '--'; \
+	   echo "SQL migrations above contain -- comments" >&2; exit 1; \
+	 fi
+	@if git ls-files --cached 'internal/**/*.yaml' | grep -v '^api/openapi\.yaml' | xargs grep -lE '(^|[[:space:]])#' 2>/dev/null | grep -q .; then \
+	   git ls-files --cached 'internal/**/*.yaml' | grep -v '^api/openapi\.yaml' | xargs grep -nE '(^|[[:space:]])#'; \
+	   echo "YAML files above contain # comments" >&2; exit 1; \
+	 fi
+	@{ echo Makefile; git ls-files --cached '*.sh'; } | while read f; do \
+	   tail -n +2 "$$f" | grep -qn '^[[:space:]]*#' && { \
+	     tail -n +2 "$$f" | grep -n '^[[:space:]]*#' | sed "s|^|$$f:|"; \
+	     echo "$$f contains # comment lines (not first-line shebang)" >&2; exit 1; \
+	   } || true; \
+	 done
 
 budget:
 	@bash scripts/budget.sh

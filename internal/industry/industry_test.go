@@ -7,7 +7,6 @@ import (
 	"github.com/sifty-works/sifty-server/internal/industry"
 )
 
-// testVocab returns a small vocabulary for use in tests.
 func testVocab() industry.Vocab {
 	return industry.Vocab{
 		Industries: []industry.Industry{
@@ -17,8 +16,6 @@ func testVocab() industry.Vocab {
 		},
 	}
 }
-
-// --- Assign ---
 
 func TestAssign_MatchesKeywordInTitle(t *testing.T) {
 	v := testVocab()
@@ -54,7 +51,6 @@ func TestAssign_MatchesPhraseKeyword(t *testing.T) {
 }
 
 func TestAssign_NoMatchWhenKeywordIsSubstring(t *testing.T) {
-	// "art" is part of "start" and "artist" but should not match "art" as a keyword.
 	v := industry.Vocab{
 		Industries: []industry.Industry{
 			{Name: "Arts", Keywords: []string{"artwork studio", "fine arts"}},
@@ -67,18 +63,15 @@ func TestAssign_NoMatchWhenKeywordIsSubstring(t *testing.T) {
 }
 
 func TestAssign_WholeWordOnly(t *testing.T) {
-	// "golang" in "golang" matches; "golang" should NOT match "longgolang".
 	v := industry.Vocab{
 		Industries: []industry.Industry{
 			{Name: "GoLang", Keywords: []string{"golang"}},
 		},
 	}
-	// Should match.
 	got := industry.Assign("golang developer", "", "", v)
 	if len(got) != 1 || got[0] != "GoLang" {
 		t.Errorf("whole word: got %v, want [GoLang]", got)
 	}
-	// Should not match when keyword is embedded inside another word.
 	got2 := industry.Assign("longgolang developer", "", "", v)
 	if len(got2) != 0 {
 		t.Errorf("embedded: got %v, want []", got2)
@@ -88,7 +81,6 @@ func TestAssign_WholeWordOnly(t *testing.T) {
 func TestAssign_SeveralIndustries(t *testing.T) {
 	v := testVocab()
 	got := industry.Assign("Ethereum Rocket Engineer", "bioinformatics", "", v)
-	// Should match Blockchain (ethereum in title) and Genomics (bioinformatics in tags).
 	if len(got) != 2 {
 		t.Fatalf("several: got %v, want 2 industries", got)
 	}
@@ -123,7 +115,6 @@ func TestAssign_EmptyVocab(t *testing.T) {
 }
 
 func TestAssign_VacancyWithoutTextKeepsAssignmentFromTitleTags(t *testing.T) {
-	// A vacancy without body text should still match on title and tags.
 	v := testVocab()
 	got := industry.Assign("Ethereum Backend Engineer", "solidity", "", v)
 	if len(got) != 1 || got[0] != "Blockchain" {
@@ -131,63 +122,42 @@ func TestAssign_VacancyWithoutTextKeepsAssignmentFromTitleTags(t *testing.T) {
 	}
 }
 
-// --- Fixture-based coverage ---
-
-// fixtureVacancy is one invented vacancy used for the coverage test.
 type fixtureVacancy struct {
 	title string
 	text  string
-	want  string // expected industry name, or "" when none expected
+	want  string
 }
 
-// fixtureVacancies is a representative set of invented tech-job-board postings.
-// Titles and texts are purely invented; they carry no real data.
 var fixtureVacancies = []fixtureVacancy{
-	// Web3
 	{"Senior Solidity Engineer", "Build and audit smart contracts on Ethereum. Experience with Solidity required.", "Web3"},
 	{"Blockchain Protocol Developer", "Design consensus mechanisms for a layer 2 rollup network.", "Web3"},
 	{"Web3 Frontend Developer", "Build dApps for a DeFi platform. Familiar with tokenomics and staking.", "Web3"},
 	{"Crypto Infrastructure Engineer", "Maintain wallet infrastructure and on-chain indexers for a stablecoin protocol.", "Web3"},
 	{"Zero-Knowledge Proof Engineer", "Implement zk-rollup circuits. Deep knowledge of zero-knowledge cryptography.", "Web3"},
-	// Software
 	{"Software Engineer", "Build scalable APIs for a SaaS platform. Open source contributions welcome.", "Software"},
 	{"Backend Developer", "Python developer to work on microservices infrastructure.", "Software"},
 	{"DevOps Engineer", "Manage cloud infrastructure, CI/CD pipelines and developer tools.", "Software"},
 	{"Full-Stack Developer", "Build React and Go services for a B2B software product.", "Software"},
-	// Security
 	{"Security Engineer", "Red team and incident response for a cloud security product.", "Security"},
 	{"Penetration Tester", "Conduct pentest engagements; participate in bug bounty programme.", "Security"},
 	{"Application Security Engineer", "Appsec and devsecops for a fintech platform.", "Security"},
-	// Data and AI
 	{"Machine Learning Engineer", "Train large language models using PyTorch and TensorFlow on big data pipelines.", "Data and AI"},
 	{"Data Scientist", "Build recommendation systems using deep learning; MLOps experience valued.", "Data and AI"},
 	{"AI Research Engineer", "Fine-tuning foundation models; work on a vector database for retrieval.", "Data and AI"},
-	// Finance
 	{"Quantitative Developer", "Build algorithmic trading systems for a capital markets firm.", "Finance"},
 	{"Payments Infrastructure Engineer", "Design payment gateway and open banking integrations.", "Finance"},
 	{"Fintech Platform Engineer", "Credit risk analytics for a digital banking neobank.", "Finance"},
-	// Healthcare
 	{"Healthcare Software Engineer", "Electronic health records platform for a medtech company.", "Healthcare"},
 	{"Biotech Data Engineer", "Genomics data pipelines for clinical research and drug discovery.", "Healthcare"},
-	// Education
 	{"EdTech Engineer", "Learning management system and e-learning platform for a tutoring marketplace.", "Education"},
-	// E-commerce
 	{"E-commerce Platform Engineer", "Shopify developer building inventory management and pricing engine.", "E-commerce and retail"},
-	// Media
 	{"Streaming Platform Engineer", "Video streaming and podcast platform; real-time communication via WebRTC.", "Media and communications"},
-	// Gaming
 	{"Game Backend Developer", "Multiplayer game backend, game engine integration with Unity and Unreal Engine.", "Gaming"},
-	// Hardware
 	{"Embedded Systems Engineer", "Firmware for aerospace and satellite sensor systems; FPGA developer.", "Hardware and energy"},
-	// Government
 	{"GovTech Engineer", "Civic technology and digital government services for public sector.", "Government and public sector"},
-	// Agriculture
 	{"AgriTech Developer", "Precision farming and crop monitoring software for agribusiness.", "Agriculture"},
-	// Architecture
 	{"PropTech Engineer", "Real estate platform, BIM developer and smart building systems.", "Architecture and construction"},
-	// Photo and video
 	{"Video Production Software Engineer", "Video editing, visual effects and post-production tooling for a photography platform.", "Photo and video"},
-	// Unclassifiable (no industry keywords)
 	{"Office Coordinator", "Manage schedules, correspondence and meeting rooms for the executive team.", ""},
 	{"Receptionist", "Greet visitors and handle incoming calls at our front desk.", ""},
 	{"Accounts Payable Specialist", "Process invoices and reconcile supplier accounts.", ""},
@@ -198,7 +168,6 @@ var fixtureVacancies = []fixtureVacancy{
 func TestDefaultVocab_CoverageOnFixture(t *testing.T) {
 	v := industry.DefaultVocab()
 
-	// Log vocabulary sizes.
 	t.Logf("Vocabulary: %d industries", len(v.Industries))
 	totalKeywords := 0
 	for _, ind := range v.Industries {
@@ -217,8 +186,6 @@ func TestDefaultVocab_CoverageOnFixture(t *testing.T) {
 		if f.want != "" {
 			assigned++
 			if got != f.want {
-				// Allow the vacancy to be assigned to the right industry even if
-				// it was also assigned to others; check membership.
 				found := false
 				for _, n := range names {
 					if n == f.want {
@@ -265,8 +232,6 @@ func TestDefaultVocab_CoverageOnFixture(t *testing.T) {
 			return n
 		}())
 
-	// The fixture has 29 classified vacancies out of 34 total.
-	// Assert that at least 85% of the fixture's classified vacancies are matched.
 	classifiedAndMatched := 0
 	for _, f := range fixtureVacancies {
 		if f.want == "" {
@@ -285,8 +250,6 @@ func TestDefaultVocab_CoverageOnFixture(t *testing.T) {
 		t.Errorf("classified coverage: %d/%d vacancies correctly assigned", classifiedAndMatched, classifiedTotal)
 	}
 }
-
-// --- DefaultVocab ---
 
 func TestDefaultVocab_IsValid(t *testing.T) {
 	v := industry.DefaultVocab()
@@ -314,8 +277,6 @@ func TestDefaultVocab_ContainsExpectedIndustries(t *testing.T) {
 		}
 	}
 }
-
-// --- Validate ---
 
 func TestValidate_RejectsEmptyVocab(t *testing.T) {
 	if err := industry.Validate(industry.Vocab{}); err == nil {
@@ -352,8 +313,6 @@ func TestValidate_RejectsEmptyKeywordList(t *testing.T) {
 		t.Error("empty keywords: expected error")
 	}
 }
-
-// --- LoadOrDefault and Save ---
 
 func TestLoadOrDefault_UsesDefaultWhenFileAbsent(t *testing.T) {
 	v, err := industry.LoadOrDefault(filepath.Join(t.TempDir(), "nonexistent.yaml"))

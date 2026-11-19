@@ -8,8 +8,6 @@ import (
 	"github.com/sifty-works/sifty-server/internal/listing"
 )
 
-// parseFeedXML parses RSS or Atom XML and returns postings.
-// Returns ErrNothingRecognised when the content is not RSS or Atom.
 func parseFeedXML(body []byte, base string) ([]listing.Posting, error) {
 	dec := xml.NewDecoder(bytes.NewReader(body))
 	dec.Strict = false
@@ -85,7 +83,6 @@ func parseFeedXML(body []byte, base string) ([]listing.Posting, error) {
 	}
 }
 
-// feedItem is an intermediate representation shared by RSS and Atom items.
 type feedItem struct {
 	url       string
 	title     string
@@ -96,8 +93,6 @@ type feedItem struct {
 	pubBasis  string
 }
 
-// buildPostings converts a slice of feedItems into postings, resolving URLs
-// against base and running each through finalise.
 func buildPostings(items []feedItem, base string) []listing.Posting {
 	var out []listing.Posting
 	for _, it := range items {
@@ -119,9 +114,6 @@ func buildPostings(items []feedItem, base string) []listing.Posting {
 	return out
 }
 
-// RSS types. The company field tag matches <company> in any namespace,
-// including <job:company>. content:encoded uses its standard namespace.
-
 type rssFeed struct {
 	Items []rssItem `xml:"channel>item"`
 }
@@ -135,8 +127,6 @@ type rssItem struct {
 	Company    string   `xml:"company"`
 	Categories []string `xml:"category"`
 }
-
-// Atom types. The updated element is absent so the decoder ignores it.
 
 type atomFeed struct {
 	Entries []atomEntry `xml:"entry"`
@@ -162,8 +152,6 @@ type atomCategory struct {
 	Label string `xml:"label,attr"`
 }
 
-// splitCompanyTitle splits "Company: Title" at the first ": " or "Role at Company"
-// at the last " at " when company is empty.
 func splitCompanyTitle(title, company string) (string, string) {
 	if company != "" {
 		return title, company

@@ -6,9 +6,6 @@ import (
 	"time"
 )
 
-// RetainableExpired returns the IDs of all vacancies whose expires_at is not
-// empty, is before cutoff, and have no application row. The caller deletes
-// them one by one; the full set is read in a single query before any deletion.
 func (c *Catalog) RetainableExpired(ctx context.Context, cutoff time.Time) ([]int64, error) {
 	rows, err := c.db.QueryContext(ctx, `
 		SELECT id FROM vacancy
