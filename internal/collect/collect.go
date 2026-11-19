@@ -113,8 +113,10 @@ func (c *Collector) Ticker(ctx context.Context) {
 	}
 }
 
-// run is called by the runner for each collect job.
+// run is called by the runner for each collect job. When it ends, Fits you
+// is recomputed for what the run changed.
 func (c *Collector) run(ctx context.Context, j *runner.Job) error {
+	defer c.runner.Enqueue(runner.Spec{Kind: "recompute_fit"}) //nolint:errcheck
 	cfg := c.store.Get()
 	var enabled []config.SourceConfig
 	for _, s := range cfg.Sources {

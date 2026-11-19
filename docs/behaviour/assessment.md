@@ -49,13 +49,13 @@ Weights live in configuration. The weights of onsite work authorization and of r
 
 Structured fields the source states, the location, the tags and labelled lines ("Salary: …", "Location: …", "Time zone: …") are read by code first. A model fills only what code did not find. Every value the model gives must cite an exact excerpt of the vacancy text, or it is dropped. Engagement, work mode and hours are accepted from the model only when the excerpt is a phrase of the right kind.
 
-## In the Inbox
+## In the lists
 
-- The row shows Fits you as a filled mark and the requirements counter. The tooltip reads "Fits you 82: Strong · ✓ 4 · ✕ 1 · ? 6".
+- Every row in all four lists shows Fits you as a filled mark with its bucket, and the requirements counter. The tooltip reads "Fits you 82: Strong", followed by the counter when requirements are read (" · ✓ 4 · ✕ 1 · ? 6").
 - Empty states of Fits you: "Not compared yet", "Full job description is unavailable", "Your profile states no goals to compare".
 - Empty states of the counter: "Analysing requirements…", "Not analysed yet", "No requirements stated", "Not checked yet" (no requirement is decided), "Full job description is unavailable".
-- A result that is being recomputed after a change is dimmed until the new one is ready.
-- **Best fit** sorts by Fits you, highest first, then by the requirements score, then by id; dimmed results and vacancies without a number come after the current ones.
+- A result is out of date when the profile's goals, the work authorizations, the weights, the rates or the scoring version changed, or the vacancy's text changed. It is dimmed, still showing its old number, until the new one is ready, and the Fit filter counts it as Not scored. A change of the vacancy's title, location, tags or stated fields without a change of its text is not dimmed; its result is recomputed after the collection run that brought the change.
+- **Best fit** sorts by Fits you, highest first, then by id; dimmed results and vacancies without a number come after the current ones, by id. It is the default sort of Inbox and Shortlist.
 - **Newest** sorts by publication date in three ranks: a date with its basis, a date without one, no date.
 - The chosen sort is remembered in the browser (see `inbox.md`).
 
@@ -100,6 +100,8 @@ From top to bottom:
 | A new version of the application that reads texts differently | requirements of every vacancy are read again, in the background, at low priority | 1 per text |
 | A vacancy enters Shortlist | the Shortlist check | 1 |
 | A shortlisted vacancy with an outdated check is opened | the Shortlist check | 1 |
+
+Fits you is recomputed in the background by code, with no model call: at start, after a collection run, and after My data or a profile is saved or a profile is created. Only results that are missing or out of date are recomputed, and the work repeats until none is left, so a change made while it runs is applied too.
 
 Texts are read in the background, one at a time, in the order the vacancies arrived, and only for vacancies visible in at least one profile. A reading is tried up to three times; when the model returns no requirements for a text that clearly states some, it is asked once more. Bulk reading refuses a provider that is neither local nor free unless the user allowed paid bulk work in Settings.
 

@@ -205,6 +205,17 @@ func TestRunWithMixedSourcesEndsDone(t *testing.T) {
 	}
 }
 
+func TestRunQueuesRecomputationOfFitsYou(t *testing.T) {
+	e := newEnv(t)
+	e.fm.Set("https://feeds.example.com/jobs.xml",
+		fetchtest.MapEntry{Response: fetch.Response{Status: 200, ContentType: "application/xml", Body: []byte(feedXML)}})
+	setSources(t, e, "https://feeds.example.com/jobs.xml")
+	runCollect(t, e)
+	if _, ok := e.r.Last("recompute_fit"); !ok {
+		t.Error("recompute_fit was not queued after the run")
+	}
+}
+
 func TestRunAllFailingEndsFailed(t *testing.T) {
 	e := newEnv(t)
 	e.fm.Set("https://failing.example.com/jobs", fetchtest.MapEntry{Err: fetch.ErrNotFound})

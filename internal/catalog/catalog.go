@@ -887,29 +887,29 @@ func (c *Catalog) SetIndustries(ctx context.Context, vacancyID int64, names []st
 	return nil
 }
 
-// VacancyForAssign holds the fields needed to reassign industries for one vacancy.
-type VacancyForAssign struct {
-	ID       int64
-	Title    string
-	TagsJSON string
-	Body     []byte
+// VacancyText holds what is read from a vacancy's text: by industry
+// assignment and by Fits you.
+type VacancyText struct {
+	ID, Version                                      int64
+	Title, Location, TagsJSON, FieldsJSON, TextState string
+	Body                                             []byte
 }
 
-// VacanciesForAssign returns a page of vacancies for industry reassignment,
-// ordered by id. offset and limit control pagination.
-func (c *Catalog) VacanciesForAssign(ctx context.Context, offset, limit int) ([]VacancyForAssign, error) {
+// VacancyTexts returns up to limit vacancies with an id above after, ordered
+// by id, so a caller pages through the catalogue while it changes.
+func (c *Catalog) VacancyTexts(ctx context.Context, after int64, limit int) ([]VacancyText, error) {
 	rows, err := c.db.QueryContext(ctx,
-		`SELECT id, title, tags, body FROM vacancy ORDER BY id LIMIT ? OFFSET ?`,
-		limit, offset)
+		`SELECT id, version, title, location, tags, source_fields, text_state, body
+		 FROM vacancy WHERE id>? ORDER BY id LIMIT ?`, after, limit)
 	if err != nil {
-		return nil, fmt.Errorf("catalog: vacancies for assign: %w", err)
+		return nil, fmt.Errorf("catalog: vacancy texts: %w", err)
 	}
 	defer rows.Close()
-	var out []VacancyForAssign
+	var out []VacancyText
 	for rows.Next() {
-		var r VacancyForAssign
-		if err := rows.Scan(&r.ID, &r.Title, &r.TagsJSON, &r.Body); err != nil {
-			return nil, fmt.Errorf("catalog: vacancies for assign: scan: %w", err)
+		var r VacancyText
+		if err := rows.Scan(&r.ID, &r.Version, &r.Title, &r.Location, &r.TagsJSON, &r.FieldsJSON, &r.TextState, &r.Body); err != nil {
+			return nil, fmt.Errorf("catalog: vacancy texts: scan: %w", err)
 		}
 		out = append(out, r)
 	}

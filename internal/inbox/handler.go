@@ -10,7 +10,9 @@ import (
 
 	"github.com/sifty-works/sifty-server/internal/apperr"
 	"github.com/sifty-works/sifty-server/internal/catalog"
+	"github.com/sifty-works/sifty-server/internal/config"
 	"github.com/sifty-works/sifty-server/internal/db"
+	"github.com/sifty-works/sifty-server/internal/fit"
 	"github.com/sifty-works/sifty-server/internal/server"
 )
 
@@ -27,6 +29,8 @@ type ListReq struct {
 	Leadership bool   `json:"leadership,omitempty"` // CTO/Head/Director/Manager/Lead in title
 	Sources    string `json:"sources,omitempty"`    // comma-separated source keys
 	Unread     bool   `json:"unread,omitempty"`     // hide read vacancies; ignored in applied/dismissed
+	Fit        string `json:"fit,omitempty"`        // comma-separated buckets: strong, partial, weak, not_scored
+	Sort       string `json:"sort,omitempty"`       // "fit" (Best fit, the default) or "newest"; Inbox and Shortlist only
 }
 
 // ListResp is the response body for GET /api/vacancies.
@@ -101,8 +105,12 @@ type PreviewResp struct {
 // running is named correctly.
 // getVocabNames returns the current vocabulary's industry names; nil means no
 // vocabulary is configured and target-industry filtering is not applied.
-func RegisterRoutes(mux *http.ServeMux, database *db.DB, now func() time.Time, logger *slog.Logger, collectActive func() bool, getSourceNames func() map[string]string, getVocabNames func() []string) {
+// rules returns the weights and rates of Fits you; nil means the defaults.
+func RegisterRoutes(mux *http.ServeMux, database *db.DB, now func() time.Time, logger *slog.Logger, collectActive func() bool, getSourceNames func() map[string]string, getVocabNames func() []string, rules func() fit.Rules) {
 	cat := catalog.New(database, now)
+	if rules == nil {
+		rules = func() fit.Rules { d := config.Defaults(); return fit.Rules{Weights: d.Weights, Rates: d.Rates} }
+	}
 	sourceNamesFor := func() map[string]string {
 		if getSourceNames == nil {
 			return nil
@@ -147,8 +155,9 @@ func RegisterRoutes(mux *http.ServeMux, database *db.DB, now func() time.Time, l
 			Leadership: req.Leadership,
 			Sources:    sources,
 			Unread:     unread,
+			Fit:        splitComma(req.Fit),
 		}
-		rows, counts, indCounts, srcCounts, total, err := list(r.Context(), database, now, pid, stage, strings.TrimSpace(req.Q), vocabNames(), industries, f)
+		rows, counts, indCounts, srcCounts, total, err := list(r.Context(), database, now, pid, stage, strings.TrimSpace(req.Q), req.Sort, vocabNames(), industries, f, rules())
 		if err != nil {
 			return ListResp{}, err
 		}
@@ -159,7 +168,7 @@ func RegisterRoutes(mux *http.ServeMux, database *db.DB, now func() time.Time, l
 			srcCounts = []SourceCount{}
 		}
 		hasFilters := req.Q != "" || len(industries) > 0 || len(sources) > 0 ||
-			collected != 0 || req.Remote || req.Leadership || unread
+			collected != 0 || req.Remote || req.Leadership || unread || len(f.Fit) > 0
 		return ListResp{
 			Rows:           rows,
 			Counts:         counts,
@@ -184,7 +193,7 @@ func RegisterRoutes(mux *http.ServeMux, database *db.DB, now func() time.Time, l
 		if err != nil {
 			return VacancyView{}, err
 		}
-		return vacancyView(r.Context(), database, now, vacancyID, pid, sourceNamesFor())
+		return vacancyView(r.Context(), database, now, vacancyID, pid, sourceNamesFor(), rules())
 	})
 
 	server.Handle(mux, "POST /api/vacancies/{id}/decision", logger, func(r *http.Request, req DecisionReq) (DecisionResp, error) {
@@ -192,7 +201,7 @@ func RegisterRoutes(mux *http.ServeMux, database *db.DB, now func() time.Time, l
 		if err != nil {
 			return DecisionResp{}, err
 		}
-		row, counts, err := applyDecision(r.Context(), database, now, vacancyID, pid, string(req.From), string(req.To), req.Reason, req.Confirmed, vocabNames())
+		row, counts, err := applyDecision(r.Context(), database, now, vacancyID, pid, string(req.From), string(req.To), req.Reason, req.Confirmed, vocabNames(), rules())
 		if err != nil {
 			return DecisionResp{}, err
 		}

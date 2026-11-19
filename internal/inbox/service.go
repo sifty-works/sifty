@@ -13,6 +13,7 @@ import (
 	"github.com/sifty-works/sifty-server/internal/candidate"
 	"github.com/sifty-works/sifty-server/internal/catalog"
 	"github.com/sifty-works/sifty-server/internal/db"
+	"github.com/sifty-works/sifty-server/internal/fit"
 	"github.com/sifty-works/sifty-server/internal/listing"
 )
 
@@ -23,6 +24,8 @@ type Filters struct {
 	Leadership bool
 	Sources    []string // source keys; empty means all sources
 	Unread     bool
+	Fit        []string // buckets: strong, partial, weak, not_scored; empty means all
+	inputs     int64    // hash of the profile's Fits you inputs, set by list
 }
 
 // Stage is the inbox stage of a vacancy row.
@@ -56,6 +59,42 @@ type Row struct {
 	Reason     string   `json:"reason,omitempty"`
 	Applied    string   `json:"applied,omitempty"`
 	Expired    bool     `json:"expired,omitempty"`
+	Fit        FitMark  `json:"fit"`
+}
+
+// FitMark is Fits you as a row shows it: the number with its bucket, or why
+// there is none. A dimmed mark is out of date and being recomputed.
+type FitMark struct {
+	Score  *int   `json:"score"`
+	Bucket string `json:"bucket"` // Strong, Partial, Weak or Not scored
+	Text   string `json:"text"`   // "Fits you 82: Strong", or why there is no number
+	Dimmed bool   `json:"dimmed"`
+}
+
+// Band is the Fits you band of the vacancy page, computed when it is opened.
+type Band struct {
+	Score  *int       `json:"score"`
+	Bucket string     `json:"bucket"`
+	Text   string     `json:"text"` // "Fits you 82 /100", or why there is no number
+	Tiles  []fit.Tile `json:"tiles"`
+}
+
+// fitMark builds the mark of a stored result for a profile's inputs hash.
+func fitMark(s fit.Stored, inputs int64) FitMark {
+	m := FitMark{Bucket: "Not scored", Text: fit.Texts[s.State.String], Dimmed: s.State.Valid && !s.Current(inputs)}
+	if s.State.String == fit.Scored {
+		n := int(s.Score.Int64)
+		m.Score, m.Bucket = &n, fit.Bucket(n)
+		m.Text = fmt.Sprintf("Fits you %d: %s", n, m.Bucket)
+	}
+	return m
+}
+
+// fitInputs returns the hash of a profile's Fits you inputs; 0, which shows
+// every result as out of date, when the profile cannot be loaded.
+func fitInputs(ctx context.Context, database *db.DB, profileID int64, r fit.Rules) int64 {
+	p, _ := fit.LoadProfile(ctx, database, profileID, r)
+	return p.Inputs
 }
 
 // Counts holds per-stage vacancy counts for one profile.
@@ -67,8 +106,9 @@ type Counts struct {
 	Archive   int `json:"archive"`
 }
 
-// toRow converts a repoRow to the API Row type.
-func toRow(rr repoRow, now time.Time) Row {
+// toRow converts a repoRow to the API Row type; inputs is the hash of the
+// profile's Fits you inputs.
+func toRow(rr repoRow, now time.Time, inputs int64) Row {
 	company := rr.company
 	if company == "" {
 		company = "Unknown"
@@ -93,6 +133,7 @@ func toRow(rr repoRow, now time.Time) Row {
 		Reason:     rr.reason,
 		Applied:    appliedText(rr.appliedAt, rr.appliedName, rr.stage, now),
 		Expired:    rr.expiresAt != "" && rr.expiresAt <= nowStr,
+		Fit:        fitMark(rr.fit, inputs),
 	}
 }
 
@@ -130,7 +171,7 @@ func loadCounts(ctx context.Context, database *db.DB, now time.Time, profileID i
 }
 
 // rowAndCounts fetches one vacancy row and the profile counts as a shared tail for decision paths.
-func rowAndCounts(ctx context.Context, database *db.DB, now func() time.Time, profileID, vacancyID int64, vocabNames []string) (Row, Counts, error) {
+func rowAndCounts(ctx context.Context, database *db.DB, now func() time.Time, profileID, vacancyID int64, vocabNames []string, r fit.Rules) (Row, Counts, error) {
 	vis := profileVisibility(ctx, database, profileID, vocabNames)
 	_, row, _, err := loadVacancyFull(ctx, database, profileID, vacancyID)
 	if err != nil {
@@ -141,15 +182,16 @@ func rowAndCounts(ctx context.Context, database *db.DB, now func() time.Time, pr
 	if err != nil {
 		return Row{}, Counts{}, err
 	}
-	return toRow(row, t), buildCounts(cm), nil
+	return toRow(row, t, fitInputs(ctx, database, profileID, r)), buildCounts(cm), nil
 }
 
 // list returns the rows, counts, industry counts, source counts and total for
-// the given profile, stage, query, industries filter and user Filters.
+// the given profile, stage, query, sort, industries filter and user Filters.
 // vocabNames restricts the profile's target industries in the visibility filter.
 // total is the stage count before the query and f are applied.
-func list(ctx context.Context, database *db.DB, now func() time.Time, profileID int64, stage, q string, vocabNames []string, industries []string, f Filters) ([]Row, Counts, []IndustryCount, []SourceCount, int, error) {
+func list(ctx context.Context, database *db.DB, now func() time.Time, profileID int64, stage, q, sort string, vocabNames []string, industries []string, f Filters, r fit.Rules) ([]Row, Counts, []IndustryCount, []SourceCount, int, error) {
 	vis := profileVisibility(ctx, database, profileID, vocabNames)
+	f.inputs = fitInputs(ctx, database, profileID, r)
 	t := now()
 	cm, err := stageCounts(ctx, database, t, profileID, vis)
 	if err != nil {
@@ -163,13 +205,13 @@ func list(ctx context.Context, database *db.DB, now func() time.Time, profileID 
 	if err != nil {
 		return nil, Counts{}, nil, nil, 0, err
 	}
-	raw, err := listRows(ctx, database, t, profileID, stage, q, vis, f, industries...)
+	raw, err := listRows(ctx, database, t, profileID, stage, q, sort, vis, f, industries...)
 	if err != nil {
 		return nil, Counts{}, nil, nil, 0, err
 	}
 	rows := make([]Row, len(raw))
 	for i, rr := range raw {
-		rows[i] = toRow(rr, t)
+		rows[i] = toRow(rr, t, f.inputs)
 	}
 	total := cm[stage]
 	return rows, buildCounts(cm), indCounts, srcCounts, total, nil
@@ -179,7 +221,7 @@ func list(ctx context.Context, database *db.DB, now func() time.Time, profileID 
 // Returns the updated row and profile counts on success.
 // vocabNames is passed to profileVisibility for the counts refresh.
 func applyDecision(ctx context.Context, database *db.DB, now func() time.Time,
-	vacancyID, profileID int64, from, to, reason string, confirmed bool, vocabNames []string) (Row, Counts, error) {
+	vacancyID, profileID int64, from, to, reason string, confirmed bool, vocabNames []string, r fit.Rules) (Row, Counts, error) {
 
 	// Load current stage.
 	var currentStage string
@@ -202,7 +244,7 @@ func applyDecision(ctx context.Context, database *db.DB, now func() time.Time,
 
 	// No-op: same stage.
 	if from == to {
-		return rowAndCounts(ctx, database, now, profileID, vacancyID, vocabNames)
+		return rowAndCounts(ctx, database, now, profileID, vacancyID, vocabNames, r)
 	}
 
 	// Validate move.
@@ -241,7 +283,7 @@ func applyDecision(ctx context.Context, database *db.DB, now func() time.Time,
 	if err := tx.Commit(); err != nil {
 		return Row{}, Counts{}, fmt.Errorf("inbox: decision: commit: %w", err)
 	}
-	return rowAndCounts(ctx, database, now, profileID, vacancyID, vocabNames)
+	return rowAndCounts(ctx, database, now, profileID, vacancyID, vocabNames, r)
 }
 
 // validateMove returns an error when the stage transition is not allowed.
@@ -402,6 +444,7 @@ type VacancyView struct {
 	Status   string          `json:"status,omitempty"`
 	Actions  []Action        `json:"actions"`
 	Listing  ListingView     `json:"listing"`
+	Band     Band            `json:"band"`
 }
 
 // listingState returns the display text for a vacancy's text_state value.
@@ -536,7 +579,7 @@ func buildApplyAction(vacURL, applyURL string) Action {
 // vacancyView loads and assembles the vacancy page response for a resolved
 // vacancy and profile. sourceNames maps source keys to their configured display names.
 func vacancyView(ctx context.Context, database *db.DB, now func() time.Time,
-	vacancyID, profileID int64, sourceNames map[string]string) (VacancyView, error) {
+	vacancyID, profileID int64, sourceNames map[string]string, r fit.Rules) (VacancyView, error) {
 
 	t := now()
 	stage, row, vd, err := loadVacancyFull(ctx, database, profileID, vacancyID)
@@ -558,7 +601,15 @@ func vacancyView(ctx context.Context, database *db.DB, now func() time.Time,
 		lv.Empty = "A full description has not been retrieved. Open the original listing; missing text is not an empty job."
 	}
 
-	apiRow := toRow(row, t)
+	f, err := fit.Band(ctx, database, profileID, vacancyID, r)
+	if err != nil {
+		return VacancyView{}, err
+	}
+	band := Band{Bucket: f.Bucket, Text: f.Text, Tiles: f.Tiles}
+	if f.State == fit.Scored {
+		band.Score, band.Text = &f.Score, fmt.Sprintf("Fits you %d /100", f.Score)
+	}
+	apiRow := toRow(row, t, fitInputs(ctx, database, profileID, r))
 	return VacancyView{
 		Row:      apiRow,
 		Sources:  sources,
@@ -566,5 +617,6 @@ func vacancyView(ctx context.Context, database *db.DB, now func() time.Time,
 		Status:   statusText(stage, row.reason, row.appliedAt, t),
 		Actions:  stageActions(stage, vd.url, vd.applyURL, row.company),
 		Listing:  lv,
+		Band:     band,
 	}, nil
 }

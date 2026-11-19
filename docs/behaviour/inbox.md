@@ -41,7 +41,8 @@ There is one list of exclusions, managed in Settings.
 **A row shows:**
 
 - the industries as badges, then the company;
-- in Applied, ◷ "Listing expired" when the vacancy is past its expiry date; ✓ "Shortlisted" for a vacancy shortlisted from Inbox in this session; Fits you and the requirements counter (see `assessment.md`);
+- in Applied, ◷ "Listing expired" when the vacancy is past its expiry date; ✓ "Shortlisted" for a vacancy shortlisted from Inbox in this session;
+- in every list, Fits you and the requirements counter (see `assessment.md`);
 - the title;
 - the location in short form: "Remote · …", "Worldwide", "EU · N countries", or "Location unstated", with the full text on hover when shortened;
 - in Applied, "· Applied <date>"; in the other lists, "Applied <date> from <profile>" when the user applied to this vacancy from any profile (a deleted profile is named by its last name);
@@ -65,7 +66,7 @@ There is one list of exclusions, managed in Settings.
 
 - **Search** ("Search company, role, tech", key `/`) finds a case-insensitive substring in the title, company, tags and text; in the text, punctuation counts as a space. A vacancy whose text was removed is found by its title, company and tags only. A query shorter than 3 characters matches title, company and tags only.
 - **Filters**, in a panel with a count of active filters:
-  - Fits you: Strong 75+, Partial 55–74, Weak, Not scored; a dimmed result counts as Not scored;
+  - Fits you: Strong 75+, Partial 55–74, Weak, Not scored, without counts; a dimmed result counts as Not scored;
   - Collected: any time, 7 days or 30 days, by first-seen date;
   - Role: Remote (remote, anywhere or telecommute in the location); Leadership title (CTO, Head, Director, Manager, Lead, not "lead generation");
   - Industries: one checkbox per industry with its count;

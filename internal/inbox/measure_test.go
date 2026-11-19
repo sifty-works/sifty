@@ -13,6 +13,7 @@ import (
 
 	"github.com/sifty-works/sifty-server/internal/catalog"
 	"github.com/sifty-works/sifty-server/internal/db"
+	"github.com/sifty-works/sifty-server/internal/fit"
 	"github.com/sifty-works/sifty-server/internal/listing"
 )
 
@@ -60,8 +61,17 @@ func TestListMeasure(t *testing.T) {
 		textTimes[i] = time.Since(start)
 	}
 
+	// Best fit with a Fit filter.
+	fitTimes := make([]time.Duration, runs)
+	for i := range fitTimes {
+		start := time.Now()
+		get("/api/vacancies?sort=fit&fit=partial,weak")
+		fitTimes[i] = time.Since(start)
+	}
+
 	fmt.Printf("list p95 no-query:   %v\n", percentile95(noQTimes))
 	fmt.Printf("list p95 text-query: %v\n", percentile95(textTimes))
+	fmt.Printf("list p95 fit-filter: %v\n", percentile95(fitTimes))
 }
 
 // buildFixtureDB creates a temporary database populated with fixtureCount vacancies.
@@ -98,7 +108,10 @@ func buildFixtureDB(t *testing.T) *db.DB {
 	}
 	// Set profile keyword so that all fixture vacancies (titles contain "engineer")
 	// appear in the inbox visibility filter.
-	database.Exec(`UPDATE profile SET data='{"name":"Profile","keywords":["engineer"]}' WHERE id=1`) //nolint:errcheck
+	database.Exec(`UPDATE profile SET data='{"name":"Profile","keywords":["engineer"],"targetRoles":["Software Engineer"]}' WHERE id=1`) //nolint:errcheck
+	if err := fit.Recompute(context.Background(), database, defaultRules, func(int, int, string) {}); err != nil {
+		t.Fatalf("recompute fit: %v", err)
+	}
 	return database
 }
 

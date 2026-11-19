@@ -1,6 +1,8 @@
 // Package fit computes Fits you: a weighted mean of criteria comparing a
 // vacancy's conditions with a profile's goals, the four tiles of the vacancy
-// page and the bucket. It is pure: no I/O, no clock, no model.
+// page and the bucket. Score is pure: no I/O, no clock, no model. The package
+// also owns the fit table, which stores the number for the lists, and the
+// background recomputation that keeps it current.
 package fit
 
 import (
@@ -34,6 +36,19 @@ const (
 	NoGoals = "no_goals"
 )
 
+// Texts say why a result has no number; "" is a result not computed yet.
+var Texts = map[string]string{
+	"":      "Not compared yet",
+	NoText:  "Full job description is unavailable",
+	NoGoals: "Your profile states no goals to compare",
+}
+
+// The lowest numbers of the Strong and Partial buckets.
+const (
+	StrongFrom  = 75
+	PartialFrom = 55
+)
+
 // Criterion is one compared criterion; a criterion that cannot be compared is not Known and counts 0.5.
 type Criterion struct {
 	Name            string
@@ -43,7 +58,12 @@ type Criterion struct {
 
 // Tile is one tile of the vacancy page: the vacancy's value, a line comparing it
 // with the goal, and ✓, ✕ or ?.
-type Tile struct{ Name, Value, Line, Verdict string }
+type Tile struct {
+	Name    string `json:"name"`
+	Value   string `json:"value"`
+	Line    string `json:"line"`
+	Verdict string `json:"verdict"`
+}
 
 // Fit is Fits you of one vacancy for one profile.
 type Fit struct {
@@ -110,10 +130,10 @@ func Score(p ProfileView, v reading.VacancyReading, r Rules) Fit {
 	}
 	switch {
 	case !v.Full:
-		f.State, f.Text = NoText, "Full job description is unavailable"
+		f.State, f.Text = NoText, Texts[NoText]
 	case den == 0 || len(g.TargetRoles)+len(g.Engagement)+len(g.WorkModes)+len(g.TimeZones)+len(g.PreferredLocations) == 0 &&
 		(g.Hours == nil || g.Hours.Mode == "") && (g.Compensation == nil || g.Compensation.CashMin == nil || *g.Compensation.CashMin <= 0):
-		f.State, f.Text = NoGoals, "Your profile states no goals to compare"
+		f.State, f.Text = NoGoals, Texts[NoGoals]
 	default:
 		f.State, f.Score = Scored, int(math.Round(num/den*100))
 		f.Bucket = Bucket(f.Score)
@@ -125,12 +145,12 @@ func Score(p ProfileView, v reading.VacancyReading, r Rules) Fit {
 	return f
 }
 
-// Bucket names the bucket of a number: Strong from 75, Partial from 55, else Weak.
+// Bucket names the bucket of a number: Strong, Partial or Weak.
 func Bucket(score int) string {
 	switch {
-	case score >= 75:
+	case score >= StrongFrom:
 		return "Strong"
-	case score >= 55:
+	case score >= PartialFrom:
 		return "Partial"
 	}
 	return "Weak"

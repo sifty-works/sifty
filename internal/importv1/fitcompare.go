@@ -20,7 +20,6 @@ import (
 	"github.com/sifty-works/sifty-server/internal/config"
 	"github.com/sifty-works/sifty-server/internal/db"
 	"github.com/sifty-works/sifty-server/internal/fit"
-	"github.com/sifty-works/sifty-server/internal/listing"
 	"github.com/sifty-works/sifty-server/internal/places"
 	"github.com/sifty-works/sifty-server/internal/reading"
 	"gopkg.in/yaml.v3"
@@ -201,9 +200,17 @@ func compareFit(ctx context.Context, old *sql.DB, newDB *db.DB, cfg config.Confi
 		}
 	}
 
-	profiles, me, err := loadImportedProfiles(ctx, newDB)
+	loaded, err := fit.LoadProfiles(ctx, newDB, rules)
 	if err != nil {
 		return err
+	}
+	me, err := candidate.LoadMe(ctx, newDB)
+	if err != nil {
+		return err
+	}
+	profiles, cat := map[int64]fit.ProfileView{}, catalog.New(newDB, nil)
+	for _, p := range loaded {
+		profiles[p.ID] = p.View
 	}
 	out := []string{"profile\tvacancy\told\tnew\tcriteria\tcode"}
 	for _, r := range rows {
@@ -213,13 +220,13 @@ func compareFit(ctx context.Context, old *sql.DB, newDB *db.DB, cfg config.Confi
 			continue
 		}
 		pid, okP := report.profileIDs[r.profile]
-		goals, okG := profiles[pid]
+		view, okG := profiles[pid]
 		vid, merged := r.job, false
-		v, okV, err := loadImportedVacancy(ctx, newDB, r.job)
+		v, okV, err := fit.LoadVacancy(ctx, cat, r.job)
 		if err == nil && !okV {
 			if newDB.QueryRowContext(ctx, `SELECT new_id FROM vacancy_alias WHERE old_id=?`, r.job).Scan(&vid) == nil {
 				merged = true
-				v, okV, err = loadImportedVacancy(ctx, newDB, vid)
+				v, okV, err = fit.LoadVacancy(ctx, cat, vid)
 			}
 		}
 		if err != nil {
@@ -231,7 +238,7 @@ func compareFit(ctx context.Context, old *sql.DB, newDB *db.DB, cfg config.Confi
 			continue
 		}
 		d := diffCase{ctx: ctx, old: old, row: r, merged: merged, me: me, v: v, rules: rules,
-			pv: fit.ProfileView{Goals: goals, Authorizations: me.WorkAuthorizations}, folded: report.foldedLabels(pid)}
+			pv: view, folded: report.foldedLabels(pid)}
 		d.now = reading.FromCode(v)
 		got := fit.Score(d.pv, d.now, rules)
 		oldState, oldScore := map[string]string{"scored": fit.Scored, "unscored": fit.NoGoals, "unavailable": fit.NoText}[o.FitsYou.Status], 0
@@ -502,62 +509,6 @@ func metadataOnly(r oldRow) bool {
 	}
 	desc, title, joined := norm(r.description), norm(r.title), strings.Join(slices.DeleteFunc(tags, func(s string) bool { return s == "" }), " ")
 	return desc != "" && (desc == title || joined != "" && (desc == joined || title != "" && (desc == title+" "+joined || desc == joined+" "+title)))
-}
-
-// loadImportedProfiles returns the goals of every imported profile, inherited
-// from the first profile where empty, and My data.
-func loadImportedProfiles(ctx context.Context, newDB *db.DB) (map[int64]candidate.GoalsView, candidate.MeData, error) {
-	var me candidate.MeData
-	var meJSON string
-	if err := newDB.QueryRowContext(ctx, `SELECT data FROM me WHERE id=1`).Scan(&meJSON); err == nil {
-		json.Unmarshal([]byte(meJSON), &me) //nolint:errcheck
-	}
-	rs, err := newDB.QueryContext(ctx, `SELECT id, data FROM profile ORDER BY id`)
-	if err != nil {
-		return nil, me, fmt.Errorf("reading imported profiles: %w", err)
-	}
-	defer rs.Close()
-	out := map[int64]candidate.GoalsView{}
-	var first *candidate.ProfileData
-	for rs.Next() {
-		var id int64
-		var data string
-		var p candidate.ProfileData
-		if err := rs.Scan(&id, &data); err != nil {
-			return nil, me, fmt.Errorf("reading imported profiles: %w", err)
-		}
-		json.Unmarshal([]byte(data), &p) //nolint:errcheck
-		if first == nil {
-			first = &p
-		} else {
-			p = candidate.Effective(p, *first)
-		}
-		out[id] = candidate.Goals(p)
-	}
-	return out, me, rs.Err()
-}
-
-// loadImportedVacancy returns what code reads a vacancy from.
-func loadImportedVacancy(ctx context.Context, newDB *db.DB, id int64) (reading.Vacancy, bool, error) {
-	var v reading.Vacancy
-	var tags, fields, state string
-	var body []byte
-	err := newDB.QueryRowContext(ctx, `SELECT title, location, tags, source_fields, text_state, body FROM vacancy WHERE id=?`, id).
-		Scan(&v.Title, &v.Location, &tags, &fields, &state, &body)
-	if err == sql.ErrNoRows {
-		return v, false, nil
-	}
-	if err != nil {
-		return v, false, fmt.Errorf("reading imported vacancy %d: %w", id, err)
-	}
-	json.Unmarshal([]byte(tags), &v.Tags)     //nolint:errcheck
-	json.Unmarshal([]byte(fields), &v.Fields) //nolint:errcheck
-	html, err := catalog.Body(body)
-	if err != nil {
-		return v, false, err
-	}
-	v.Text, v.Full = listing.PlainText(html), listing.TextState(state) == listing.TextFull
-	return v, true, nil
 }
 
 // foldedLabels returns the labels of legacy values folded at import for the

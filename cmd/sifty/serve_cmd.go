@@ -22,6 +22,7 @@ import (
 	"github.com/sifty-works/sifty-server/internal/db"
 	"github.com/sifty-works/sifty-server/internal/fetch"
 	"github.com/sifty-works/sifty-server/internal/fetch/fetchtest"
+	"github.com/sifty-works/sifty-server/internal/fit"
 	"github.com/sifty-works/sifty-server/internal/inbox"
 	"github.com/sifty-works/sifty-server/internal/industry"
 	"github.com/sifty-works/sifty-server/internal/listing"
@@ -146,6 +147,24 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		},
 	})
 
+	// Register the recompute_fit job kind and queue it at start, so results
+	// made out of date while the server was stopped are recomputed.
+	rules := func() fit.Rules { c := store.Get(); return fit.Rules{Weights: c.Weights, Rates: c.Rates} }
+	recomputeFit := func() { r.Enqueue(runner.Spec{Kind: "recompute_fit"}) } //nolint:errcheck
+	r.Register(runner.Kind{
+		Name:   "recompute_fit",
+		Resume: true,
+		Run: func(runCtx context.Context, j *runner.Job) error {
+			rel, err := j.Lane(runCtx, "cpu")
+			if err != nil {
+				return err
+			}
+			defer rel()
+			return fit.Recompute(runCtx, database, rules, j.Progress)
+		},
+	})
+	recomputeFit()
+
 	// Register the retention job kind.
 	r.Register(runner.Kind{
 		Name:   "retention",
@@ -243,9 +262,9 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 				}
 			}
 			return m
-		}, getVocabNames)
+		}, getVocabNames, rules)
 		inbox.RegisterIndustryRoutes(mux, logger, getVocab, saveVocab)
-		candidate.RegisterRoutes(mux, database, filesDir, logger)
+		candidate.RegisterRoutes(mux, database, filesDir, logger, recomputeFit)
 		col.RegisterRoutes(mux)
 	})
 
@@ -379,17 +398,18 @@ func runAssignIndustries(ctx context.Context, j *runner.Job, cat *catalog.Catalo
 
 	const batchSize = 200
 	done := 0
-	for offset := 0; offset < total || (total == 0 && offset == 0); offset += batchSize {
+	for after := int64(0); ; {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		batch, err := cat.VacanciesForAssign(ctx, offset, batchSize)
+		batch, err := cat.VacancyTexts(ctx, after, batchSize)
 		if err != nil {
 			return fmt.Errorf("assign_industries: load batch: %w", err)
 		}
 		if len(batch) == 0 {
 			break
 		}
+		after = batch[len(batch)-1].ID
 		v := *vocabRef
 		for _, row := range batch {
 			if ctx.Err() != nil {

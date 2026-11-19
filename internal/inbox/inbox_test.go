@@ -45,7 +45,7 @@ func newTestServer(t *testing.T, d *db.DB) *httptest.Server {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	h := server.New(server.Options{Version: "test", Port: 9999, Logger: logger},
 		func(mux *http.ServeMux) {
-			inbox.RegisterRoutes(mux, d, testNowFn, logger, func() bool { return false }, nil, nil)
+			inbox.RegisterRoutes(mux, d, testNowFn, logger, func() bool { return false }, nil, nil, nil)
 		})
 	ts := httptest.NewServer(h)
 	t.Cleanup(ts.Close)
@@ -263,7 +263,7 @@ func TestOrder_ThreeRanks(t *testing.T) {
 	} {
 		add(t, cat, p)
 	}
-	rs := getRows(apiGet(t, newTestServer(t, d), "/api/vacancies"))
+	rs := getRows(apiGet(t, newTestServer(t, d), "/api/vacancies?sort=newest"))
 	if len(rs) != 4 {
 		t.Fatalf("rows: %d", len(rs))
 	}
@@ -283,7 +283,7 @@ func TestOrder_TieBreakByFirstSeenThenID(t *testing.T) {
 		post("https://example.com/jobs/tie1", "Tie Early", "Co"))
 	id2 := add(t, catalog.New(d, func() time.Time { return t2 }),
 		post("https://example.com/jobs/tie2", "Tie Later", "Co"))
-	rs := getRows(apiGet(t, newTestServer(t, d), "/api/vacancies"))
+	rs := getRows(apiGet(t, newTestServer(t, d), "/api/vacancies?sort=newest"))
 	if len(rs) < 2 {
 		t.Fatalf("rows: %d", len(rs))
 	}
@@ -788,7 +788,7 @@ func TestDelete_Refused(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	h := server.New(server.Options{Version: "test", Port: 9999, Logger: logger},
 		func(mux *http.ServeMux) {
-			inbox.RegisterRoutes(mux, d, testNowFn, logger, func() bool { return true }, nil, nil)
+			inbox.RegisterRoutes(mux, d, testNowFn, logger, func() bool { return true }, nil, nil, nil)
 		})
 	ts2 := httptest.NewServer(h)
 	defer ts2.Close()
@@ -947,7 +947,7 @@ func TestVacancyView_Sources(t *testing.T) {
 	h := server.New(server.Options{Version: "test", Port: 9999, Logger: logger},
 		func(mux *http.ServeMux) {
 			inbox.RegisterRoutes(mux, d, testNowFn, logger, func() bool { return false },
-				func() map[string]string { return map[string]string{"src": "Named Board"} }, nil)
+				func() map[string]string { return map[string]string{"src": "Named Board"} }, nil, nil)
 		})
 	ts := httptest.NewServer(h)
 	t.Cleanup(ts.Close)
@@ -1002,7 +1002,7 @@ func TestVacancyView_SourceNameFromLiveConfig(t *testing.T) {
 						out[k] = v
 					}
 					return out
-				}, nil)
+				}, nil, nil)
 		})
 	ts := httptest.NewServer(h)
 	t.Cleanup(ts.Close)

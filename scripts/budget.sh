@@ -54,11 +54,13 @@ measure_out=$(SIFTY_MEASURE=1 go test -v -run TestListMeasure -count=1 \
   ./internal/inbox/... 2>&1)
 no_q=$(echo "$measure_out" | grep 'list p95 no-query:' | awk '{print $NF}')
 text=$(echo "$measure_out" | grep 'list p95 text-query:' | awk '{print $NF}')
-if [ -z "$no_q" ] || [ -z "$text" ]; then
+fitf=$(echo "$measure_out" | grep 'list p95 fit-filter:' | awk '{print $NF}')
+if [ -z "$no_q" ] || [ -z "$text" ] || [ -z "$fitf" ]; then
   echo "  measure test did not produce output" >&2
 else
   printf "%-40s %10s %10s\n" "  p95 no-query" "$no_q" "50ms"
   printf "%-40s %10s %10s\n" "  p95 text-query" "$text" "50ms"
+  printf "%-40s %10s %10s\n" "  p95 Best fit with Fit filter" "$fitf" "50ms"
 fi
 
 if [ "$fail" -ne 0 ]; then

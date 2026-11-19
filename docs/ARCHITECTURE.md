@@ -63,14 +63,14 @@ type RequirementChecker interface { /* reserved; connected only after it beats c
 ```
 
 - `VacancyReading` holds conditions (money, work modes, engagement, hours, locations, time zone) and requirements (text, level, alternatives, quote as offsets). Code reads `source_fields` and labels first; the model is asked only for the rest, and every value must cite an exact excerpt. A reading is keyed by vacancy, version and `reader_version`; a new `reader_version` queues rereading at low priority.
-- `Score` computes Fits you, the requirements counter, the four tiles and the requirement lines in one place. It takes about 0.01 ms per vacancy, so the breakdown is computed when a vacancy is opened. The list stores what it filters and sorts on: Fits you, the requirements score, the counts ✓, ✕ and ?, and the reading state.
+- `Score` computes Fits you, the requirements counter, the four tiles and the requirement lines in one place. It takes about 0.01 ms per vacancy, so the breakdown is computed when a vacancy is opened. The list stores what it filters and sorts on in the `fit` table: the state and rounded number of Fits you, with the vacancy version and a 64-bit hash of the profile's inputs (effective goals, work authorizations, weights, rates and a scoring version) it was computed from; a result is current while both match, and a result that is not current shows dimmed and counts as Not scored. The row also keeps a hash of the version and the listing fields code reads besides the text (title, location, tags, `source_fields`), which SQL cannot compute; the job compares it in Go, so a listing change without a text change is recomputed but not dimmed. `recompute_fit` (cpu lane) recomputes in passes only the results that are missing, not current or with a changed listing hash, and repeats until a pass writes nothing, so a change made while it runs is not lost; it is queued at start, after each collection run, and after My data or a profile is saved or created. The requirements score, the counts ✓, ✕ and ? and the reading state join the same row when requirements are read.
 - `ShortlistChecker` gets `EvidenceText` (see Profiles); the digest of its inputs covers the vacancy version, the projections it used and the evidence text. A changed digest marks the check outdated; it runs again when the vacancy page is opened.
 - `places` is the one resolver of countries, regions, remote restrictions, onsite country and time-zone bands. Its vocabulary, the embedded `places.yaml`, holds the countries with the bands they span, the regions with their aliases and countries, the words of unrestricted remote work, the separators and qualifiers of composite labels, the six bands with their offsets and the time-zone abbreviations; Go code only looks them up. There is no city table; cities are free text.
 - `skills` is the one implementation of the skills vocabulary and of splitting requirement text into skills.
 
 ### Inbox and vacancy page
 
-- One SQL query builds a list. For Inbox: the profile's visibility (target roles matched as whole words in the `title` column of `vacancy_fts`; keywords and "All of these" terms matched as whole words across `{title tags text}` columns; target industries) over vacancies with no decision in the profile. For Shortlist, Applied and Dismissed: the vacancies with that decision. Exclusions apply to all four. The query joins applications and the `fit` row and sorts on the server; filters (Fit, Collected, Industries, Sources, Unread) are applied in the same query, and their counts are one `GROUP BY` each over the same set.
+- One SQL query builds a list. For Inbox: the profile's visibility (target roles matched as whole words in the `title` column of `vacancy_fts`; keywords and "All of these" terms matched as whole words across `{title tags text}` columns; target industries) over vacancies with no decision in the profile. For Shortlist, Applied and Dismissed: the vacancies with that decision. Exclusions apply to all four. The query joins applications and the `fit` row and sorts on the server, by Best fit or Newest in Inbox and Shortlist and by the date of the decision in Applied and Dismissed; filters (Fit, Collected, Industries, Sources, Unread) are applied in the same query, and the counts of Industries and Sources are one `GROUP BY` each over the same set. The Fit filter has no counts.
 - **Search** keeps substring semantics over title, company, tags and text. Title, company and tags are matched in SQL with `instr`. The query is normalised (lowercased, non-word runs to one space) and matched in the `text` column of the full-text index; a query shorter than three characters matches title, company and tags only. Decompressing and scanning the bodies in Go was measured at 235 ms for 2,958 vacancies and replaced; the index answers in under 6 ms.
 - The vacancy view is assembled in one package from the vacancy, its reading and `Score`; it says which actions are available and why.
 
@@ -78,13 +78,13 @@ type RequirementChecker interface { /* reserved; connected only after it beats c
 
 ```go
 Effective(p, base Profile) Profile          // inheritance from the first profile, at read time
-Goals(p) GoalsView; Evidence(me) []Fact      // inputs of Score, each with a Hash()
+Goals(p) GoalsView; Evidence(me) []Fact      // inputs of Score; fit hashes what it uses
 EvidenceText(me, p, docs) string             // Shortlist check and preparation; never contacts, legal name or form answers
 Visibility(p) Filter
 FormAnswers(me) map[string]string            // contacts, legal name, form answers: application only
 ```
 
-- Saving writes one JSON record and emits `MeChanged` or `ProfileChanged(id)`. Consumers compare the hash of the projection they used, so only what changed is recomputed: a new keyword changes visibility only, a new skill recomputes Fits you of every profile, a new compensation of one profile recomputes only that profile. When visibility grows, vacancies that became visible without a reading are queued for reading.
+- Saving writes one JSON record and calls one `changed` callback, which queues `recompute_fit`. Consumers compare the hash of the projection they used, so only what changed is recomputed: a new keyword changes visibility only, a new skill recomputes Fits you of every profile, a new compensation of one profile recomputes only that profile. When visibility grows, vacancies that became visible without a reading are queued for reading.
 
 ### Application
 
@@ -144,7 +144,7 @@ type Response struct { Text string; InTokens, OutTokens int }
 | `domain_block` | blocked domain and until when |
 | `source_run` | per run and source (keyed by the source's normalised address): status, counts found, new, updated, unchanged, excluded, removed, and error |
 | `vacancy_reading` | the model's reading of a vacancy version with its `reader_version`: conditions and requirements, quotes as offsets |
-| `fit` | profile, vacancy, Fits you, requirements score, counts ✓ ✕ ?, reading state, inputs version |
+| `fit` | profile, vacancy, vacancy version, hash of the profile's inputs, hash of the listing fields, state, Fits you (stored for SQL sorting and filtering); the requirements score, counts ✓ ✕ ? and reading state join it when requirements are read |
 | `shortlist_check` | profile, vacancy, digest of inputs, result, date |
 | `decision` | profile, vacancy, stage, reason, date; no row means Inbox |
 | `application` | vacancy, date applied, profile and its name at the time |

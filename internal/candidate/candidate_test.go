@@ -31,14 +31,15 @@ func openTestDB(t *testing.T) *db.DB {
 	return d
 }
 
-// newServer starts a test server with candidate routes and no files directory.
-func newServer(t *testing.T, d *db.DB) *httptest.Server {
-	return newServerWithFiles(t, d, "")
+// newServer starts a test server with candidate routes and no files directory;
+// changed, when given, is told about saved changes.
+func newServer(t *testing.T, d *db.DB, changed ...func()) *httptest.Server {
+	return newServerWithFiles(t, d, "", changed...)
 }
 
 // newServerWithFiles starts a test server with candidate routes and a files directory
 // for photo storage. It also adds "/api/me/photo" to BinaryUploadPaths.
-func newServerWithFiles(t *testing.T, d *db.DB, filesDir string) *httptest.Server {
+func newServerWithFiles(t *testing.T, d *db.DB, filesDir string, changed ...func()) *httptest.Server {
 	t.Helper()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	h := server.New(server.Options{
@@ -47,7 +48,11 @@ func newServerWithFiles(t *testing.T, d *db.DB, filesDir string) *httptest.Serve
 		Logger:            logger,
 		BinaryUploadPaths: []string{"/api/me/photo"},
 	}, func(mux *http.ServeMux) {
-		candidate.RegisterRoutes(mux, d, filesDir, logger)
+		var notify func()
+		if len(changed) > 0 {
+			notify = changed[0]
+		}
+		candidate.RegisterRoutes(mux, d, filesDir, logger, notify)
 	})
 	ts := httptest.NewServer(h)
 	t.Cleanup(ts.Close)
@@ -434,6 +439,22 @@ func TestCreateProfileBecomesActive(t *testing.T) {
 	}
 	if activeCount != 1 {
 		t.Errorf("expected exactly 1 active profile, got %d", activeCount)
+	}
+}
+
+func TestSavingMyDataOrAProfileReportsAChange(t *testing.T) {
+	calls := 0
+	ts := newServer(t, openTestDB(t), func() { calls++ })
+	get(t, ts, "/api/profiles/1")
+	for i, req := range []struct{ method, path string }{
+		{http.MethodPatch, "/api/me"}, {http.MethodPost, "/api/profiles"}, {http.MethodPatch, "/api/profiles/1"},
+	} {
+		if _, status := send(t, ts, req.method, req.path, map[string]any{"name": "Remote Work"}); status != http.StatusOK {
+			t.Fatalf("%s %s: status %d", req.method, req.path, status)
+		}
+		if calls != i+1 {
+			t.Errorf("after %s %s: %d changes reported, want %d", req.method, req.path, calls, i+1)
+		}
 	}
 }
 

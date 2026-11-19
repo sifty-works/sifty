@@ -48,7 +48,7 @@ func newServerWithVocab(t *testing.T, d *db.DB, vocabNames []string) *httptest.S
 	getVocabNames := func() []string { return vocabNames }
 	h := server.New(server.Options{Version: "test", Port: 9999, Logger: logger},
 		func(mux *http.ServeMux) {
-			inbox.RegisterRoutes(mux, d, testNowFn, logger, func() bool { return false }, nil, getVocabNames)
+			inbox.RegisterRoutes(mux, d, testNowFn, logger, func() bool { return false }, nil, getVocabNames, nil)
 		})
 	ts := httptest.NewServer(h)
 	t.Cleanup(ts.Close)

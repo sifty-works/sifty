@@ -136,8 +136,8 @@ type QADeleteReq struct {
 
 // --- helpers ---
 
-// loadMeData reads the single Me row from the database.
-func loadMeData(ctx context.Context, database *db.DB) (MeData, error) {
+// LoadMe reads My data.
+func LoadMe(ctx context.Context, database *db.DB) (MeData, error) {
 	var dataJSON string
 	err := database.QueryRowContext(ctx, `SELECT data FROM me WHERE id=1`).Scan(&dataJSON)
 	if err == sql.ErrNoRows {
@@ -366,14 +366,20 @@ func photoPath(filesDir string) string {
 // RegisterRoutes registers all candidate routes on mux.
 // filesDir is the path to the data files directory (e.g. <data>/files/); used for photo storage.
 // When filesDir is empty, photo endpoints are registered but always return an error.
-func RegisterRoutes(mux *http.ServeMux, database *db.DB, filesDir string, logger *slog.Logger) {
+// changed, when set, is called after My data or a profile was saved or created.
+func RegisterRoutes(mux *http.ServeMux, database *db.DB, filesDir string, logger *slog.Logger, changed func()) {
+	notify := func() {
+		if changed != nil {
+			changed()
+		}
+	}
 	server.Handle(mux, "GET /api/me", logger, func(r *http.Request, _ struct{}) (MeData, error) {
-		return loadMeData(r.Context(), database)
+		return LoadMe(r.Context(), database)
 	})
 
 	server.Handle(mux, "PATCH /api/me", logger, func(r *http.Request, patch MePatchReq) (MeData, error) {
 		ctx := r.Context()
-		me, err := loadMeData(ctx, database)
+		me, err := LoadMe(ctx, database)
 		if err != nil {
 			return MeData{}, err
 		}
@@ -387,6 +393,7 @@ func RegisterRoutes(mux *http.ServeMux, database *db.DB, filesDir string, logger
 		if err := saveMeData(ctx, database, updated); err != nil {
 			return MeData{}, err
 		}
+		notify()
 		return updated, nil
 	})
 
@@ -430,6 +437,7 @@ func RegisterRoutes(mux *http.ServeMux, database *db.DB, filesDir string, logger
 		if err := setActiveProfile(ctx, database, newID); err != nil {
 			return ProfileDetailResp{}, err
 		}
+		notify()
 		return loadProfileDetail(ctx, database, newID, pd)
 	})
 
@@ -464,6 +472,7 @@ func RegisterRoutes(mux *http.ServeMux, database *db.DB, filesDir string, logger
 		if err := saveProfileRow(ctx, database, id, updated); err != nil {
 			return ProfileDetailResp{}, err
 		}
+		notify()
 		return loadProfileDetail(ctx, database, id, updated)
 	})
 
@@ -738,7 +747,7 @@ func loadProfileDetail(ctx context.Context, database *db.DB, id int64, own Profi
 		return ProfileDetailResp{}, err
 	}
 	activeID, _ := activeProfileID(ctx, database)
-	me, _ := loadMeData(ctx, database)
+	me, _ := LoadMe(ctx, database)
 	effective := own
 	var inherited map[string]InheritedSource
 	if id != firstID {
@@ -775,27 +784,33 @@ func ActiveProfileID(ctx context.Context, database *db.DB) (int64, error) {
 	return activeProfileID(ctx, database)
 }
 
-// ProfileSearch loads the search configuration of a profile for use in the
-// inbox visibility filter. It applies inheritance from the first profile for
-// empty inheritable fields and restricts target industries to vocabNames when
-// vocabNames is non-nil. When the profile does not exist an empty Profile is
-// returned so callers receive a "1=0" visibility filter.
-func ProfileSearch(ctx context.Context, database *db.DB, profileID int64, vocabNames []string) (Profile, error) {
+// EffectiveProfile loads a profile with every empty inheritable field filled
+// from the first profile (see Effective). It answers NotFound when the profile
+// does not exist.
+func EffectiveProfile(ctx context.Context, database *db.DB, profileID int64) (ProfileData, error) {
 	pd, err := loadProfileRow(ctx, database, profileID)
 	if err != nil {
-		// Profile absent: return empty so caller visibility becomes "1=0".
-		return Profile{}, nil
+		return ProfileData{}, err
 	}
-
 	firstID, err := firstProfileID(ctx, database)
+	if err != nil || firstID == profileID {
+		return pd, err
+	}
+	base, err := loadProfileRow(ctx, database, firstID)
+	if err != nil {
+		return ProfileData{}, err
+	}
+	return Effective(pd, base), nil
+}
+
+// ProfileSearch loads the search configuration of a profile for use in the
+// inbox visibility filter. It restricts the effective target industries to
+// vocabNames when vocabNames is non-nil. When the profile cannot be loaded an
+// empty Profile is returned so callers receive a "1=0" visibility filter.
+func ProfileSearch(ctx context.Context, database *db.DB, profileID int64, vocabNames []string) (Profile, error) {
+	pd, err := EffectiveProfile(ctx, database, profileID)
 	if err != nil {
 		return Profile{}, nil
-	}
-	if profileID != firstID {
-		base, err := loadProfileRow(ctx, database, firstID)
-		if err == nil {
-			pd = Effective(pd, base)
-		}
 	}
 
 	industries := pd.TargetIndustries

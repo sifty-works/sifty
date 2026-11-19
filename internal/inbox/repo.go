@@ -11,6 +11,7 @@ import (
 	"github.com/sifty-works/sifty-server/internal/apperr"
 	"github.com/sifty-works/sifty-server/internal/candidate"
 	"github.com/sifty-works/sifty-server/internal/db"
+	"github.com/sifty-works/sifty-server/internal/fit"
 	"github.com/sifty-works/sifty-server/internal/listing"
 )
 
@@ -29,6 +30,7 @@ type repoRow struct {
 	appliedAt      string
 	appliedName    string
 	expiresAt      string
+	fit            fit.Stored
 }
 
 const listCols = `v.id, v.company, v.title, v.location, v.published_at, v.published_basis,
@@ -36,7 +38,7 @@ const listCols = `v.id, v.company, v.title, v.location, v.published_at, v.publis
     v.seen_at='' AS unread, COALESCE(d.reason,'') AS reason,
     (SELECT applied_at FROM application WHERE vacancy=v.id ORDER BY applied_at DESC LIMIT 1),
     (SELECT profile_name FROM application WHERE vacancy=v.id ORDER BY applied_at DESC LIMIT 1),
-    v.expires_at`
+    v.expires_at, ` + fit.Columns
 
 const orderNewest = `ORDER BY
     CASE WHEN published_basis != '' THEN 1 WHEN published_at != '' THEN 2 ELSE 3 END ASC,
@@ -166,6 +168,11 @@ func filterClauses(now time.Time, f Filters, skipSources bool) ([]string, []any)
 		parts = append(parts, "v.seen_at=''")
 	}
 
+	if b, bArgs := fit.Buckets(f.Fit, f.inputs); b != "" {
+		parts = append(parts, b)
+		args = append(args, bArgs...)
+	}
+
 	return parts, args
 }
 
@@ -179,17 +186,17 @@ func scopeClause(now time.Time, profileID int64, stage, q string, vis candidate.
 	low := strings.ToLower(strings.TrimSpace(q))
 
 	if isInbox {
-		join = `LEFT JOIN decision d ON d.vacancy=v.id AND d.profile=?`
+		join = `LEFT JOIN decision d ON d.vacancy=v.id AND d.profile=? ` + fit.Join
 		where = `d.vacancy IS NULL AND ` + notExcludedFor
-		args = []any{profileID, profileID}
+		args = []any{profileID, profileID, profileID}
 		if vis.SQL != "" {
 			where += ` AND (` + vis.SQL + `)`
 			args = append(args, vis.Args...)
 		}
 	} else {
-		join = `JOIN decision d ON d.vacancy=v.id AND d.profile=? AND d.stage=?`
+		join = `JOIN decision d ON d.vacancy=v.id AND d.profile=? AND d.stage=? ` + fit.Join
 		where = notExcludedFor
-		args = []any{profileID, stage, profileID}
+		args = []any{profileID, stage, profileID, profileID}
 	}
 
 	if low != "" {
@@ -354,18 +361,20 @@ func stageCounts(ctx context.Context, database *db.DB, now time.Time, profileID 
 }
 
 // listRows returns vacancy rows for the given profile and stage,
-// optionally filtered by query q, Filters f and by industry names.
+// optionally filtered by query q, Filters f and by industry names, in the
+// order sort names ("newest", else Best fit) in Inbox and Shortlist.
 // vis is applied to inbox listings only.
-func listRows(ctx context.Context, database *db.DB, now time.Time, profileID int64, stage, q string, vis candidate.Filter, f Filters, industries ...string) ([]repoRow, error) {
-	var order string
-	switch stage {
-	case "inbox", "shortlist":
+func listRows(ctx context.Context, database *db.DB, now time.Time, profileID int64, stage, q, sort string, vis candidate.Filter, f Filters, industries ...string) ([]repoRow, error) {
+	join, where, args := scopeClause(now, profileID, stage, q, vis, f, industries, false)
+	order := orderDecided
+	switch {
+	case stage != "inbox" && stage != "shortlist":
+	case sort == "newest":
 		order = orderNewest
 	default:
-		order = orderDecided
+		order = fit.OrderBestFit
+		args = append(args, f.inputs)
 	}
-
-	join, where, args := scopeClause(now, profileID, stage, q, vis, f, industries, false)
 
 	sqlRows, err := database.QueryContext(ctx,
 		`SELECT `+listCols+` FROM vacancy v `+join+` WHERE `+where+` `+order,
@@ -383,12 +392,12 @@ func scanListRows(stage string, sqlRows *sql.Rows) ([]repoRow, error) {
 		var row repoRow
 		var unread int64
 		var appliedAt, appliedName sql.NullString
-		if err := sqlRows.Scan(
+		if err := sqlRows.Scan(append([]any{
 			&row.id, &row.company, &row.title, &row.location,
 			&row.publishedAt, &row.publishedBasis,
 			&row.industries,
 			&unread, &row.reason,
-			&appliedAt, &appliedName, &row.expiresAt,
+			&appliedAt, &appliedName, &row.expiresAt}, row.fit.Dest()...)...,
 		); err != nil {
 			return nil, fmt.Errorf("inbox: scan: %w", err)
 		}
@@ -425,16 +434,16 @@ func loadVacancyFull(ctx context.Context, database *db.DB, profileID, vacancyID 
 		       (SELECT applied_at FROM application WHERE vacancy=v.id ORDER BY applied_at DESC LIMIT 1),
 		       (SELECT profile_name FROM application WHERE vacancy=v.id ORDER BY applied_at DESC LIMIT 1),
 		       v.expires_at,
-		       v.url, v.apply_url, v.text_state, v.body
-		FROM vacancy v LEFT JOIN decision d ON d.vacancy=v.id AND d.profile=?
+		       v.url, v.apply_url, v.text_state, v.body, `+fit.Columns+`
+		FROM vacancy v LEFT JOIN decision d ON d.vacancy=v.id AND d.profile=? `+fit.Join+`
 		WHERE v.id=? AND `+notExcludedFor,
-		profileID, vacancyID, profileID).Scan(
+		profileID, profileID, vacancyID, profileID).Scan(append([]any{
 		&stage,
 		&row.id, &row.company, &row.title, &row.location, &row.publishedAt, &row.publishedBasis,
 		&row.industries, &unread, &row.reason,
 		&appliedAt, &appliedName,
 		&row.expiresAt,
-		&vd.url, &vd.applyURL, &vd.textState, &vd.body)
+		&vd.url, &vd.applyURL, &vd.textState, &vd.body}, row.fit.Dest()...)...)
 	if err == sql.ErrNoRows {
 		return "", repoRow{}, viewData{}, apperr.NotFound{Message: "Role not found."}
 	}
