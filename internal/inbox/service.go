@@ -97,10 +97,10 @@ func toRow(rr repoRow, now time.Time) Row {
 }
 
 // profileVisibility loads the visibility filter for a profile.
-// vocabNames is passed to loadProfileSearch to restrict target industries.
+// vocabNames restricts target industries to known names when non-nil.
 // Returns Filter{SQL:"1=0"} when the profile cannot be loaded.
 func profileVisibility(ctx context.Context, database *db.DB, profileID int64, vocabNames []string) candidate.Filter {
-	p, err := loadProfileSearch(ctx, database, profileID, vocabNames)
+	p, err := candidate.ProfileSearch(ctx, database, profileID, vocabNames)
 	if err != nil {
 		return candidate.Filter{SQL: "1=0"}
 	}
@@ -130,21 +130,18 @@ func loadCounts(ctx context.Context, database *db.DB, now time.Time, profileID i
 }
 
 // rowAndCounts fetches one vacancy row and the profile counts as a shared tail for decision paths.
-func rowAndCounts(ctx context.Context, database *db.DB, now func() time.Time, profileID, vacancyID int64, stage string, vocabNames []string) (Row, Counts, error) {
+func rowAndCounts(ctx context.Context, database *db.DB, now func() time.Time, profileID, vacancyID int64, vocabNames []string) (Row, Counts, error) {
 	vis := profileVisibility(ctx, database, profileID, vocabNames)
-	// Single-vacancy fetch: visibility and user filters not applied (vacancyID != 0).
-	raws, err := listRows(ctx, database, now(), profileID, vacancyID, stage, "", vis, Filters{})
+	_, row, _, err := loadVacancyFull(ctx, database, profileID, vacancyID)
 	if err != nil {
 		return Row{}, Counts{}, err
 	}
-	if len(raws) == 0 {
-		return Row{}, Counts{}, apperr.NotFound{Message: "Role not found."}
-	}
-	cm, err := stageCounts(ctx, database, now(), profileID, vis)
+	t := now()
+	cm, err := stageCounts(ctx, database, t, profileID, vis)
 	if err != nil {
 		return Row{}, Counts{}, err
 	}
-	return toRow(raws[0], now()), buildCounts(cm), nil
+	return toRow(row, t), buildCounts(cm), nil
 }
 
 // list returns the rows, counts, industry counts, source counts and total for
@@ -166,7 +163,7 @@ func list(ctx context.Context, database *db.DB, now func() time.Time, profileID 
 	if err != nil {
 		return nil, Counts{}, nil, nil, 0, err
 	}
-	raw, err := listRows(ctx, database, t, profileID, 0, stage, q, vis, f, industries...)
+	raw, err := listRows(ctx, database, t, profileID, stage, q, vis, f, industries...)
 	if err != nil {
 		return nil, Counts{}, nil, nil, 0, err
 	}
@@ -205,7 +202,7 @@ func applyDecision(ctx context.Context, database *db.DB, now func() time.Time,
 
 	// No-op: same stage.
 	if from == to {
-		return rowAndCounts(ctx, database, now, profileID, vacancyID, from, vocabNames)
+		return rowAndCounts(ctx, database, now, profileID, vacancyID, vocabNames)
 	}
 
 	// Validate move.
@@ -244,7 +241,7 @@ func applyDecision(ctx context.Context, database *db.DB, now func() time.Time,
 	if err := tx.Commit(); err != nil {
 		return Row{}, Counts{}, fmt.Errorf("inbox: decision: commit: %w", err)
 	}
-	return rowAndCounts(ctx, database, now, profileID, vacancyID, to, vocabNames)
+	return rowAndCounts(ctx, database, now, profileID, vacancyID, vocabNames)
 }
 
 // validateMove returns an error when the stage transition is not allowed.
@@ -541,22 +538,11 @@ func buildApplyAction(vacURL, applyURL string) Action {
 func vacancyView(ctx context.Context, database *db.DB, now func() time.Time,
 	vacancyID, profileID int64, sourceNames map[string]string) (VacancyView, error) {
 
-	stage, vd, err := loadVacancyView(ctx, database, profileID, vacancyID)
-	if err != nil {
-		return VacancyView{}, err
-	}
-
 	t := now()
-
-	// Single-vacancy fetch: visibility and user filters not applied (vacancyID != 0).
-	raws, err := listRows(ctx, database, t, profileID, vacancyID, stage, "", candidate.Filter{}, Filters{})
+	stage, row, vd, err := loadVacancyFull(ctx, database, profileID, vacancyID)
 	if err != nil {
 		return VacancyView{}, err
 	}
-	if len(raws) == 0 {
-		return VacancyView{}, apperr.NotFound{Message: "Role not found."}
-	}
-	row := toRow(raws[0], t)
 
 	sources := make([]VacancySource, 0, len(vd.sources))
 	for _, src := range vd.sources {
@@ -572,12 +558,13 @@ func vacancyView(ctx context.Context, database *db.DB, now func() time.Time,
 		lv.Empty = "A full description has not been retrieved. Open the original listing; missing text is not an empty job."
 	}
 
+	apiRow := toRow(row, t)
 	return VacancyView{
-		Row:      row,
+		Row:      apiRow,
 		Sources:  sources,
 		Original: vd.url,
-		Status:   statusText(stage, raws[0].reason, raws[0].appliedAt, t),
-		Actions:  stageActions(stage, vd.url, vd.applyURL, raws[0].company),
+		Status:   statusText(stage, row.reason, row.appliedAt, t),
+		Actions:  stageActions(stage, vd.url, vd.applyURL, row.company),
 		Listing:  lv,
 	}, nil
 }

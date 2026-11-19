@@ -99,17 +99,13 @@ type PreviewResp struct {
 // sourceNames maps source keys (from config.SourceKey) to their display names.
 // getVocabNames returns the current vocabulary's industry names; nil means no
 // vocabulary is configured and target-industry filtering is not applied.
-func RegisterRoutes(mux *http.ServeMux, database *db.DB, now func() time.Time, logger *slog.Logger, collectActive func() bool, sourceNames map[string]string, getVocabNames ...func() []string) {
+func RegisterRoutes(mux *http.ServeMux, database *db.DB, now func() time.Time, logger *slog.Logger, collectActive func() bool, sourceNames map[string]string, getVocabNames func() []string) {
 	cat := catalog.New(database, now)
-	var vocabNamesFunc func() []string
-	if len(getVocabNames) > 0 {
-		vocabNamesFunc = getVocabNames[0]
-	}
 	vocabNames := func() []string {
-		if vocabNamesFunc == nil {
+		if getVocabNames == nil {
 			return nil
 		}
-		return vocabNamesFunc()
+		return getVocabNames()
 	}
 
 	server.Handle(mux, "GET /api/vacancies", logger, func(r *http.Request, req ListReq) (ListResp, error) {
@@ -126,22 +122,8 @@ func RegisterRoutes(mux *http.ServeMux, database *db.DB, now func() time.Time, l
 		if err != nil {
 			return ListResp{}, err
 		}
-		var industries []string
-		if req.Industries != "" {
-			for _, ind := range strings.Split(req.Industries, ",") {
-				if s := strings.TrimSpace(ind); s != "" {
-					industries = append(industries, s)
-				}
-			}
-		}
-		var sources []string
-		if req.Sources != "" {
-			for _, s := range strings.Split(req.Sources, ",") {
-				if s = strings.TrimSpace(s); s != "" {
-					sources = append(sources, s)
-				}
-			}
-		}
+		industries := splitComma(req.Industries)
+		sources := splitComma(req.Sources)
 		collected := 0
 		switch req.Collected {
 		case "7":
@@ -311,6 +293,20 @@ func parseProfileQuery(req *http.Request) (int64, error) {
 		return 0, apperr.Invalid{Message: "Invalid profile."}
 	}
 	return pid, nil
+}
+
+// splitComma splits a comma-separated string into trimmed, non-empty tokens.
+func splitComma(s string) []string {
+	if s == "" {
+		return nil
+	}
+	var out []string
+	for _, part := range strings.Split(s, ",") {
+		if t := strings.TrimSpace(part); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 // resolveRequestIDs resolves the path id through the alias table and resolves the profile.

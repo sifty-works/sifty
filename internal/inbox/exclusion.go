@@ -7,28 +7,15 @@ import (
 	"time"
 
 	"github.com/sifty-works/sifty-server/internal/apperr"
+	"github.com/sifty-works/sifty-server/internal/catalog"
 	"github.com/sifty-works/sifty-server/internal/db"
 	"github.com/sifty-works/sifty-server/internal/listing"
 )
 
-// exclInner is the kind/value matching part of an exclusion predicate.
-// It references columns title, company, identity, apply_url from the vacancy table.
-// Word exclusions do not match a vacancy whose company column is empty
-// (the placeholder used before a vacancy's own page is read).
-const exclInner = `(e.kind='word' AND (instr(lower(title),e.norm)>0 OR (company!='' AND instr(lower(company),e.norm)>0)))
-		OR (e.kind='company' AND (
-			substr(identity,1,instr(identity,'|')-1)=e.norm
-			OR (apply_url!='' AND instr(apply_url,'.greenhouse.io/'||lower(e.value)||'/jobs/')>0)
-		))`
-
-// notExcluded is a SQL predicate that holds when a vacancy row is not hidden
-// by any all-profile exclusion. Used in list and count queries.
-const notExcluded = `NOT EXISTS (SELECT 1 FROM exclusion e WHERE e.profile_id=0 AND (` + exclInner + `))`
-
-// notExcludedFor is a SQL predicate that holds when a vacancy row is not hidden
-// by any exclusion that applies globally (profile_id=0) or to a specific profile.
-// The first ? argument binds the profile id.
-const notExcludedFor = `NOT EXISTS (SELECT 1 FROM exclusion e WHERE (e.profile_id=0 OR e.profile_id=?) AND (` + exclInner + `))`
+// notExcluded and notExcludedFor are SQL predicates from catalog used in
+// exclusion preview and in the list queries via repo.go.
+const notExcluded = catalog.NotExcluded
+const notExcludedFor = catalog.NotExcludedFor
 
 type exclRow struct {
 	id          int64
@@ -41,22 +28,6 @@ func normFor(kind, value string) string {
 		return strings.TrimSuffix(listing.Identity(value, ""), "|")
 	}
 	return strings.ToLower(strings.TrimSpace(value))
-}
-
-// Excluded reports whether a vacancy with the given title, company and apply
-// address matches any all-profile exclusion. Called by collection before and
-// after Detail. Uses the same notExcluded predicate as the inbox list.
-func Excluded(ctx context.Context, database *db.DB, title, company, applyURL string) (bool, error) {
-	identity := listing.Identity(company, title)
-	var n int
-	err := database.QueryRowContext(ctx,
-		`SELECT count(*) FROM (SELECT ? AS title, ? AS company, ? AS identity, ? AS apply_url) WHERE NOT `+notExcluded,
-		title, company, identity, applyURL,
-	).Scan(&n)
-	if err != nil {
-		return false, fmt.Errorf("inbox: excluded: %w", err)
-	}
-	return n > 0, nil
 }
 
 func queryExclusions(ctx context.Context, database *db.DB, profileID int64) ([]exclRow, error) {

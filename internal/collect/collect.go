@@ -18,7 +18,6 @@ import (
 	"github.com/sifty-works/sifty-server/internal/config"
 	"github.com/sifty-works/sifty-server/internal/db"
 	"github.com/sifty-works/sifty-server/internal/fetch"
-	"github.com/sifty-works/sifty-server/internal/inbox"
 	"github.com/sifty-works/sifty-server/internal/listing"
 	"github.com/sifty-works/sifty-server/internal/runner"
 	"github.com/sifty-works/sifty-server/internal/server"
@@ -211,7 +210,7 @@ func (c *Collector) run(ctx context.Context, j *runner.Job) error {
 						}
 						// Skip Detail but still upsert if the posting matches an exclusion.
 						excluded := false
-						if excl, exclErr := inbox.Excluded(ctx, c.db, p.Title, p.Company, p.ApplyURL); exclErr != nil {
+						if excl, exclErr := catalog.Excluded(ctx, c.db, p.Title, p.Company, p.ApplyURL); exclErr != nil {
 							c.log.Warn("collect: exclusion check", "error", exclErr)
 						} else {
 							excluded = excl
@@ -610,7 +609,7 @@ func (c *Collector) addVacancyPage(ctx context.Context, p listing.Posting, s con
 	case !errors.Is(detErr, fetch.ErrOffline) && !errors.Is(detErr, fetch.ErrRefused):
 		p.Requested = true
 	}
-	if excl, exclErr := inbox.Excluded(ctx, c.db, p.Title, p.Company, p.ApplyURL); exclErr != nil {
+	if excl, exclErr := catalog.Excluded(ctx, c.db, p.Title, p.Company, p.ApplyURL); exclErr != nil {
 		c.log.Warn("collect: exclusion check after detail", "error", exclErr)
 	} else {
 		excluded = excl

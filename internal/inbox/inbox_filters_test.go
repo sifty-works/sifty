@@ -124,13 +124,13 @@ func TestExpiry_StageCondition(t *testing.T) {
 
 // --- Remote filter ---
 
-// TestFilter_Remote matches "Remote · EU" and "Remote-first (hybrid)" but not
-// "New York office only".
+// TestFilter_Remote checks that "Remote · EU" and "Remote-first (hybrid)" appear
+// when remote=true, that "New York office only" does not, and that industry counts
+// follow the same filter.
 func TestFilter_Remote(t *testing.T) {
 	d := openTestDB(t)
 	setProfileData(t, d, nil, []string{"engineer"}, nil)
 	cat := newCat(d)
-
 	mkLoc := func(url, loc string) listing.Posting {
 		return listing.Posting{
 			URL: url, Title: "Engineer", Company: "Co",
@@ -139,16 +139,29 @@ func TestFilter_Remote(t *testing.T) {
 	}
 	idA := add(t, cat, mkLoc("https://example.com/jobs/r1", "Remote · EU"))
 	idB := add(t, cat, mkLoc("https://example.com/jobs/r2", "Remote-first (hybrid)"))
-	add(t, cat, mkLoc("https://example.com/jobs/r3", "New York office only"))
-
+	idC := add(t, cat, mkLoc("https://example.com/jobs/r3", "New York office only"))
+	setVacancyIndustries(t, d, idA, []string{"Software"})
+	setVacancyIndustries(t, d, idC, []string{"Software"})
 	ts := newTestServer(t, d)
-	rs := getRows(apiGet(t, ts, "/api/vacancies?remote=true"))
+	body := apiGet(t, ts, "/api/vacancies?remote=true")
+	rs := getRows(body)
 	got := map[float64]bool{}
 	for _, r := range rs {
 		got[rowID(r)] = true
 	}
 	if len(rs) != 2 || !got[float64(idA)] || !got[float64(idB)] {
-		t.Errorf("remote: got %d rows %v, want 2 (Remote EU + Remote-first)", len(rs), got)
+		t.Errorf("remote rows: got %d %v, want 2 (Remote EU + Remote-first)", len(rs), got)
+	}
+	// Industry counts must honour the remote filter too; the office vacancy is excluded.
+	icRaw, _ := body["industryCounts"].([]any)
+	var softwareCount int
+	for _, v := range icRaw {
+		if m, _ := v.(map[string]any); m["name"] == "Software" {
+			softwareCount = int(m["count"].(float64))
+		}
+	}
+	if softwareCount != 1 {
+		t.Errorf("industryCounts with remote=true: Software=%d, want 1 (office vacancy excluded)", softwareCount)
 	}
 }
 
@@ -309,42 +322,6 @@ func TestFilter_Combined(t *testing.T) {
 }
 
 // --- Count groups ignore their own filter ---
-
-// TestFilter_IndustryCounts_HonoursNewFilters checks that industryCounts honours
-// the new filters (e.g. remote) but still ignores the industries filter itself.
-func TestFilter_IndustryCounts_HonoursNewFilters(t *testing.T) {
-	d := openTestDB(t)
-	setProfileData(t, d, nil, []string{"engineer"}, nil)
-	cat := newCat(d)
-
-	// Remote vacancy with Software industry.
-	idRemote := add(t, cat, listing.Posting{
-		URL: "https://example.com/jobs/ic1", Title: "Engineer", Company: "Co",
-		Location: "Remote · EU", Text: "job", TextKind: listing.Plain, TextState: listing.TextFull,
-	})
-	// Office vacancy with Software industry.
-	idOffice := add(t, cat, listing.Posting{
-		URL: "https://example.com/jobs/ic2", Title: "Engineer", Company: "Co",
-		Location: "London office", Text: "job", TextKind: listing.Plain, TextState: listing.TextFull,
-	})
-	setVacancyIndustries(t, d, idRemote, []string{"Software"})
-	setVacancyIndustries(t, d, idOffice, []string{"Software"})
-
-	ts := newTestServer(t, d)
-	body := apiGet(t, ts, "/api/vacancies?remote=true")
-	// industryCounts should reflect the remote-filtered set (1 vacancy).
-	icRaw, _ := body["industryCounts"].([]any)
-	counts := make(map[string]int)
-	for _, v := range icRaw {
-		m, _ := v.(map[string]any)
-		name, _ := m["name"].(string)
-		n, _ := m["count"].(float64)
-		counts[name] = int(n)
-	}
-	if counts["Software"] != 1 {
-		t.Errorf("industryCounts with remote filter: Software=%d, want 1", counts["Software"])
-	}
-}
 
 // TestFilter_SourceCounts_IgnoresSourcesFilter checks that sourceCounts returns
 // all sources regardless of the sources filter, but honours other filters.

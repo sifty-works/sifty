@@ -449,6 +449,27 @@ func TestIndustryCounts_ShortlistCountsDifferFromInbox(t *testing.T) {
 	}
 }
 
+func TestVisibility_TargetIndustries_InheritedFromNewFirstAfterDeletion(t *testing.T) {
+	// After deleting the first profile, an empty-industries profile must inherit
+	// from the new lowest-id profile, not from the deleted one.
+	d := openTestDB(t)
+	cat := newCat(d)
+	setProfileTargetIndustries(t, d, []string{"Web3"})
+	d.Exec(`INSERT INTO profile (id, data) VALUES (2, '{"name":"P2","keywords":["description"]}')`) //nolint:errcheck
+	d.Exec(`INSERT INTO profile (id, data) VALUES (3, '{"name":"P3","keywords":["description"]}')`) //nolint:errcheck
+	idS := add(t, cat, post("https://example.com/jobs/s1", "Software engineer description", "Co"))
+	setVacancyIndustries(t, d, idS, []string{"Software"})
+	idW := add(t, cat, post("https://example.com/jobs/w1", "Web3 dev description", "Co"))
+	setVacancyIndustries(t, d, idW, []string{"Web3"})
+	d.Exec(`DELETE FROM profile WHERE id=1`)                                                                                //nolint:errcheck
+	d.Exec(`UPDATE profile SET data='{"name":"P2","keywords":["description"],"targetIndustries":["Software"]}' WHERE id=2`) //nolint:errcheck
+	ts := newServerWithVocab(t, d, []string{"Web3", "Software"})
+	rs := getRows(apiGet(t, ts, "/api/vacancies?profile=3"))
+	if len(rs) != 1 || rowID(rs[0]) != float64(idS) {
+		t.Errorf("after first-profile deletion: profile 3 should inherit Software from new first, got %d rows", len(rs))
+	}
+}
+
 // --- Import assigns industries ---
 
 func TestImport_IndustriesAssigned(t *testing.T) {

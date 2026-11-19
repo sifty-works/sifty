@@ -774,3 +774,49 @@ func parseProfileID(r *http.Request) (int64, error) {
 func ActiveProfileID(ctx context.Context, database *db.DB) (int64, error) {
 	return activeProfileID(ctx, database)
 }
+
+// ProfileSearch loads the search configuration of a profile for use in the
+// inbox visibility filter. It applies inheritance from the first profile for
+// empty inheritable fields and restricts target industries to vocabNames when
+// vocabNames is non-nil. When the profile does not exist an empty Profile is
+// returned so callers receive a "1=0" visibility filter.
+func ProfileSearch(ctx context.Context, database *db.DB, profileID int64, vocabNames []string) (Profile, error) {
+	pd, err := loadProfileRow(ctx, database, profileID)
+	if err != nil {
+		// Profile absent: return empty so caller visibility becomes "1=0".
+		return Profile{}, nil
+	}
+
+	firstID, err := firstProfileID(ctx, database)
+	if err != nil {
+		return Profile{}, nil
+	}
+	if profileID != firstID {
+		base, err := loadProfileRow(ctx, database, firstID)
+		if err == nil {
+			pd = Effective(pd, base)
+		}
+	}
+
+	industries := pd.TargetIndustries
+	if vocabNames != nil && len(industries) > 0 {
+		allowed := make(map[string]bool, len(vocabNames))
+		for _, n := range vocabNames {
+			allowed[n] = true
+		}
+		filtered := industries[:0:0]
+		for _, n := range industries {
+			if allowed[n] {
+				filtered = append(filtered, n)
+			}
+		}
+		industries = filtered
+	}
+
+	return Profile{
+		TargetRoles:      pd.TargetRoles,
+		Keywords:         pd.Keywords,
+		AllOf:            pd.AllOf,
+		TargetIndustries: industries,
+	}, nil
+}

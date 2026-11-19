@@ -26,9 +26,9 @@ These rules come from what made the previous application grow to several times t
 
 | Capability | Packages | Behaviour |
 |---|---|---|
-| Collection | `fetch`, `source`, `listing`, `catalog` (including permanent deletion), `collect`, `industry` | `behaviour/collection.md` |
+| Collection | `fetch`, `source`, `listing`, `catalog` (including permanent deletion and the exclusion predicate), `collect`, `industry` | `behaviour/collection.md` |
 | Assessment | `reading`, `places`, `skills`, `fit`, `shortlistcheck` | `behaviour/assessment.md` |
-| Inbox and vacancy page | `inbox` (list, decisions, exclusions, vacancy view) | `behaviour/inbox.md` |
+| Inbox and vacancy page | `inbox` (list, decisions, exclusion management, vacancy view) | `behaviour/inbox.md` |
 | Profiles | `candidate` (My data, profiles, documents, proposals, Questions & Answers) | `behaviour/profiles.md` |
 | Application | `locate`, `websearch`, `formread`, `answer` | `behaviour/application.md` |
 | Foundation | `apperr`, `db`, `config`, `runner`, `models`, `server`, `cmd` | `behaviour/settings-and-data.md` |
