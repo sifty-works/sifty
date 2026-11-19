@@ -380,6 +380,17 @@ components:
                 - name
                 - keywords
             type: object
+        InheritedSource:
+            properties:
+                profileId:
+                    format: int64
+                    type: integer
+                profileName:
+                    type: string
+            required:
+                - profileId
+                - profileName
+            type: object
         Language:
             properties:
                 level:
@@ -688,7 +699,9 @@ components:
                     format: int64
                     type: integer
                 inherited:
-                    type: string
+                    additionalProperties:
+                        $ref: '#/components/schemas/InheritedSource'
+                    type: object
                 name:
                     type: string
                 own:

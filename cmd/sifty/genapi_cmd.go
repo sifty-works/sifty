@@ -122,6 +122,9 @@ func genSchema(t reflect.Type, out map[string]any) map[string]any {
 	if t.Kind() == reflect.Slice {
 		return map[string]any{"type": "array", "items": genSchema(t.Elem(), out)}
 	}
+	if t.Kind() == reflect.Map {
+		return map[string]any{"type": "object", "additionalProperties": genSchema(t.Elem(), out)}
+	}
 	if t.Kind() == reflect.Struct {
 		name := t.Name()
 		if out[name] == nil {
