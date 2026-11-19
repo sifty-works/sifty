@@ -892,6 +892,10 @@ components:
                     items:
                         $ref: '#/components/schemas/OptionItem'
                     type: array
+                workAuthorization:
+                    items:
+                        $ref: '#/components/schemas/OptionItem'
+                    type: array
                 workModes:
                     items:
                         $ref: '#/components/schemas/OptionItem'
@@ -917,6 +921,7 @@ components:
                 - disability
                 - veteranStatus
                 - criminalRecord
+                - workAuthorization
             type: object
         ReferenceRegion:
             properties:

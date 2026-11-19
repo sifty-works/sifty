@@ -1076,31 +1076,31 @@
     "languageLevels": [
       {
         "value": "Pre-A1",
-        "label": "Pre-A1"
+        "label": "Pre-A1 — Novice"
       },
       {
         "value": "A1",
-        "label": "A1"
+        "label": "A1 — Beginner"
       },
       {
         "value": "A2",
-        "label": "A2"
+        "label": "A2 — Elementary"
       },
       {
         "value": "B1",
-        "label": "B1"
+        "label": "B1 — Intermediate"
       },
       {
         "value": "B2",
-        "label": "B2"
+        "label": "B2 — Upper-intermediate"
       },
       {
         "value": "C1",
-        "label": "C1"
+        "label": "C1 — Advanced"
       },
       {
         "value": "C2",
-        "label": "C2"
+        "label": "C2 — Proficient"
       },
       {
         "value": "Native",
@@ -1114,47 +1114,7 @@
       },
       {
         "value": "USD",
-        "label": "USD — US Dollar"
-      },
-      {
-        "value": "GBP",
-        "label": "GBP — British Pound"
-      },
-      {
-        "value": "CHF",
-        "label": "CHF — Swiss Franc"
-      },
-      {
-        "value": "CAD",
-        "label": "CAD — Canadian Dollar"
-      },
-      {
-        "value": "AUD",
-        "label": "AUD — Australian Dollar"
-      },
-      {
-        "value": "JPY",
-        "label": "JPY — Japanese Yen"
-      },
-      {
-        "value": "SEK",
-        "label": "SEK — Swedish Krona"
-      },
-      {
-        "value": "NOK",
-        "label": "NOK — Norwegian Krone"
-      },
-      {
-        "value": "DKK",
-        "label": "DKK — Danish Krone"
-      },
-      {
-        "value": "PLN",
-        "label": "PLN — Polish Złoty"
-      },
-      {
-        "value": "CZK",
-        "label": "CZK — Czech Koruna"
+        "label": "USD — US dollar"
       }
     ],
     "periods": [
@@ -1241,12 +1201,12 @@
     ],
     "gender": [
       {
-        "value": "man",
-        "label": "Man"
-      },
-      {
         "value": "woman",
         "label": "Woman"
+      },
+      {
+        "value": "man",
+        "label": "Man"
       },
       {
         "value": "non_binary",
@@ -1254,7 +1214,7 @@
       },
       {
         "value": "self_describe",
-        "label": "Prefer to self-describe"
+        "label": "Self-describe"
       },
       {
         "value": "prefer_not_to_say",
@@ -1263,7 +1223,7 @@
     ],
     "race": [
       {
-        "value": "american_indian_alaska_native",
+        "value": "american_indian_or_alaska_native",
         "label": "American Indian or Alaska Native"
       },
       {
@@ -1271,15 +1231,11 @@
         "label": "Asian"
       },
       {
-        "value": "black_african_american",
+        "value": "black_or_african_american",
         "label": "Black or African American"
       },
       {
-        "value": "hispanic_latino",
-        "label": "Hispanic or Latino"
-      },
-      {
-        "value": "native_hawaiian_pacific_islander",
+        "value": "native_hawaiian_or_other_pacific_islander",
         "label": "Native Hawaiian or Other Pacific Islander"
       },
       {
@@ -1287,8 +1243,8 @@
         "label": "White"
       },
       {
-        "value": "two_or_more",
-        "label": "Two or more races"
+        "value": "self_describe",
+        "label": "Self-describe"
       },
       {
         "value": "prefer_not_to_say",
@@ -1297,11 +1253,11 @@
     ],
     "ethnicity": [
       {
-        "value": "hispanic_latino",
+        "value": "hispanic_or_latino",
         "label": "Hispanic or Latino"
       },
       {
-        "value": "not_hispanic_latino",
+        "value": "not_hispanic_or_latino",
         "label": "Not Hispanic or Latino"
       },
       {
@@ -1312,11 +1268,11 @@
     "disability": [
       {
         "value": "yes",
-        "label": "Yes, I have a disability"
+        "label": "Yes, I have a disability (or previously had a disability)"
       },
       {
         "value": "no",
-        "label": "No, I do not have a disability"
+        "label": "No, I do not have a disability and have not had one in the past"
       },
       {
         "value": "prefer_not_to_say",
@@ -1325,20 +1281,12 @@
     ],
     "veteranStatus": [
       {
-        "value": "active_duty",
-        "label": "Active duty"
-      },
-      {
         "value": "veteran",
-        "label": "Veteran"
-      },
-      {
-        "value": "protected_veteran",
-        "label": "Protected veteran"
+        "label": "I am a protected veteran"
       },
       {
         "value": "not_veteran",
-        "label": "Not a veteran"
+        "label": "I am not a protected veteran"
       },
       {
         "value": "prefer_not_to_say",
@@ -1357,6 +1305,16 @@
       {
         "value": "prefer_not_to_say",
         "label": "Prefer not to say"
+      }
+    ],
+    "workAuthorization": [
+      {
+        "value": "eligible",
+        "label": "Eligible to work"
+      },
+      {
+        "value": "need_visa",
+        "label": "Need visa sponsorship"
       }
     ]
   }

@@ -38,22 +38,23 @@ type OptionItem struct {
 
 // ReferenceOptions holds every option set used in the editors.
 type ReferenceOptions struct {
-	SkillLevels    []OptionItem `json:"skillLevels"`
-	LanguageLevels []OptionItem `json:"languageLevels"`
-	Currencies     []OptionItem `json:"currencies"`
-	Periods        []OptionItem `json:"periods"`
-	PaymentMethods []OptionItem `json:"paymentMethods"`
-	Engagement     []OptionItem `json:"engagement"`
-	WorkingTime    []OptionItem `json:"workingTime"`
-	WorkModes      []OptionItem `json:"workModes"`
-	Relocation     []OptionItem `json:"relocation"`
-	NoticeUnits    []OptionItem `json:"noticeUnits"`
-	Gender         []OptionItem `json:"gender"`
-	Race           []OptionItem `json:"race"`
-	Ethnicity      []OptionItem `json:"ethnicity"`
-	Disability     []OptionItem `json:"disability"`
-	VeteranStatus  []OptionItem `json:"veteranStatus"`
-	CriminalRecord []OptionItem `json:"criminalRecord"`
+	SkillLevels       []OptionItem `json:"skillLevels"`
+	LanguageLevels    []OptionItem `json:"languageLevels"`
+	Currencies        []OptionItem `json:"currencies"`
+	Periods           []OptionItem `json:"periods"`
+	PaymentMethods    []OptionItem `json:"paymentMethods"`
+	Engagement        []OptionItem `json:"engagement"`
+	WorkingTime       []OptionItem `json:"workingTime"`
+	WorkModes         []OptionItem `json:"workModes"`
+	Relocation        []OptionItem `json:"relocation"`
+	NoticeUnits       []OptionItem `json:"noticeUnits"`
+	Gender            []OptionItem `json:"gender"`
+	Race              []OptionItem `json:"race"`
+	Ethnicity         []OptionItem `json:"ethnicity"`
+	Disability        []OptionItem `json:"disability"`
+	VeteranStatus     []OptionItem `json:"veteranStatus"`
+	CriminalRecord    []OptionItem `json:"criminalRecord"`
+	WorkAuthorization []OptionItem `json:"workAuthorization"`
 }
 
 // ReferenceResp is the response for GET /api/reference.
