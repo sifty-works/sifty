@@ -4,6 +4,7 @@ Notable changes of Sifty, newest first. Versions follow `MAJOR.MINOR.PATCH`.
 
 ## Unreleased
 
+- The built-in web client is sifty-web 0.2.0: the profile page with the switcher, every section in read and edit mode with inheritance, the photo, Questions & Answers and per-profile exclusions.
 - The interface description gives a profile's inherited fields as an object of field name to source profile; before, it called it a string.
 - Every vacancy carries its industries, matched by the keywords of an editable vocabulary of industries (whole words and phrases in the title, tags and text); `GET/PUT /api/industries` reads and saves the vocabulary, and saving reassigns every vacancy in the background. Lists show each vacancy's industries, filter by industry and count each one. A profile's target industries, own or inherited, keep out of its Inbox the vacancies whose industries are all elsewhere; names not in the vocabulary are ignored. `sifty import-v1` assigns industries to every vacancy and lists, without importing, the previous free-text target industries.
 - `sifty import-v1` brings My data, every field of each profile, the active profile, the photo and Questions & Answers; previous free-text fields without a structured value are kept in Other requirements, and the report lists every value folded or dropped. An empty section of a profile is stored as empty, so it is taken from the first profile.
