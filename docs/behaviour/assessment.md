@@ -20,7 +20,7 @@ Fits you is a number from 0 to 100 and the only number the user sees. It is a we
 | Remote restriction | 0.075 | see Location below |
 | Time zone | 0.10 | 1 when the vacancy and the user share a band |
 | Work mode | 0.04 | 1 when the vacancy offers one of the user's work modes |
-| Engagement | 0.03 | employment or contract against the user's goal |
+| Engagement | 0.03 | employment or contract against the user's goal; a vacancy that states no engagement is treated as employment |
 | Hours | 0.03 | full-time or part-time against the user's goal, and for part-time the weekly hours when the user states them; ranges that do not overlap are a mismatch |
 | Onsite work authorization | set from data | see Location below |
 | Requirements | set from data | the requirements score below |
@@ -72,7 +72,7 @@ From top to bottom:
    | Work mode | Work mode |
    | Contract | Engagement, Hours |
 
-   A tile shows ✕ when any of its criteria is a mismatch, ✓ when every comparable criterion matches, and ? otherwise, so a tile never disagrees with the number. Money shows the original range and "≈ €…" after conversion.
+   A tile shows ✕ when any of its criteria is a mismatch, ✓ when every comparable criterion matches, and ? otherwise, so a tile never disagrees with the number. Money shows the original range and "≈ €…" after conversion. The Contract tile shows "Employment (assumed)" when the vacancy states no engagement.
 2. **What they ask.** "N requirements" with the counter, then the groups Required and Nice to have. Each row shows the requirement, its alternatives, its verdict, and on the right the evidence from My data ("8 years", "Go · Rust").
    - **+** ("I have this") adds the skill to Skills at the level Proficient when the skills vocabulary knows it, asking which one when the requirement has alternatives; otherwise it adds "You have: …" to Confirmed by you.
    - **−** adds the skill to the skills the user does not have, or "You do not have: …" to Confirmed by you.

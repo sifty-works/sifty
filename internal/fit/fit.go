@@ -86,7 +86,7 @@ func Score(p ProfileView, v reading.VacancyReading, r Rules) Fit {
 		"remote_restriction": restriction(p.Authorizations, ps, has(v.WorkModes, "remote"), open, known),
 		"time_zone":          na,
 		"work_mode":          na,
-		"engagement":         overlap(g.Engagement, strings.Fields(v.Engagement)),
+		"engagement":         overlap(g.Engagement, engagementDefault(v.Engagement)),
 		"hours":              hours(g.Hours, v.Hours),
 	}
 	if len(g.TimeZones) > 0 {
@@ -283,6 +283,13 @@ func hours(h *candidate.Hours, vh *reading.Hours) float64 {
 	return 1
 }
 
+func engagementDefault(e string) []string {
+	if e == "" {
+		return []string{"employment"}
+	}
+	return strings.Fields(e)
+}
+
 func overlap(a, b []string) float64 {
 	if len(a) == 0 || len(b) == 0 {
 		return na
@@ -334,7 +341,11 @@ func texts(p ProfileView, v reading.VacancyReading, open bool, rates map[string]
 	if len(want) > 0 {
 		line[1] = "You prefer: " + strings.Join(want, " · ")
 	}
-	contract := []string{v.Engagement}
+	engLabel := v.Engagement
+	if engLabel == "" {
+		engLabel = "Employment (assumed)"
+	}
+	contract := []string{engLabel}
 	if h := v.Hours; h != nil {
 		contract = append(contract, h.Mode, strings.Trim(amount(h.Min)+"–"+amount(h.Max), "–")+map[bool]string{true: " h/week"}[h.Max > 0])
 	}

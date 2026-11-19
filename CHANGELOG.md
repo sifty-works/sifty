@@ -4,6 +4,7 @@ Notable changes of Sifty, newest first. Versions follow `MAJOR.MINOR.PATCH`.
 
 ## Unreleased
 
+- Fits you treats a vacancy that states no engagement as employment; the Contract tile shows "Employment (assumed)".
 - No comments in code, migrations, embedded YAML, the Makefile or scripts; `make uncomment` removes them and `make check` refuses them.
 - The built-in web client is sifty-web 0.4.0: Fits you on every row, the Best fit / Newest switch, the Fits you filter group and the vacancy band with four tiles.
 - Every list row carries Fits you (number, bucket and tooltip, dimmed while out of date, or the reason there is none); Inbox and Shortlist sort by Best fit or Newest; the Fit filter (Strong, Partial, Weak, Not scored) works in all lists; the vacancy page carries the Fits you band with four tiles. Fits you is stored per profile and vacancy and recomputed in the background after collection, after a change of My data or a profile, and at start.

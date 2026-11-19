@@ -76,6 +76,9 @@ func TestEachCriterionMatchesMismatchesOrCannotBeCompared(t *testing.T) {
 		{"restricted remote leaves work mode to the restriction", "work_mode", goals(candidate.GoalsView{WorkModes: []string{"remote"}}), reading.Vacancy{Location: "Remote (US only) · Remote"}, -1},
 		{"engagement from tag", "engagement", goals(candidate.GoalsView{Engagement: []string{"contract"}}), reading.Vacancy{Tags: []string{"Contract"}}, 1},
 		{"engagement disjoint", "engagement", goals(candidate.GoalsView{Engagement: []string{"contract"}}), reading.Vacancy{Fields: map[string]string{"employment_type": "FULL_TIME"}}, 0},
+		{"no engagement stated matches employment goal", "engagement", goals(candidate.GoalsView{Engagement: []string{"employment"}}), reading.Vacancy{Title: "Builder"}, 1},
+		{"no engagement stated mismatches contract goal", "engagement", goals(candidate.GoalsView{Engagement: []string{"contract"}}), reading.Vacancy{Title: "Builder"}, 0},
+		{"no engagement goal leaves criterion not comparable", "engagement", goals(candidate.GoalsView{WorkModes: []string{"remote"}}), reading.Vacancy{Title: "Builder"}, -1},
 		{"hours mode", "hours", goals(candidate.GoalsView{Hours: &candidate.Hours{Mode: "part_time"}}), reading.Vacancy{Text: "Hours: part-time"}, 1},
 		{"hours other mode", "hours", goals(candidate.GoalsView{Hours: &candidate.Hours{Mode: "part_time"}}), reading.Vacancy{Tags: []string{"Full-time"}}, 0},
 		{"weekly range meets", "hours", goals(candidate.GoalsView{Hours: &candidate.Hours{Mode: "part_time", Weekly: num(25)}}), reading.Vacancy{Text: "Hours: part-time, 20-30 hours per week"}, 1},
@@ -206,6 +209,12 @@ func TestTilesNeverDisagreeWithTheCriteria(t *testing.T) {
 		}
 		if got := f.Tiles[i].Verdict; (got == "✕") != mismatch || (got == "✓") != (match && !mismatch) {
 			t.Errorf("%s tile %s disagrees with %v", f.Tiles[i].Name, got, names)
+		}
+	}
+	noEng := score(goals(candidate.GoalsView{Engagement: []string{"employment"}}), reading.Vacancy{Title: "Builder"})
+	for _, tile := range noEng.Tiles {
+		if tile.Name == "Contract" && (tile.Value != "Employment (assumed)" || tile.Verdict != "✓") {
+			t.Errorf("no engagement stated: Contract tile = %+v", tile)
 		}
 	}
 }
