@@ -59,9 +59,10 @@ func Excluded(ctx context.Context, database *db.DB, title, company, applyURL str
 	return n > 0, nil
 }
 
-func queryExclusions(ctx context.Context, database *db.DB) ([]exclRow, error) {
+func queryExclusions(ctx context.Context, database *db.DB, profileID int64) ([]exclRow, error) {
 	rows, err := database.QueryContext(ctx,
-		`SELECT id,kind,value FROM exclusion WHERE profile_id=0 ORDER BY id DESC`)
+		`SELECT id,kind,value FROM exclusion WHERE profile_id=? ORDER BY id DESC`,
+		profileID)
 	if err != nil {
 		return nil, fmt.Errorf("inbox: list exclusions: %w", err)
 	}
@@ -77,7 +78,7 @@ func queryExclusions(ctx context.Context, database *db.DB) ([]exclRow, error) {
 	return out, rows.Err()
 }
 
-func addExclusion(ctx context.Context, database *db.DB, kind, value string) ([]exclRow, error) {
+func addExclusion(ctx context.Context, database *db.DB, kind, value string, profileID int64) ([]exclRow, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return nil, apperr.Invalid{Message: "Value must not be empty."}
@@ -88,23 +89,26 @@ func addExclusion(ctx context.Context, database *db.DB, kind, value string) ([]e
 	if kind != "word" && kind != "company" {
 		return nil, apperr.Invalid{Message: "Kind must be word or company."}
 	}
+	if kind == "company" && profileID != 0 {
+		return nil, apperr.Invalid{Message: "Company exclusions apply to all profiles."}
+	}
 	if kind == "company" && strings.EqualFold(value, "Unknown") {
 		return nil, apperr.Invalid{Message: "This vacancy has no company name."}
 	}
 	_, err := database.ExecContext(ctx,
-		`INSERT OR IGNORE INTO exclusion (kind,value,norm,profile_id,created) VALUES (?,?,?,0,?)`,
-		kind, value, normFor(kind, value), time.Now().UTC().Format(time.RFC3339))
+		`INSERT OR IGNORE INTO exclusion (kind,value,norm,profile_id,created) VALUES (?,?,?,?,?)`,
+		kind, value, normFor(kind, value), profileID, time.Now().UTC().Format(time.RFC3339))
 	if err != nil {
 		return nil, fmt.Errorf("inbox: add exclusion: %w", err)
 	}
-	return queryExclusions(ctx, database)
+	return queryExclusions(ctx, database, profileID)
 }
 
-func removeExclusion(ctx context.Context, database *db.DB, id int64) ([]exclRow, error) {
+func removeExclusion(ctx context.Context, database *db.DB, id int64, profileID int64) ([]exclRow, error) {
 	if _, err := database.ExecContext(ctx, `DELETE FROM exclusion WHERE id=?`, id); err != nil {
 		return nil, fmt.Errorf("inbox: remove exclusion: %w", err)
 	}
-	return queryExclusions(ctx, database)
+	return queryExclusions(ctx, database, profileID)
 }
 
 func previewCount(ctx context.Context, database *db.DB, kind, value string) (int, error) {
@@ -157,10 +161,14 @@ type ExclusionsResp struct {
 	Exclusions []Exclusion `json:"exclusions"`
 }
 
-func toExclusionsResp(rows []exclRow) ExclusionsResp {
+func toExclusionsResp(rows []exclRow, profileID int64) ExclusionsResp {
 	list := make([]Exclusion, len(rows))
+	scope := "All profiles"
+	if profileID != 0 {
+		scope = "This profile"
+	}
 	for i, r := range rows {
-		list[i] = Exclusion{ID: r.id, Kind: ExclusionKind(r.kind), Value: r.value, Scope: "All profiles"}
+		list[i] = Exclusion{ID: r.id, Kind: ExclusionKind(r.kind), Value: r.value, Scope: scope}
 	}
 	return ExclusionsResp{Exclusions: list}
 }

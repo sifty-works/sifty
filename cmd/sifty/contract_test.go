@@ -31,6 +31,22 @@ var expectedRoutes = []string{
 	"DELETE /api/sources",
 	"PUT /api/sources/schedule",
 	"POST /api/collect",
+	"GET /api/me",
+	"PATCH /api/me",
+	"PUT /api/me/photo",
+	"DELETE /api/me/photo",
+	"GET /api/me/photo",
+	"GET /api/profiles",
+	"GET /api/profiles/{id}",
+	"POST /api/profiles",
+	"PATCH /api/profiles/{id}",
+	"DELETE /api/profiles/{id}",
+	"PUT /api/active-profile",
+	"GET /api/qa",
+	"POST /api/qa",
+	"PATCH /api/qa",
+	"DELETE /api/qa",
+	"GET /api/reference",
 }
 
 // TestContractAllRoutesRegistered verifies that every expected route is recorded

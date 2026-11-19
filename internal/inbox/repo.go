@@ -14,6 +14,10 @@ import (
 	"github.com/sifty-works/sifty-server/internal/listing"
 )
 
+// resolveProfile returns pid if it exists, otherwise 404.
+// When pid is 0 the active profile from settings is used, falling back to the
+// profile with the lowest id when no active profile is set.
+
 // repoRow is the raw data loaded from a list query.
 type repoRow struct {
 	id             int64
@@ -46,16 +50,12 @@ const orderNewest = `ORDER BY
 
 const orderDecided = `ORDER BY d.decided_at DESC, d.vacancy DESC`
 
-// resolveProfile returns pid if it exists, otherwise 404.
-// When pid is 0 the profile with the lowest id is used.
 func resolveProfile(ctx context.Context, database *db.DB, pid int64) (int64, error) {
-	var id int64
-	var err error
 	if pid == 0 {
-		err = database.QueryRowContext(ctx, `SELECT id FROM profile ORDER BY id LIMIT 1`).Scan(&id)
-	} else {
-		err = database.QueryRowContext(ctx, `SELECT id FROM profile WHERE id=?`, pid).Scan(&id)
+		return candidate.ActiveProfileID(ctx, database)
 	}
+	var id int64
+	err := database.QueryRowContext(ctx, `SELECT id FROM profile WHERE id=?`, pid).Scan(&id)
 	if err == sql.ErrNoRows {
 		return 0, apperr.NotFound{Message: "Profile not found."}
 	}

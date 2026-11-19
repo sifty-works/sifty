@@ -51,6 +51,16 @@ func normType[T any]() (t reflect.Type) {
 	return
 }
 
+// HandleRaw registers fn at pattern in the route registry without JSON decoding.
+// The function is responsible for reading the request body and writing the response.
+// Used for binary uploads and binary responses where the body is not JSON.
+func HandleRaw(mux *http.ServeMux, pattern string, fn http.HandlerFunc) {
+	routeMu.Lock()
+	routeMap[pattern] = RouteInfo{Pattern: pattern}
+	routeMu.Unlock()
+	mux.HandleFunc(pattern, fn)
+}
+
 // Handle registers fn at pattern and records its request and response types in
 // the global registry. For GET requests Req is decoded from query parameters
 // by json tag name; for all other methods Req is decoded from the JSON body.

@@ -58,13 +58,20 @@ type DeleteVacancyResp struct {
 
 // AddExclusionReq is the request body for POST /api/exclusions.
 type AddExclusionReq struct {
-	Kind  ExclusionKind `json:"kind"`
-	Value string        `json:"value"`
+	Kind    ExclusionKind `json:"kind"`
+	Value   string        `json:"value"`
+	Profile int64         `json:"profile,omitempty"`
 }
 
 // DeleteExclusionReq is the request body for DELETE /api/exclusions.
 type DeleteExclusionReq struct {
-	ID int64 `json:"id"`
+	ID      int64 `json:"id"`
+	Profile int64 `json:"profile,omitempty"`
+}
+
+// ExclusionListReq carries the query parameters for GET /api/exclusions.
+type ExclusionListReq struct {
+	Profile int64 `json:"profile,omitempty"`
 }
 
 // PreviewReq carries the query parameters for GET /api/exclusions/preview.
@@ -181,28 +188,28 @@ func RegisterRoutes(mux *http.ServeMux, database *db.DB, now func() time.Time, l
 		return DeleteVacancyResp{Counts: counts}, nil
 	})
 
-	server.Handle(mux, "GET /api/exclusions", logger, func(r *http.Request, _ struct{}) (ExclusionsResp, error) {
-		rows, err := queryExclusions(r.Context(), database)
+	server.Handle(mux, "GET /api/exclusions", logger, func(r *http.Request, req ExclusionListReq) (ExclusionsResp, error) {
+		rows, err := queryExclusions(r.Context(), database, req.Profile)
 		if err != nil {
 			return ExclusionsResp{}, err
 		}
-		return toExclusionsResp(rows), nil
+		return toExclusionsResp(rows, req.Profile), nil
 	})
 
 	server.Handle(mux, "POST /api/exclusions", logger, func(r *http.Request, req AddExclusionReq) (ExclusionsResp, error) {
-		rows, err := addExclusion(r.Context(), database, string(req.Kind), req.Value)
+		rows, err := addExclusion(r.Context(), database, string(req.Kind), req.Value, req.Profile)
 		if err != nil {
 			return ExclusionsResp{}, err
 		}
-		return toExclusionsResp(rows), nil
+		return toExclusionsResp(rows, req.Profile), nil
 	})
 
 	server.Handle(mux, "DELETE /api/exclusions", logger, func(r *http.Request, req DeleteExclusionReq) (ExclusionsResp, error) {
-		rows, err := removeExclusion(r.Context(), database, req.ID)
+		rows, err := removeExclusion(r.Context(), database, req.ID, req.Profile)
 		if err != nil {
 			return ExclusionsResp{}, err
 		}
-		return toExclusionsResp(rows), nil
+		return toExclusionsResp(rows, req.Profile), nil
 	})
 
 	server.Handle(mux, "GET /api/exclusions/preview", logger, func(r *http.Request, req PreviewReq) (PreviewResp, error) {

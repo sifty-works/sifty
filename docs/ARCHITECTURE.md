@@ -153,7 +153,7 @@ type Response struct { Text string; InTokens, OutTokens int }
 | `application_form`, `application_field`, `learned_phrasing` | last reading of a form, its fields with values and their source, learned labels |
 | `job` | background work |
 | `model_call` | journal of model calls |
-| `settings` | what the application remembers about its use: active profile, pause of background model work |
+| `settings` | key-value table (key TEXT PRIMARY KEY, value TEXT) for what the application remembers about its use: active profile, pause of background model work |
 
 **Size of a vacancy** (measured on the imported catalogue, then estimated): row with body 3.1 KB, sources 0.4 KB, full-text index 11 KB (trigram with positions, needed for phrase matching; without positions the candidates must be checked in Go, which costs 100 to 200 ms for common words), reading 0.8 to 1.2 KB, fit and decisions 0.5 KB: about 17.5 KB.
 
@@ -194,11 +194,12 @@ The web client lives in `github.com/sifty-works/sifty-web`. Its source is in tha
 | Group | Endpoints |
 |---|---|
 | Lists and vacancies | `GET /api/vacancies?profile&stage&q&sort&filters` (rows of about 350 bytes, counts per stage and per filter value); `GET /api/vacancies/{id}?profile`; `POST /api/vacancies/{id}/decision {profile,from,to,reason?,confirmed?}`; `POST /api/vacancies/{id}/seen`; `DELETE /api/vacancies/{id}?profile`; `POST /api/vacancies/{id}/refresh` |
-| Exclusions and industries | `GET/POST/DELETE /api/exclusions`, `GET /api/exclusions/preview`; `GET/PUT /api/industries` |
+| Exclusions and industries | `GET/POST/DELETE /api/exclusions?profile` (word exclusions take an optional profile scope; company exclusions are global), `GET /api/exclusions/preview`; `GET/PUT /api/industries` |
 | Collection | `GET/POST/PATCH/DELETE /api/sources`; `PUT /api/sources/schedule`; `POST /api/collect {force}` |
-| Profiles | `GET/PATCH /api/me`, `PUT/DELETE /api/me/photo`; `GET/POST/PATCH/DELETE /api/profiles`, `PUT /api/active-profile`; `POST /api/me/skills` (+ and − from a vacancy) |
+| Profiles | `GET/PATCH /api/me`; `PUT/DELETE/GET /api/me/photo` (png, jpg or webp, at most 2 MiB, real type checked from bytes); `GET/POST/PATCH/DELETE /api/profiles`; `GET /api/profiles/{id}`; `PUT /api/active-profile`; `POST /api/me/skills` (+ and − from a vacancy) |
 | Documents | `POST/DELETE /api/documents`, `POST /api/documents/{id}/analyze`, `POST /api/documents/{id}/refresh`; `POST /api/proposals/{id}/accept`, `/reject` |
 | Questions & Answers | `GET/POST/PATCH/DELETE /api/qa` |
+| Reference | `GET /api/reference` (countries, regions, time-zone bands, option sets; shipped as embedded data) |
 | Application | `GET /api/vacancies/{id}/application`; `PATCH …/application/fields/{field}`; `POST …/application/{write,paste,questions,retry}`; `POST /api/vacancies/{id}/locate`; `POST /api/vacancies/{id}/shortlist-check/retry` |
 | Settings and status | `GET/PUT /api/settings`, `GET/PUT /api/settings/file`; `POST /api/providers/{name}/check`; `GET /api/jobs`; `GET /api/status` (or event stream); `GET /api/version` |
 

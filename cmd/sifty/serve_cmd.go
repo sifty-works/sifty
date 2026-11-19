@@ -14,6 +14,7 @@ import (
 	"time"
 
 	siftyapi "github.com/sifty-works/sifty-server/api"
+	"github.com/sifty-works/sifty-server/internal/candidate"
 	"github.com/sifty-works/sifty-server/internal/catalog"
 	"github.com/sifty-works/sifty-server/internal/collect"
 	"github.com/sifty-works/sifty-server/internal/config"
@@ -150,17 +151,21 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		}
 	}
 
+	filesDir := filepath.Join(dataDir, "files")
+
 	handler := server.New(server.Options{
-		Version:   version,
-		APISha256: siftyapi.Sha256(),
-		Port:      port,
-		Offline:   offline,
-		Debug:     cfg.Debug,
-		Logger:    logger,
-		Static:    web.StaticFS(),
-		Status:    col.StatusFunc(),
+		Version:           version,
+		APISha256:         siftyapi.Sha256(),
+		Port:              port,
+		Offline:           offline,
+		Debug:             cfg.Debug,
+		Logger:            logger,
+		Static:            web.StaticFS(),
+		Status:            col.StatusFunc(),
+		BinaryUploadPaths: []string{"/api/me/photo"},
 	}, func(mux *http.ServeMux) {
 		inbox.RegisterRoutes(mux, database, time.Now, logger, collectActive, sourceNames)
+		candidate.RegisterRoutes(mux, database, filesDir, logger)
 		col.RegisterRoutes(mux)
 	})
 

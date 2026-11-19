@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"strings"
 
+	"github.com/sifty-works/sifty-server/internal/candidate"
 	"github.com/sifty-works/sifty-server/internal/collect"
 	"github.com/sifty-works/sifty-server/internal/inbox"
 	"github.com/sifty-works/sifty-server/internal/server"
@@ -35,6 +36,7 @@ func cmdGenAPI(args []string, stdout, stderr io.Writer) error {
 	devNull := slog.New(slog.NewTextHandler(io.Discard, nil))
 	server.New(server.Options{Logger: devNull}, func(mux *http.ServeMux) {
 		inbox.RegisterRoutes(mux, nil, nil, devNull, nil, nil)
+		candidate.RegisterRoutes(mux, nil, "", devNull)
 		collect.New(nil, nil, nil, nil, nil, false, nil, devNull).RegisterRoutes(mux)
 	})
 	routes := server.Routes()

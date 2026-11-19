@@ -70,8 +70,9 @@ type VersionResp struct {
 }
 
 const (
-	maxBodyBytes  = 1 << 20 // 1 MB
-	slowThreshold = 500 * time.Millisecond
+	maxBodyBytes       = 1 << 20 // 1 MB limit for JSON requests
+	maxUploadBodyBytes = 2 << 20 // 2 MiB limit for binary file uploads
+	slowThreshold      = 500 * time.Millisecond
 )
 
 // counter generates unique IDs for internal error log entries.
@@ -79,14 +80,15 @@ var counter atomic.Uint64
 
 // Options holds the runtime parameters the server needs.
 type Options struct {
-	Version   string
-	APISha256 string // hex SHA-256 of the embedded api/openapi.yaml
-	Port      int
-	Offline   bool
-	Debug     bool
-	Logger    *slog.Logger
-	Static    fs.FS              // web/dist subtree; nil when the frontend was not built
-	Status    func() StatusExtra // collection status merged into GET /api/status; nil is allowed
+	Version           string
+	APISha256         string // hex SHA-256 of the embedded api/openapi.yaml
+	Port              int
+	Offline           bool
+	Debug             bool
+	Logger            *slog.Logger
+	Static            fs.FS              // web/dist subtree; nil when the frontend was not built
+	Status            func() StatusExtra // collection status merged into GET /api/status; nil is allowed
+	BinaryUploadPaths []string           // paths exempt from the JSON Content-Type check; body limit is 2 MiB for these paths
 }
 
 // New builds and returns the HTTP handler for the application.
@@ -131,6 +133,12 @@ func New(opts Options, routes func(*http.ServeMux)) http.Handler {
 
 // chain wraps handler in the shared middleware stack.
 func chain(h http.Handler, opts Options) http.Handler {
+	// Pre-build a path set for binary upload paths.
+	uploadSet := make(map[string]bool, len(opts.BinaryUploadPaths))
+	for _, p := range opts.BinaryUploadPaths {
+		uploadSet[p] = true
+	}
+
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 
@@ -150,8 +158,12 @@ func chain(h http.Handler, opts Options) http.Handler {
 			}
 		}
 
+		// Determine whether this path is a binary upload route.
+		isBinaryUpload := isMutating(r.Method) && uploadSet[r.URL.Path]
+
 		// Content-Type requirement for mutating methods.
-		if isMutating(r.Method) {
+		// Binary upload paths are exempt from the JSON Content-Type check.
+		if isMutating(r.Method) && !isBinaryUpload {
 			ct := r.Header.Get("Content-Type")
 			if !strings.HasPrefix(ct, "application/json") {
 				writeError(w, http.StatusUnsupportedMediaType, "Content-Type must be application/json.")
@@ -161,12 +173,17 @@ func chain(h http.Handler, opts Options) http.Handler {
 
 		// Body limit: reject early when Content-Length is known and over limit;
 		// also wrap with MaxBytesReader as a secondary defence for chunked bodies.
-		if r.ContentLength > maxBodyBytes {
+		// Binary upload paths are allowed up to 2 MiB; all other paths are limited to 1 MB.
+		bodyLimit := int64(maxBodyBytes)
+		if isBinaryUpload {
+			bodyLimit = maxUploadBodyBytes
+		}
+		if r.ContentLength > bodyLimit {
 			writeError(w, http.StatusRequestEntityTooLarge, "Request body too large.")
 			return
 		}
 		if r.Body != nil {
-			r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
+			r.Body = http.MaxBytesReader(w, r.Body, bodyLimit)
 		}
 
 		// Panic recovery.

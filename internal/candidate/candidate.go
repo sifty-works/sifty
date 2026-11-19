@@ -13,10 +13,93 @@ import (
 // It is the canonical serialisation of a profile; callers that read a profile
 // row must unmarshal this type.
 type ProfileData struct {
-	Name        string   `json:"name"`
-	TargetRoles []string `json:"targetRoles,omitempty"`
-	Keywords    []string `json:"keywords,omitempty"`
-	AllOf       []string `json:"allOf,omitempty"`
+	Name               string        `json:"name"`
+	Headline           string        `json:"headline,omitempty"`
+	TargetRoles        []string      `json:"targetRoles,omitempty"`
+	Keywords           []string      `json:"keywords,omitempty"`
+	AllOf              []string      `json:"allOf,omitempty"`
+	TargetIndustries   []string      `json:"targetIndustries,omitempty"`
+	Compensation       *Compensation `json:"compensation,omitempty"`
+	Engagement         []string      `json:"engagement,omitempty"` // "employment" | "contract"
+	Hours              *Hours        `json:"hours,omitempty"`
+	WorkModes          []string      `json:"workModes,omitempty"` // "remote" | "hybrid" | "onsite"
+	PreferredLocations []Location    `json:"preferredLocations,omitempty"`
+	Relocation         string        `json:"relocation,omitempty"` // "yes" | "no"
+	TimeZones          []string      `json:"timeZones,omitempty"`
+	OtherRequirements  string        `json:"otherRequirements,omitempty"`
+}
+
+// inheritedFields lists the ProfileData fields that a non-first profile inherits
+// from the first profile when empty.
+var inheritedFields = []string{
+	"compensation",
+	"engagement",
+	"hours",
+	"workModes",
+	"preferredLocations",
+	"targetIndustries",
+}
+
+// IsInheritable reports whether the named JSON field is inherited from the first
+// profile when the profile has no value of its own.
+func IsInheritable(field string) bool {
+	for _, f := range inheritedFields {
+		if f == field {
+			return true
+		}
+	}
+	return false
+}
+
+// Effective returns a copy of p with every empty inheritable field filled from
+// base (the first profile). It is called at read time for every profile that is
+// not the first profile.
+func Effective(p, base ProfileData) ProfileData {
+	out := p
+	if out.Compensation == nil {
+		out.Compensation = base.Compensation
+	}
+	if len(out.Engagement) == 0 {
+		out.Engagement = base.Engagement
+	}
+	if out.Hours == nil {
+		out.Hours = base.Hours
+	}
+	if len(out.WorkModes) == 0 {
+		out.WorkModes = base.WorkModes
+	}
+	if len(out.PreferredLocations) == 0 {
+		out.PreferredLocations = base.PreferredLocations
+	}
+	if len(out.TargetIndustries) == 0 {
+		out.TargetIndustries = base.TargetIndustries
+	}
+	return out
+}
+
+// InheritedFields returns the set of field names that p inherits from base.
+// A field is inherited when p's own value is empty and base has a non-empty value.
+func InheritedFields(p, base ProfileData) []string {
+	var out []string
+	if p.Compensation == nil && base.Compensation != nil {
+		out = append(out, "compensation")
+	}
+	if len(p.Engagement) == 0 && len(base.Engagement) > 0 {
+		out = append(out, "engagement")
+	}
+	if p.Hours == nil && base.Hours != nil {
+		out = append(out, "hours")
+	}
+	if len(p.WorkModes) == 0 && len(base.WorkModes) > 0 {
+		out = append(out, "workModes")
+	}
+	if len(p.PreferredLocations) == 0 && len(base.PreferredLocations) > 0 {
+		out = append(out, "preferredLocations")
+	}
+	if len(p.TargetIndustries) == 0 && len(base.TargetIndustries) > 0 {
+		out = append(out, "targetIndustries")
+	}
+	return out
 }
 
 // Profile carries the search configuration of one profile.
