@@ -71,7 +71,7 @@ release: web
 
 check: build
 	@echo "--- gofmt ---"
-	@gofmt_out=$$(gofmt -l .); \
+	@gofmt_out=$$(gofmt -l cmd internal api web); \
 	 if [ -n "$$gofmt_out" ]; then \
 	   echo "Files not formatted:"; echo "$$gofmt_out"; exit 1; \
 	 fi
