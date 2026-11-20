@@ -476,3 +476,167 @@ func TestLastAndActive(t *testing.T) {
 		t.Error("Last returned false after job completed")
 	}
 }
+
+func TestWaitErrorRequeuesWithoutCountingAttempt(t *testing.T) {
+	d := openDB(t)
+	cl := newClock(base)
+	var runs atomic.Int32
+	started := make(chan struct{}, 1)
+	r := newRunner(d, nil, cl)
+	retryAt := base.Add(10 * time.Minute)
+	r.Register(runner.Kind{Name: "w", Resume: true, Run: func(_ context.Context, _ *runner.Job) error {
+		n := runs.Add(1)
+		if n == 1 {
+			started <- struct{}{}
+			return runner.WaitUntil(retryAt)
+		}
+		return nil
+	}})
+	id, _ := r.Enqueue(runner.Spec{Kind: "w", Subject: "1"})
+	cancel := startRunner(t, r)
+	defer cancel()
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("job never started")
+	}
+	deadline := time.After(5 * time.Second)
+	for {
+		var nb string
+		var attempts int
+		d.QueryRow(`SELECT not_before, attempts FROM job WHERE id=?`, id).Scan(&nb, &attempts)
+		want := retryAt.UTC().Format(time.RFC3339)
+		if nb == want && attempts == 0 {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("not_before=%q attempts=%d, want not_before=%q attempts=0", nb, attempts, want)
+		default:
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+	cl.Set(retryAt.Add(time.Second))
+	waitJob(t, r, "w")
+	if int(runs.Load()) != 2 {
+		t.Errorf("runs: got %d, want 2", runs.Load())
+	}
+}
+
+func TestWaitErrorMovesOtherQueuedJobsOfSameKind(t *testing.T) {
+	d := openDB(t)
+	cl := newClock(base)
+	triggerRunning := make(chan struct{}, 1)
+	hold := make(chan struct{})
+	r := newRunner(d, nil, cl)
+	retryAt := base.Add(10 * time.Minute)
+	r.Register(runner.Kind{Name: "wk", Serial: true, Resume: true, Run: func(_ context.Context, j *runner.Job) error {
+		if j.Subject == "trigger" {
+			triggerRunning <- struct{}{}
+			<-hold
+			return runner.WaitUntil(retryAt)
+		}
+		return nil
+	}})
+	id1, _ := r.Enqueue(runner.Spec{Kind: "wk", Subject: "trigger"})
+	id2, _ := r.Enqueue(runner.Spec{Kind: "wk", Subject: "other"})
+	cancel := startRunner(t, r)
+	defer cancel()
+	select {
+	case <-triggerRunning:
+	case <-time.After(5 * time.Second):
+		t.Fatal("trigger job did not start running")
+	}
+	close(hold)
+	deadline := time.After(5 * time.Second)
+	want := retryAt.UTC().Format(time.RFC3339)
+	for {
+		var nb1, nb2 string
+		d.QueryRow(`SELECT not_before FROM job WHERE id=?`, id1).Scan(&nb1)
+		d.QueryRow(`SELECT not_before FROM job WHERE id=?`, id2).Scan(&nb2)
+		if nb1 == want && nb2 == want {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("jobs not moved to wait time: trigger=%q other=%q want=%q", nb1, nb2, want)
+		default:
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+}
+
+func TestSerialKindRunsOneAtATime(t *testing.T) {
+	d := openDB(t)
+	var running atomic.Int32
+	var maxRunning atomic.Int32
+	hold := make(chan struct{})
+	r := newRunner(d, nil, nil)
+	r.Register(runner.Kind{Name: "serial", Serial: true, Run: func(ctx context.Context, _ *runner.Job) error {
+		cur := running.Add(1)
+		for {
+			old := maxRunning.Load()
+			if cur <= old || maxRunning.CompareAndSwap(old, cur) {
+				break
+			}
+		}
+		<-hold
+		running.Add(-1)
+		return nil
+	}})
+	r.Enqueue(runner.Spec{Kind: "serial", Subject: "1"})
+	r.Enqueue(runner.Spec{Kind: "serial", Subject: "2"})
+	r.Enqueue(runner.Spec{Kind: "serial", Subject: "3"})
+	cancel := startRunner(t, r)
+	defer cancel()
+	deadline := time.After(5 * time.Second)
+	for {
+		if running.Load() > 0 {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("serial jobs never started")
+		default:
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+	time.Sleep(50 * time.Millisecond)
+	if maxRunning.Load() > 1 {
+		t.Errorf("serial kind ran %d jobs at once, want max 1", maxRunning.Load())
+	}
+	close(hold)
+}
+
+func TestActiveByKindFiltersResults(t *testing.T) {
+	d := openDB(t)
+	hold := make(chan struct{})
+	r := newRunner(d, nil, nil)
+	r.Register(runner.Kind{Name: "aa", Run: func(ctx context.Context, _ *runner.Job) error { <-hold; return nil }})
+	r.Register(runner.Kind{Name: "bb", Run: func(ctx context.Context, _ *runner.Job) error { <-hold; return nil }})
+	r.Enqueue(runner.Spec{Kind: "aa", Subject: "1"})
+	r.Enqueue(runner.Spec{Kind: "bb", Subject: "1"})
+	cancel := startRunner(t, r)
+	defer cancel()
+	deadline := time.After(5 * time.Second)
+	for {
+		if len(r.Active()) >= 2 {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("timeout waiting for both jobs to be active")
+		default:
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+	aa := r.Active("aa")
+	bb := r.Active("bb")
+	if len(aa) != 1 || aa[0].Kind != "aa" {
+		t.Errorf("Active(aa): got %v", aa)
+	}
+	if len(bb) != 1 || bb[0].Kind != "bb" {
+		t.Errorf("Active(bb): got %v", bb)
+	}
+	close(hold)
+}

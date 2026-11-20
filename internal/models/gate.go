@@ -48,14 +48,19 @@ func NewGate(database *db.DB, store *config.Store, offline bool, secrets map[str
 	return &Gate{db: database, store: store, offline: offline, secrets: secrets, entries: map[string]*providerEntry{}}
 }
 
-func (g *Gate) For(kind, class string) Model {
-	return &gatedCall{gate: g, kind: kind, background: class == "background"}
+func (g *Gate) For(kind, class string, vacancy ...int64) Model {
+	c := &gatedCall{gate: g, kind: kind, background: class == "background"}
+	if len(vacancy) > 0 {
+		c.vacancyID = sql.NullInt64{Int64: vacancy[0], Valid: true}
+	}
+	return c
 }
 
 type gatedCall struct {
 	gate       *Gate
 	kind       string
 	background bool
+	vacancyID  sql.NullInt64
 }
 
 func (c *gatedCall) Complete(ctx context.Context, r Request) (Response, error) {
@@ -120,7 +125,7 @@ func (c *gatedCall) Complete(ctx context.Context, r Request) (Response, error) {
 	entry, err = c.gate.loadIfNeeded(ctx, entry, pc)
 	if err != nil {
 		c.gate.updateState(entry, err)
-		c.gate.journal(ctx, c.kind, name, pc.Model, c.background, len(r.Prompt), 0, 0, 0, int(time.Since(start).Milliseconds()), err.Error(), sql.NullInt64{})
+		c.gate.journal(ctx, c.kind, name, pc.Model, c.background, len(r.Prompt), 0, 0, 0, int(time.Since(start).Milliseconds()), err.Error(), c.vacancyID)
 		return Response{}, err
 	}
 
@@ -134,7 +139,7 @@ func (c *gatedCall) Complete(ctx context.Context, r Request) (Response, error) {
 	c.gate.updateState(entry, callErr)
 	c.gate.journal(ctx, c.kind, name, pc.Model, c.background,
 		len(r.Prompt), resp.InTokens, len(resp.Text), resp.OutTokens,
-		int(dur.Milliseconds()), outcome, sql.NullInt64{})
+		int(dur.Milliseconds()), outcome, c.vacancyID)
 	return resp, callErr
 }
 

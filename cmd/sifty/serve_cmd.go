@@ -24,6 +24,7 @@ import (
 	"github.com/sifty-works/sifty-server/internal/fit"
 	"github.com/sifty-works/sifty-server/internal/inbox"
 	"github.com/sifty-works/sifty-server/internal/models"
+	"github.com/sifty-works/sifty-server/internal/reading"
 	"github.com/sifty-works/sifty-server/internal/runner"
 	"github.com/sifty-works/sifty-server/internal/server"
 	"github.com/sifty-works/sifty-server/internal/source"
@@ -150,7 +151,21 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 				return err
 			}
 			defer rel()
-			return fit.Recompute(runCtx, database, rules, j.Progress)
+			if err := fit.Recompute(runCtx, database, rules, j.Progress); err != nil {
+				return err
+			}
+			return queueReadings(runCtx, database, r.Enqueue, store, offline, reading.ReaderVersion())
+		},
+	})
+
+	r.Register(runner.Kind{
+		Name:   "read_vacancy",
+		Resume: true,
+		Serial: true,
+		Run: func(runCtx context.Context, j *runner.Job) error {
+			return runReadVacancy(runCtx, j, database,
+				func(vid int64) models.Model { return gate.For("reading", "background", vid) },
+				r.Enqueue)
 		},
 	})
 	recomputeFit()
@@ -185,12 +200,7 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	port := ln.Addr().(*net.TCPAddr).Port
 
 	collectActive := func() bool {
-		for _, j := range r.Active() {
-			if j.Kind == "collect" {
-				return true
-			}
-		}
-		return false
+		return len(r.Active("collect")) > 0
 	}
 
 	filesDir := filepath.Join(dataDir, "files")

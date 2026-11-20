@@ -74,7 +74,7 @@ func TestRecomputeStoresTheResultOfScoreForEveryProfileAndVacancy(t *testing.T) 
 			t.Fatal(err)
 		}
 		for _, vid := range ids {
-			_, v, _, _ := fit.LoadVacancy(ctx, cat, vid)
+			_, v, _, _, _ := fit.LoadVacancy(ctx, cat, vid)
 			want := fit.Score(p.View, v, rules())
 			got := stored(t, d, pid, vid)
 			if got.inputs != p.Inputs || got.version != 1 || got.state != want.State || (want.State == fit.Scored) != got.score.Valid || int(got.score.Int64) != want.Score {

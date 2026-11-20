@@ -61,15 +61,13 @@ func (c *Collector) StatusFunc() func() server.StatusExtra {
 
 func (c *Collector) buildStatusExtra() server.StatusExtra {
 	var collecting *server.CollectProgress
-	for _, j := range c.runner.Active() {
-		if j.Kind == "collect" {
-			text := "Collecting…"
-			if j.Total > 0 && j.Done < j.Total {
-				text = fmt.Sprintf("Collecting… %d of %d sources", j.Done+1, j.Total)
-			}
-			collecting = &server.CollectProgress{Done: j.Done, Total: j.Total, Text: text}
-			break
+	for _, j := range c.runner.Active("collect") {
+		text := "Collecting…"
+		if j.Total > 0 && j.Done < j.Total {
+			text = fmt.Sprintf("Collecting… %d of %d sources", j.Done+1, j.Total)
 		}
+		collecting = &server.CollectProgress{Done: j.Done, Total: j.Total, Text: text}
+		break
 	}
 	var lastRun *server.LastRun
 	if j, ok := c.runner.Last("collect"); ok {

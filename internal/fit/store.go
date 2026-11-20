@@ -66,7 +66,7 @@ func Band(ctx context.Context, database *db.DB, profileID, vacancyID int64, r Ru
 	if err != nil {
 		return Fit{}, err
 	}
-	_, v, ok, err := LoadVacancy(ctx, catalog.New(database, nil), vacancyID)
+	_, v, _, ok, err := LoadVacancy(ctx, catalog.New(database, nil), vacancyID)
 	if err != nil {
 		return Fit{}, err
 	}
@@ -134,13 +134,13 @@ func LoadProfiles(ctx context.Context, database *db.DB, r Rules) ([]Profile, err
 	return out, nil
 }
 
-func LoadVacancy(ctx context.Context, cat *catalog.Catalog, id int64) (reading.Vacancy, reading.VacancyReading, bool, error) {
+func LoadVacancy(ctx context.Context, cat *catalog.Catalog, id int64) (reading.Vacancy, reading.VacancyReading, int64, bool, error) {
 	batch, err := cat.VacancyTexts(ctx, id-1, 1)
 	if err != nil || len(batch) == 0 || batch[0].ID != id {
-		return reading.Vacancy{}, reading.VacancyReading{}, false, err
+		return reading.Vacancy{}, reading.VacancyReading{}, 0, false, err
 	}
 	raw, merged, err := vacancy(batch[0])
-	return raw, merged, err == nil, err
+	return raw, merged, batch[0].Version, err == nil, err
 }
 
 func listingKey(t catalog.VacancyText) int64 {
@@ -151,7 +151,7 @@ func listingKey(t catalog.VacancyText) int64 {
 }
 
 func vacancy(t catalog.VacancyText) (reading.Vacancy, reading.VacancyReading, error) {
-	v := reading.Vacancy{Title: t.Title, Location: t.Location, Full: listing.TextState(t.TextState) == listing.TextFull}
+	v := reading.Vacancy{Title: t.Title, Company: t.Company, Location: t.Location, Full: listing.TextState(t.TextState) == listing.TextFull}
 	json.Unmarshal([]byte(t.TagsJSON), &v.Tags)
 	json.Unmarshal([]byte(t.FieldsJSON), &v.Fields)
 	html, err := catalog.Body(t.Body)

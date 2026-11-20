@@ -35,7 +35,14 @@ type Kind struct {
 	Name   string
 	Run    func(ctx context.Context, j *Job) error
 	Resume bool
+	Serial bool
 }
+
+type waitError struct{ t time.Time }
+
+func (w waitError) Error() string { return "try again after " + w.t.UTC().Format(time.RFC3339) }
+
+func WaitUntil(t time.Time) error { return waitError{t: t} }
 
 type progressJSON struct {
 	Done    int    `json:"done"`
@@ -210,13 +217,22 @@ func (r *Runner) Last(kind string) (Job, bool) {
 	return j, true
 }
 
-func (r *Runner) Active() []Job {
+func (r *Runner) Active(kinds ...string) []Job {
+	cond := ""
+	var args []any
+	if len(kinds) > 0 {
+		ph := strings.Repeat("?,", len(kinds))
+		cond = " AND kind IN (" + ph[:len(ph)-1] + ")"
+		for _, k := range kinds {
+			args = append(args, k)
+		}
+	}
 	rows, err := r.db.Query(
 		`SELECT id, kind, subject, priority, state, attempts, not_before,
 		        progress, error, params, created, updated
-		 FROM job WHERE state IN ('queued','running')
+		 FROM job WHERE state IN ('queued','running')`+cond+`
 		 ORDER BY priority DESC, created ASC, id ASC`,
-	)
+		args...)
 	if err != nil {
 		return nil
 	}
@@ -271,9 +287,19 @@ func (r *Runner) pickOne() (*Job, error) {
 	names := make([]string, 0, len(r.kinds))
 	args := make([]any, 0, 1+len(r.kinds))
 	args = append(args, now)
-	for name := range r.kinds {
+	for name, k := range r.kinds {
+		if k.Serial {
+			var n int
+			r.db.QueryRow(`SELECT count(*) FROM job WHERE kind=? AND state='running' LIMIT 1`, name).Scan(&n)
+			if n > 0 {
+				continue
+			}
+		}
 		names = append(names, "?")
 		args = append(args, name)
+	}
+	if len(names) == 0 {
+		return nil, nil
 	}
 	ph := strings.Join(names, ",")
 
@@ -351,19 +377,37 @@ func (r *Runner) finishJob(ctx context.Context, j *Job, runErr error) {
 		_, dbErr = r.db.Exec(
 			`UPDATE job SET state='failed', error=?, updated=? WHERE id=?`, j.Error, ts, j.ID)
 	} else {
-		j.Error = runErr.Error()
-		if j.Attempts >= 3 {
-			j.State = stateFailed
-			_, dbErr = r.db.Exec(
-				`UPDATE job SET state='failed', error=?, updated=? WHERE id=?`, j.Error, ts, j.ID)
-		} else {
-			delay := retryDelays[j.Attempts-1]
-			nb := now.Add(delay)
+		var we waitError
+		if errors.As(runErr, &we) {
+			nb := we.t
+			nbStr := nb.UTC().Format(time.RFC3339)
 			j.State = stateQueued
 			j.NotBefore = nb
+			j.Error = runErr.Error()
+			j.Attempts--
 			_, dbErr = r.db.Exec(
-				`UPDATE job SET state='queued', error=?, not_before=?, updated=? WHERE id=?`,
-				j.Error, nb.UTC().Format(time.RFC3339), ts, j.ID)
+				`UPDATE job SET state='queued', attempts=?, error=?, not_before=?, updated=? WHERE id=?`,
+				j.Attempts, j.Error, nbStr, ts, j.ID)
+			if dbErr == nil {
+				_, dbErr = r.db.Exec(
+					`UPDATE job SET not_before=?, updated=? WHERE kind=? AND state='queued' AND id!=?`,
+					nbStr, ts, j.Kind, j.ID)
+			}
+		} else {
+			j.Error = runErr.Error()
+			if j.Attempts >= 3 {
+				j.State = stateFailed
+				_, dbErr = r.db.Exec(
+					`UPDATE job SET state='failed', error=?, updated=? WHERE id=?`, j.Error, ts, j.ID)
+			} else {
+				delay := retryDelays[j.Attempts-1]
+				nb := now.Add(delay)
+				j.State = stateQueued
+				j.NotBefore = nb
+				_, dbErr = r.db.Exec(
+					`UPDATE job SET state='queued', error=?, not_before=?, updated=? WHERE id=?`,
+					j.Error, nb.UTC().Format(time.RFC3339), ts, j.ID)
+			}
 		}
 	}
 	if dbErr != nil {

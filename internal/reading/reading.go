@@ -12,6 +12,7 @@ import (
 
 type Vacancy struct {
 	Title    string
+	Company  string
 	Location string
 	Tags     []string
 	Fields   map[string]string

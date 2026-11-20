@@ -210,11 +210,11 @@ func compareFit(ctx context.Context, old *sql.DB, newDB *db.DB, cfg config.Confi
 		pid, okP := report.profileIDs[r.profile]
 		view, okG := profiles[pid]
 		vid, merged := r.job, false
-		raw, now, okV, err := fit.LoadVacancy(ctx, cat, r.job)
+		raw, now, _, okV, err := fit.LoadVacancy(ctx, cat, r.job)
 		if err == nil && !okV {
 			if newDB.QueryRowContext(ctx, `SELECT new_id FROM vacancy_alias WHERE old_id=?`, r.job).Scan(&vid) == nil {
 				merged = true
-				raw, now, okV, err = fit.LoadVacancy(ctx, cat, vid)
+				raw, now, _, okV, err = fit.LoadVacancy(ctx, cat, vid)
 			}
 		}
 		if err != nil {
