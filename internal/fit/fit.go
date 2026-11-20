@@ -59,10 +59,11 @@ type Criterion struct {
 }
 
 type Tile struct {
-	Name    string `json:"name"`
-	Value   string `json:"value"`
-	Line    string `json:"line"`
-	Verdict string `json:"verdict"`
+	Name      string `json:"name"`
+	Value     string `json:"value"`
+	Converted string `json:"converted,omitempty"`
+	Line      string `json:"line"`
+	Verdict   string `json:"verdict"`
 }
 
 type Fit struct {
@@ -170,9 +171,9 @@ func Score(p ProfileView, v reading.VacancyReading, r Rules) Fit {
 		f.State, f.Score = Scored, int(math.Round(num/den*100))
 		f.Bucket = Bucket(f.Score)
 	}
-	values, lines := texts(p, v, open, r.Rates)
+	values, converted, lines := texts(p, v, open, r.Rates)
 	for i, t := range tiles {
-		f.Tiles = append(f.Tiles, Tile{t.name, values[i], lines[i], verdict(f.Criteria, t.criteria)})
+		f.Tiles = append(f.Tiles, Tile{t.name, values[i], converted[i], lines[i], verdict(f.Criteria, t.criteria)})
 	}
 	return f
 }
@@ -360,14 +361,15 @@ func has(xs []string, x string) bool {
 	return false
 }
 
-func texts(p ProfileView, v reading.VacancyReading, open bool, rates map[string]float64) ([]string, []string) {
+func texts(p ProfileView, v reading.VacancyReading, open bool, rates map[string]float64) ([]string, []string, []string) {
 	g := p.Goals
 	val := []string{"Not stated", "Not stated", list(v.WorkModes, "Not stated"), "Not stated"}
+	conv := []string{"", "", "", ""}
 	line := []string{"No minimum stated", "No preference stated", "You want: " + list(g.WorkModes, "not stated"), "You want: not stated"}
 	if m := v.Money; m != nil {
-		val[0] = strings.TrimSpace(m.Currency + " " + amount(m.Min) + map[bool]string{true: "–"}[m.Min > 0 && m.Max > 0] + amount(m.Max) + per(m.Period))
+		val[0] = symbol(m.Currency) + cash(m.Min, m.Max) + per(m.Period)
 		if eur := convert(m.Max, m, "EUR", "year", rates); eur > 0 {
-			val[0] += " · ≈ €" + amount(eur)
+			conv[0] = "≈ €" + amount(rounded(eur))
 		}
 	}
 	if c := g.Compensation; c != nil && c.CashMin != nil {
@@ -403,7 +405,43 @@ func texts(p ProfileView, v reading.VacancyReading, open bool, rates map[string]
 		goal = append(goal, h.Mode)
 	}
 	val[3], line[3] = list(contract, "Not stated"), "You want: "+list(goal, "not stated")
-	return val, line
+	return val, conv, line
+}
+
+func symbol(currency string) string {
+	if s := map[string]string{"USD": "$", "EUR": "€", "GBP": "£"}[strings.ToUpper(currency)]; s != "" {
+		return s
+	}
+	if currency == "" {
+		return ""
+	}
+	return currency + " "
+}
+
+func cash(low, high float64) string {
+	lo, loUnit := compact(low)
+	hi, hiUnit := compact(high)
+	switch {
+	case lo == "":
+		return hi + hiUnit
+	case hi == "":
+		return lo + loUnit
+	case loUnit == hiUnit:
+		return lo + "–" + hi + hiUnit
+	}
+	return lo + loUnit + "–" + hi + hiUnit
+}
+
+func compact(x float64) (string, string) {
+	for _, u := range []struct {
+		size float64
+		unit string
+	}{{1e6, "M"}, {1e3, "k"}} {
+		if x >= u.size {
+			return strconv.FormatFloat(math.Round(x/u.size*10)/10, 'f', -1, 64), u.unit
+		}
+	}
+	return amount(x), ""
 }
 
 func list(xs []string, empty string) string {
@@ -423,7 +461,17 @@ func per(period string) string {
 	if period == "" {
 		return ""
 	}
+	if period == "hour" {
+		return " an " + period
+	}
 	return " a " + period
+}
+
+func rounded(x float64) float64 {
+	if x < 1000 {
+		return x
+	}
+	return math.Round(x/1000) * 1000
 }
 
 func amount(x float64) string {

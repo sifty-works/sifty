@@ -209,20 +209,50 @@ func TestBucketEdges(t *testing.T) {
 	}
 }
 
+func TestMoneyTileIsCompactAndKeepsItsConversionApart(t *testing.T) {
+	cases := []struct {
+		name             string
+		money            reading.Money
+		value, converted string
+	}{
+		{"a range of whole thousands", reading.Money{Min: 190000, Max: 225000, Currency: "USD", Period: "year"}, "$190–225k a year", "≈ €207,000"},
+		{"pounds keep their symbol", reading.Money{Min: 40000, Max: 50000, Currency: "GBP", Period: "year"}, "£40–50k a year", "≈ €59,000"},
+		{"a currency without a symbol keeps its code", reading.Money{Max: 120000, Currency: "CHF", Period: "year"}, "CHF 120k a year", "≈ €130,000"},
+		{"an amount that is not whole thousands gets one decimal", reading.Money{Max: 7500, Currency: "EUR", Period: "month"}, "€7.5k a month", "≈ €90,000"},
+		{"a million and more is written in millions", reading.Money{Max: 1200000, Currency: "USD", Period: "year"}, "$1.2M a year", "≈ €1,104,000"},
+		{"ends that differ in suffix carry one each", reading.Money{Min: 900, Max: 1200000, Currency: "EUR", Period: "year"}, "€900–1.2M a year", "≈ €1,200,000"},
+		{"an amount below a thousand keeps its digits", reading.Money{Max: 850, Currency: "EUR", Period: "day"}, "€850 a day", "≈ €221,000"},
+		{"only a minimum writes one number", reading.Money{Min: 60000, Currency: "EUR", Period: "year"}, "€60k a year", ""},
+		{"only a maximum writes one number", reading.Money{Max: 80000, Currency: "EUR", Period: "year"}, "€80k a year", "≈ €80,000"},
+		{"no period appends nothing", reading.Money{Max: 95000, Currency: "EUR"}, "€95k", "≈ €95,000"},
+		{"an hourly rate reads with the right article", reading.Money{Min: 24, Max: 33, Currency: "USD", Period: "hour"}, "$24–33 an hour", "≈ €63,000"},
+		{"a currency without a rate leaves the conversion empty", reading.Money{Min: 500000, Max: 600000, Currency: "SEK", Period: "year"}, "SEK 500–600k a year", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			v := reading.VacancyReading{Title: "Engineer", Full: true, Money: &c.money}
+			tile := fit.Score(goals(candidate.GoalsView{TargetRoles: []string{"Engineer"}}), v, rules()).Tiles[0]
+			if tile.Name != "Money" || tile.Value != c.value || tile.Converted != c.converted {
+				t.Errorf("money tile = %+v, want value %q and converted %q", tile, c.value, c.converted)
+			}
+		})
+	}
+}
+
 func TestTilesNeverDisagreeWithTheCriteria(t *testing.T) {
 	p := goals(candidate.GoalsView{Compensation: eur, WorkModes: []string{"onsite"}, Engagement: []string{"employment"},
 		Hours: &candidate.Hours{Mode: "full_time"}, TimeZones: []string{"europe_africa"}, PreferredLocations: []candidate.Location{{Country: "PT"}}},
 		candidate.WorkAuthorization{Country: "EU", Status: "eligible"})
 	f := score(p, reading.Vacancy{Location: "Remote (EU only) · Remote", Text: "Salary: EUR 120,000 per year\nEmployment type: Permanent, full-time"})
 	want := map[string]fit.Tile{
-		"Money":     {Value: "EUR 120,000 a year · ≈ €120,000", Line: "Your minimum: EUR 90,000 a year", Verdict: "✓"},
+		"Money":     {Value: "€120k a year", Converted: "≈ €120,000", Line: "Your minimum: EUR 90,000 a year", Verdict: "✓"},
 		"Location":  {Value: "Remote (EU only)", Line: "You prefer: PT · Europe & Africa", Verdict: "✓"},
 		"Work mode": {Value: "remote", Line: "You want: onsite", Verdict: "✕"},
 		"Contract":  {Value: "employment", Line: "You want: employment · full-time", Verdict: "✓"},
 	}
 	for _, tile := range f.Tiles {
 		w := want[tile.Name]
-		if tile.Value != w.Value || tile.Line != w.Line || tile.Verdict != w.Verdict {
+		if tile.Value != w.Value || tile.Converted != w.Converted || tile.Line != w.Line || tile.Verdict != w.Verdict {
 			t.Errorf("%s tile = %+v, want %+v", tile.Name, tile, w)
 		}
 	}
