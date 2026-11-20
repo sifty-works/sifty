@@ -1,6 +1,7 @@
 package config_test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -25,9 +26,12 @@ func writeTmp(t *testing.T, content string) string {
 
 func loadFile(t *testing.T, path string) (config.Config, error) {
 	t.Helper()
-	s, err := config.Open(path)
+	s, result, err := config.Open(path)
 	if err != nil {
 		return config.Config{}, err
+	}
+	if result.Broken != "" {
+		return config.Config{}, fmt.Errorf("recovered: %s", result.Err)
 	}
 	return s.Get(), nil
 }
@@ -113,11 +117,9 @@ func TestValidKeysParsed(t *testing.T) {
 
 func TestInvalidConfigsRejected(t *testing.T) {
 	cases := []struct{ yaml, errContains string }{
-		{"unknown_key: true\n", "unknown_key"},
 		{"port: 99999\n", "port"},
 		{"collection:\n  interval: 10m\n", "The interval must be between 15 minutes and 7 days."},
 		{"collection:\n  interval: 200h\n", "The interval must be between 15 minutes and 7 days."},
-		{"collection:\n  unknown: true\n", "collection.unknown"},
 	}
 	for _, tc := range cases {
 		_, err := loadContent(t, tc.yaml)
@@ -127,6 +129,23 @@ func TestInvalidConfigsRejected(t *testing.T) {
 		}
 		if !strings.Contains(err.Error(), tc.errContains) {
 			t.Errorf("yaml %q: error should contain %q; got: %v", tc.yaml, tc.errContains, err)
+		}
+	}
+}
+
+func TestUnknownKeysAreIgnored(t *testing.T) {
+	for _, yaml := range []string{
+		"unknown_key: true\n",
+		"collection:\n  unknown: true\n",
+		"sources:\n  - url: https://example.com/jobs\n    mystery: true\n",
+	} {
+		c, err := loadContent(t, yaml)
+		if err != nil {
+			t.Errorf("unknown key in %q should be ignored, got error: %v", yaml, err)
+			continue
+		}
+		if c.Port != config.Defaults().Port {
+			t.Errorf("unknown key changed defaults: port = %d", c.Port)
 		}
 	}
 }
@@ -206,14 +225,6 @@ func TestDuplicateSourceKey(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "This source is already in the list.") {
 		t.Errorf("error should say %q: %v", "This source is already in the list.", err)
-	}
-}
-
-func TestUnknownSourceKey(t *testing.T) {
-	yaml := "sources:\n  - url: https://example.com/jobs\n    mystery: true\n"
-	_, err := loadContent(t, yaml)
-	if err == nil {
-		t.Fatal("unknown source key should be rejected")
 	}
 }
 

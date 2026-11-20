@@ -30,7 +30,7 @@ func openTestDB(t *testing.T) *db.DB {
 func openTestStore(t *testing.T, cfg config.Config) *config.Store {
 	t.Helper()
 	p := filepath.Join(t.TempDir(), "sifty.yaml")
-	store, err := config.Open(p)
+	store, _, err := config.Open(p)
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}

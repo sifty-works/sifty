@@ -902,7 +902,7 @@ preferences: {}
 	targetDir := t.TempDir()
 	report := runImport(t, fromDir, targetDir)
 
-	store, err := config.Open(filepath.Join(targetDir, "sifty.yaml"))
+	store, _, err := config.Open(filepath.Join(targetDir, "sifty.yaml"))
 	if err != nil {
 		t.Fatalf("open settings: %v", err)
 	}
@@ -970,7 +970,7 @@ search: {}
 		t.Errorf("report missing Duplicate: %s", report)
 	}
 
-	store, _ := config.Open(filepath.Join(targetDir, "sifty.yaml"))
+	store, _, _ := config.Open(filepath.Join(targetDir, "sifty.yaml"))
 	cfg := store.Get()
 	if len(cfg.Sources) != 1 {
 		t.Errorf("sources count: got %d, want 1", len(cfg.Sources))

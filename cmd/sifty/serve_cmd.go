@@ -29,6 +29,7 @@ import (
 	"github.com/sifty-works/sifty-server/internal/models"
 	"github.com/sifty-works/sifty-server/internal/runner"
 	"github.com/sifty-works/sifty-server/internal/server"
+	"github.com/sifty-works/sifty-server/internal/source"
 	"github.com/sifty-works/sifty-server/web"
 )
 
@@ -71,12 +72,32 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	defer logClose()
 
 	settingsPath := filepath.Join(dataDir, "sifty.yaml")
-	store, err := config.Open(settingsPath)
+	store, cfgResult, err := config.Open(settingsPath)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return err
 	}
 	cfg := store.Get()
+
+	recovered := []server.RecoveredFile{}
+	if cfgResult.Broken != "" {
+		recovered = append(recovered, server.RecoveredFile{File: "sifty.yaml", Err: cfgResult.Err, Broken: cfgResult.Broken})
+	}
+	if len(cfgResult.Unknown) > 0 {
+		recovered = append(recovered, server.RecoveredFile{File: "sifty.yaml", Err: "ignored unknown keys: " + strings.Join(cfgResult.Unknown, ", ")})
+	}
+
+	if brokenSite, siteErr := source.LoadSites(filepath.Join(dataDir, "vocab", "sites.yaml")); siteErr != nil {
+		recovered = append(recovered, server.RecoveredFile{File: "sites.yaml", Err: siteErr.Error(), Broken: brokenSite})
+	}
+
+	for _, r := range recovered {
+		if r.Broken != "" {
+			fmt.Fprintf(stderr, "recovered %s: %s (moved to %s)\n", r.File, r.Err, r.Broken)
+		} else {
+			fmt.Fprintf(stderr, "recovered %s: %s\n", r.File, r.Err)
+		}
+	}
 
 	if flags.port >= 0 {
 		cfg.Port = flags.port
@@ -232,6 +253,7 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		Status:            col.StatusFunc(),
 		ModelsStatus:      gate.Status,
 		BinaryUploadPaths: []string{"/api/me/photo"},
+		Recovered:         recovered,
 	}, func(mux *http.ServeMux) {
 		getVocabNames := func() []string {
 			v := *vocabRef

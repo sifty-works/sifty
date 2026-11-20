@@ -74,7 +74,7 @@ func (s *Store) Update(fn func(c *Config) error) error {
 	_ = enc.Close()
 
 	if readErr == nil {
-		if err := writeBackup(s.path, fileData); err != nil {
+		if err := writeBackup(s.path, buf.Bytes()); err != nil {
 			return fmt.Errorf("writing backup: %w", err)
 		}
 	}

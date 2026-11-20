@@ -39,6 +39,12 @@ type StatusExtra struct {
 	Attention  *Attention       `json:"attention"`
 }
 
+type RecoveredFile struct {
+	File   string `json:"file"`
+	Err    string `json:"err"`
+	Broken string `json:"broken"`
+}
+
 type StatusResp struct {
 	Version    string               `json:"version"`
 	Offline    bool                 `json:"offline"`
@@ -48,6 +54,7 @@ type StatusResp struct {
 	Catalogue  int64                `json:"catalogue"`
 	Attention  *Attention           `json:"attention"`
 	Models     *models.ModelsStatus `json:"models,omitempty"`
+	Recovered  []RecoveredFile      `json:"recovered"`
 }
 
 type VersionResp struct {
@@ -74,13 +81,14 @@ type Options struct {
 	Status            func() StatusExtra
 	ModelsStatus      func() *models.ModelsStatus
 	BinaryUploadPaths []string
+	Recovered         []RecoveredFile
 }
 
 func New(opts Options, routes func(*http.ServeMux)) http.Handler {
 	mux := http.NewServeMux()
 
 	Handle(mux, "GET /api/status", opts.Logger, func(r *http.Request, _ struct{}) (StatusResp, error) {
-		resp := StatusResp{Version: opts.Version, Offline: opts.Offline, Debug: opts.Debug}
+		resp := StatusResp{Version: opts.Version, Offline: opts.Offline, Debug: opts.Debug, Recovered: opts.Recovered}
 		if opts.Status != nil {
 			extra := opts.Status()
 			resp.Collecting = extra.Collecting

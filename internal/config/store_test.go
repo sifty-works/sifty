@@ -12,22 +12,10 @@ import (
 	"github.com/sifty-works/sifty-server/internal/config"
 )
 
-func TestOpenInvalidFileReturnsError(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "sifty.yaml")
-	if err := os.WriteFile(path, []byte("unknown_key: true\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	_, err := config.Open(path)
-	if err == nil {
-		t.Fatal("Open invalid file should return an error")
-	}
-}
-
 func openStore(t *testing.T) (*config.Store, string) {
 	t.Helper()
 	dir := t.TempDir()
-	s, err := config.Open(filepath.Join(dir, "sifty.yaml"))
+	s, _, err := config.Open(filepath.Join(dir, "sifty.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,11 +29,148 @@ func openStoreWith(t *testing.T, content string) (*config.Store, string) {
 	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
 		t.Fatal(err)
 	}
-	s, err := config.Open(path)
+	s, _, err := config.Open(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return s, dir
+}
+
+func TestOpenBrokenFileWithValidBackupUsesBackup(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "sifty.yaml")
+	backupDir := filepath.Join(dir, "backups")
+	if err := os.MkdirAll(backupDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	backup := filepath.Join(backupDir, "sifty-20240101T120000.000000000Z.yaml")
+	if err := os.WriteFile(backup, []byte("port: 9191\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("{{{: not valid yaml\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	s, result, err := config.Open(path)
+	if err != nil {
+		t.Fatalf("Open should recover from broken file: %v", err)
+	}
+	if result.Broken == "" {
+		t.Fatal("want a recovery with a renamed broken file")
+	}
+	if s.Get().Port != 9191 {
+		t.Errorf("port should come from backup: got %d", s.Get().Port)
+	}
+}
+
+func TestOpenBrokenFileNoBackupUsesDefaults(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "sifty.yaml")
+	if err := os.WriteFile(path, []byte("{{{: not valid yaml\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	s, result, err := config.Open(path)
+	if err != nil {
+		t.Fatalf("Open should recover without backup: %v", err)
+	}
+	if result.Broken == "" {
+		t.Fatal("want a recovery with a renamed broken file")
+	}
+	if s.Get().Port != config.Defaults().Port {
+		t.Errorf("port should be default: got %d", s.Get().Port)
+	}
+}
+
+func TestOpenValidFileIsNeverRenamed(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "sifty.yaml")
+	if err := os.WriteFile(path, []byte("port: 8181\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	_, result, err := config.Open(path)
+	if err != nil {
+		t.Fatalf("Open valid file should not error: %v", err)
+	}
+	if result.Broken != "" || result.Err != "" {
+		t.Errorf("valid file should produce no broken recovery, got %+v", result)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Errorf("valid file should still exist: %v", err)
+	}
+}
+
+func TestOpenUnreadableFileIsNotRenamed(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root bypasses permissions")
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "sifty.yaml")
+	if err := os.WriteFile(path, []byte("port: 7373\n"), 0000); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(path, 0600)
+	_, _, err := config.Open(path)
+	if err == nil {
+		t.Fatal("unreadable file should return error")
+	}
+	entries, _ := os.ReadDir(dir)
+	for _, e := range entries {
+		if strings.Contains(e.Name(), ".broken") {
+			t.Errorf("unreadable file should not be renamed; found %s", e.Name())
+		}
+	}
+}
+
+func TestOpenSourceSurvivesBrokenFile(t *testing.T) {
+	s, dir := openStoreWith(t, "port: 7373\n")
+	s.Update(func(c *config.Config) error {
+		c.Sources = append(c.Sources, config.SourceConfig{URL: "https://example.com/jobs", Enabled: true})
+		return nil
+	})
+	path := filepath.Join(dir, "sifty.yaml")
+	if err := os.WriteFile(path, []byte("{{{: broken\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	s2, result, err := config.Open(path)
+	if err != nil {
+		t.Fatalf("Open should recover: %v", err)
+	}
+	if result.Broken == "" {
+		t.Fatal("want at least one recovery with a renamed broken file")
+	}
+	srcs := s2.Get().Sources
+	if len(srcs) == 0 {
+		t.Error("sources from backup should be restored")
+	} else if srcs[0].URL != "https://example.com/jobs" {
+		t.Errorf("source URL = %q", srcs[0].URL)
+	}
+}
+
+func TestOpenBrokenFileIsRestoredForNextStart(t *testing.T) {
+	s, dir := openStoreWith(t, "port: 7373\n")
+	s.Update(func(c *config.Config) error {
+		c.Sources = append(c.Sources, config.SourceConfig{URL: "https://example.com/jobs", Enabled: true})
+		return nil
+	})
+	path := filepath.Join(dir, "sifty.yaml")
+	if err := os.WriteFile(path, []byte("{{{: broken\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := config.Open(path); err != nil {
+		t.Fatalf("first Open should recover: %v", err)
+	}
+	s2, result, err := config.Open(path)
+	if err != nil {
+		t.Fatalf("second Open: %v", err)
+	}
+	if result.Broken != "" || len(result.Unknown) > 0 {
+		t.Errorf("second open should report nothing recovered, got %+v", result)
+	}
+	srcs := s2.Get().Sources
+	if len(srcs) == 0 {
+		t.Error("second open should have backup sources restored")
+	} else if srcs[0].URL != "https://example.com/jobs" {
+		t.Errorf("source URL = %q", srcs[0].URL)
+	}
 }
 
 func TestUpdateChangesInMemoryConfig(t *testing.T) {

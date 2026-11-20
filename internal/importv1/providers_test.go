@@ -74,7 +74,7 @@ func TestImportProviders_TypesAndCostMapped(t *testing.T) {
 	targetDir := t.TempDir()
 	runImport(t, fromDir, targetDir)
 
-	store, err := config.Open(filepath.Join(targetDir, "sifty.yaml"))
+	store, _, err := config.Open(filepath.Join(targetDir, "sifty.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +130,7 @@ func TestImportProviders_WorkStagesMapped(t *testing.T) {
 	targetDir := t.TempDir()
 	runImport(t, fromDir, targetDir)
 
-	store, err := config.Open(filepath.Join(targetDir, "sifty.yaml"))
+	store, _, err := config.Open(filepath.Join(targetDir, "sifty.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,7 +152,7 @@ func TestImportProviders_RuntimeFlagsCarried(t *testing.T) {
 	targetDir := t.TempDir()
 	runImport(t, fromDir, targetDir)
 
-	store, err := config.Open(filepath.Join(targetDir, "sifty.yaml"))
+	store, _, err := config.Open(filepath.Join(targetDir, "sifty.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -205,7 +205,7 @@ providers:
 	targetDir := t.TempDir()
 	runImport(t, fromDir, targetDir)
 
-	store, err := config.Open(filepath.Join(targetDir, "sifty.yaml"))
+	store, _, err := config.Open(filepath.Join(targetDir, "sifty.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}

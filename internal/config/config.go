@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"math"
 	"net/url"
-	"os"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -148,137 +147,96 @@ func SourceKey(rawURL string) (string, error) {
 	return key, nil
 }
 
-func load(path string) (Config, error) {
-	data, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		return Defaults(), nil
-	}
-	if err != nil {
-		return Config{}, fmt.Errorf("reading settings file: %w", err)
-	}
-	return parse(data)
-}
-
-func parse(data []byte) (Config, error) {
+func parse(data []byte) (Config, []string, error) {
 	c := Defaults()
 
 	var node yaml.Node
 	if err := yaml.Unmarshal(data, &node); err != nil {
-		return c, fmt.Errorf("parsing settings file: %w", err)
+		return c, nil, fmt.Errorf("parsing settings file: %w", err)
 	}
 	if node.Kind == 0 {
-		return c, nil
+		return c, nil, nil
 	}
 	if node.Kind != yaml.DocumentNode || len(node.Content) == 0 {
-		return c, fmt.Errorf("settings file must be a YAML mapping")
+		return c, nil, fmt.Errorf("settings file must be a YAML mapping")
 	}
 	root := node.Content[0]
 	if root.Kind != yaml.MappingNode {
-		return c, fmt.Errorf("settings file must be a YAML mapping")
+		return c, nil, fmt.Errorf("settings file must be a YAML mapping")
 	}
 
-	knownTop := map[string]bool{
-		"port": true, "debug": true, "collection": true, "sources": true, "weights": true, "rates": true,
-		"providers": true, "work": true, "allow_paid_bulk": true, "daily_model_limit": true,
-	}
-	for i := 0; i+1 < len(root.Content); i += 2 {
-		k := root.Content[i].Value
-		if !knownTop[k] {
-			return c, fmt.Errorf("unknown settings key: %q", k)
-		}
-	}
-
+	knownTop := map[string]bool{"port": true, "debug": true, "collection": true, "sources": true, "weights": true, "rates": true,
+		"providers": true, "work": true, "allow_paid_bulk": true, "daily_model_limit": true}
 	knownCollection := map[string]bool{"auto": true, "interval": true}
-	for i := 0; i+1 < len(root.Content); i += 2 {
-		if root.Content[i].Value != "collection" {
-			continue
-		}
-		collNode := root.Content[i+1]
-		if collNode.Kind != yaml.MappingNode {
-			break
-		}
-		for j := 0; j+1 < len(collNode.Content); j += 2 {
-			k := collNode.Content[j].Value
-			if !knownCollection[k] {
-				return c, fmt.Errorf("unknown settings key: \"collection.%s\"", k)
-			}
-		}
-	}
-
 	knownSource := map[string]bool{"name": true, "url": true, "enabled": true}
-	for i := 0; i+1 < len(root.Content); i += 2 {
-		if root.Content[i].Value != "sources" {
-			continue
-		}
-		seqNode := root.Content[i+1]
-		if seqNode.Kind != yaml.SequenceNode {
-			break
-		}
-		for idx, srcNode := range seqNode.Content {
-			if srcNode.Kind != yaml.MappingNode {
-				continue
-			}
-			for j := 0; j+1 < len(srcNode.Content); j += 2 {
-				k := srcNode.Content[j].Value
-				if !knownSource[k] {
-					return c, fmt.Errorf("unknown settings key: %q in sources[%d]", k, idx)
-				}
-			}
-		}
-	}
-
 	knownProvider := map[string]bool{"type": true, "model": true, "endpoint": true, "cost": true, "timeout": true, "context": true, "key_env": true}
+	knownWork := map[string]bool{"reading": true, "shortlist_check": true, "preparation": true}
+	var unknown []string
 	for i := 0; i+1 < len(root.Content); i += 2 {
-		if root.Content[i].Value != "providers" {
+		k, v := root.Content[i].Value, root.Content[i+1]
+		if !knownTop[k] {
+			unknown = append(unknown, k)
 			continue
 		}
-		provMap := root.Content[i+1]
-		if provMap.Kind != yaml.MappingNode {
-			break
-		}
-		for j := 0; j+1 < len(provMap.Content); j += 2 {
-			name := provMap.Content[j].Value
-			provNode := provMap.Content[j+1]
-			if provNode.Kind != yaml.MappingNode {
+		switch k {
+		case "collection":
+			if v.Kind == yaml.MappingNode {
+				for j := 0; j+1 < len(v.Content); j += 2 {
+					if ck := v.Content[j].Value; !knownCollection[ck] {
+						unknown = append(unknown, "collection."+ck)
+					}
+				}
+			}
+		case "work":
+			if v.Kind == yaml.MappingNode {
+				for j := 0; j+1 < len(v.Content); j += 2 {
+					if wk := v.Content[j].Value; !knownWork[wk] {
+						unknown = append(unknown, "work."+wk)
+					}
+				}
+			}
+		case "sources":
+			if v.Kind == yaml.SequenceNode {
+				for idx, src := range v.Content {
+					if src.Kind != yaml.MappingNode {
+						continue
+					}
+					for j := 0; j+1 < len(src.Content); j += 2 {
+						if sk := src.Content[j].Value; !knownSource[sk] {
+							unknown = append(unknown, fmt.Sprintf("sources[%d].%s", idx, sk))
+						}
+					}
+				}
+			}
+		case "providers":
+			if v.Kind != yaml.MappingNode {
 				continue
 			}
-			for k := 0; k+1 < len(provNode.Content); k += 2 {
-				key := provNode.Content[k].Value
-				if key == "api_key" {
-					return c, fmt.Errorf("providers.%s: use key_env to name an environment variable; do not put a key in the settings file", name)
+			for j := 0; j+1 < len(v.Content); j += 2 {
+				name, pn := v.Content[j].Value, v.Content[j+1]
+				if pn.Kind != yaml.MappingNode {
+					continue
 				}
-				if !knownProvider[key] {
-					return c, fmt.Errorf("unknown settings key: %q in providers.%s", key, name)
+				for n := 0; n+1 < len(pn.Content); n += 2 {
+					switch pk := pn.Content[n].Value; {
+					case pk == "api_key":
+						return c, nil, fmt.Errorf("providers.%s: use key_env to name an environment variable; do not put a key in the settings file", name)
+					case !knownProvider[pk]:
+						unknown = append(unknown, "providers."+name+"."+pk)
+					}
 				}
-			}
-		}
-	}
-
-	knownWork := map[string]bool{"reading": true, "shortlist_check": true, "preparation": true}
-	for i := 0; i+1 < len(root.Content); i += 2 {
-		if root.Content[i].Value != "work" {
-			continue
-		}
-		workNode := root.Content[i+1]
-		if workNode.Kind != yaml.MappingNode {
-			break
-		}
-		for j := 0; j+1 < len(workNode.Content); j += 2 {
-			k := workNode.Content[j].Value
-			if !knownWork[k] {
-				return c, fmt.Errorf("unknown settings key: \"work.%s\"", k)
 			}
 		}
 	}
 
 	if err := node.Decode(&c); err != nil {
-		return c, fmt.Errorf("parsing settings file: %w", err)
+		return c, nil, fmt.Errorf("parsing settings file: %w", err)
 	}
 
 	if err := Validate(c); err != nil {
-		return c, err
+		return c, nil, err
 	}
-	return c, nil
+	return c, unknown, nil
 }
 
 var validProviderTypes = map[string]bool{"ollama": true, "openai": true, "cli-claude": true, "cli-opencode": true}

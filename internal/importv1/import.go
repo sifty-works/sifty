@@ -392,7 +392,7 @@ func runImport(ctx context.Context, fromDir, dbPath, settingsPath, dataDir strin
 	}
 	defer newDB.Close()
 
-	store, err := config.Open(settingsPath)
+	store, _, err := config.Open(settingsPath)
 	if err != nil {
 		return fmt.Errorf("opening settings: %w", err)
 	}

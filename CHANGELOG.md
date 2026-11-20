@@ -4,6 +4,7 @@ Notable changes of Sifty, newest first. Versions follow `MAJOR.MINOR.PATCH`.
 
 ## Unreleased
 
+- Known sites are described in an embedded `sites.yaml` that `<data>/vocab/sites.yaml` can extend or override by host; a broken settings or site file no longer stops the start: it is renamed, the newest backup (or the defaults) is restored, and the recovery is listed in the status; unknown settings keys are ignored and reported.
 - Model providers (Ollama, OpenAI-compatible endpoints, command-line tools) with a gate for background work: one call per provider at a time, a pause switch, a daily limit of background calls and a journal of calls; providers and their checks in the status; providers imported from the previous version.
 - Sources are read by one module per kind of site with one table of known sites; no visible change.
 - The import leaves out vacancies without full text that no profile acted on, without a removal mark, so collection can gather them again.

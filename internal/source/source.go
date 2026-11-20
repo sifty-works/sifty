@@ -17,13 +17,13 @@ var ErrNothingRecognised = errors.New("nothing recognised on the page")
 type Attr struct{ Attr, Substr string }
 
 type Site struct {
-	Name        string
-	Address     string
-	ListAddress string
-	Content     []Attr
-	LinkPattern string
-	ScriptVar   string
-	SkipJSONLD  bool
+	Name        string `yaml:"-"`
+	Address     string `yaml:"-"`
+	ListAddress string `yaml:"list_address"`
+	Content     []Attr `yaml:"content"`
+	LinkPattern string `yaml:"link_pattern"`
+	ScriptVar   string `yaml:"script_var"`
+	SkipJSONLD  bool   `yaml:"skip_json_ld"`
 }
 
 type Module interface {
@@ -39,19 +39,6 @@ type Grouper interface {
 	Group(u *url.URL) string
 }
 
-var knownSites = map[string]struct {
-	mod  Module
-	site Site
-}{
-	"web3.career":             {mod: srcLinks, site: Site{SkipJSONLD: true, LinkPattern: `^/[a-z0-9][a-z0-9-]*/\d{5,}$`, Content: []Attr{{Attr: "class", Substr: "text-dark-grey-text"}}}},
-	"web3.careers":            {mod: srcLinks, site: Site{SkipJSONLD: true, LinkPattern: `^/[a-z0-9][a-z0-9-]*/\d{5,}$`, Content: []Attr{{Attr: "class", Substr: "text-dark-grey-text"}}}},
-	"remote3.co":              {mod: srcFeed, site: Site{ListAddress: "https://remote3.co/api/rss", Content: []Attr{{Attr: "class", Substr: "RemoteJobs_jobDescription"}}}},
-	"weworkremotely.com":      {mod: srcFeed, site: Site{ListAddress: "https://weworkremotely.com/remote-jobs.rss"}},
-	"cryptocurrencyjobs.co":   {mod: srcFeed, site: Site{ListAddress: "https://cryptocurrencyjobs.co/index.xml"}},
-	"jobs.framework.ventures": {mod: srcGetro, site: Site{ListAddress: "https://jobs.framework.ventures/jobs"}},
-	"a16zfrontier.com":        {mod: srcA16Z, site: Site{ScriptVar: "portfolioJobs"}},
-}
-
 var apiModules = []Module{srcGreenhouse, srcLever, srcAshby, srcHN}
 
 func canonHost(u *url.URL) string {
@@ -65,7 +52,7 @@ func For(u *url.URL) (Module, Site) {
 			return m, s
 		}
 	}
-	if entry, ok := knownSites[canonHost(u)]; ok {
+	if entry, ok := sitesByHost[canonHost(u)]; ok {
 		site := entry.site
 		site.Address = s.Address
 		return entry.mod, site

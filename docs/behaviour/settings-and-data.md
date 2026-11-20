@@ -22,8 +22,12 @@ The application is one program to run; reading application forms additionally ne
 
 - **The settings file**, one file in the data folder, holds what the user configures: sources, the collection interval and switch, providers and the provider of each kind of model work, "Allow paid bulk work", the daily limit of background model calls, the web search provider, weights and rates.
 - **The database** holds what the application remembers about its use: the active profile and the switch that pauses background model work.
-- **Vocabularies** the user edits, such as industries, are kept as separate files in the data folder.
+- **Vocabularies** the user edits, such as industries, are kept as separate files in the data folder. The description of known sites is kept in `<data>/vocab/sites.yaml` when the user wants to override it; otherwise the application uses an embedded description.
 - Forms in Settings edit all of these. Advanced shows the settings file only.
+
+## Recovery at start
+
+A settings file or a site description file that cannot be parsed or fails validation is never fatal. The application renames the broken file to `<name>.broken-<time>`, uses the newest valid backup of the settings file or the embedded description for site descriptions, and starts normally. Each recovery is printed at start and listed under `recovered` in the status response. A file that cannot be read (permissions, I/O error) is not renamed. An unknown key in the settings file, as may appear after a rollback to an older version, is ignored.
 
 ## Settings
 
@@ -38,7 +42,7 @@ The application is one program to run; reading application forms additionally ne
   - a switch that pauses background model work, and a daily limit of background model calls.
 - **Web search:** the provider used to find employers' pages (Tavily, Brave, DuckDuckGo, or none), with its key taken from the environment or the secrets file. With none, the employer search uses only applicant tracking boards.
 - **Background work:** what is running, what is waiting and what failed, with the reason (see `application.md`).
-- **Advanced:** the settings file in a text editor, next to the forms. Saving checks the file first and keeps a backup in the data folder; the last ten backups are kept, and the editor names the folder where they are. A change made in a form keeps the comments of the settings file.
+- **Advanced:** the settings file in a text editor, next to the forms. Saving checks the file first and keeps a backup of the saved content in the data folder; the last ten backups are kept, and the editor names the folder where they are. A change made in a form keeps the comments of the settings file.
 
 A change applies at once without a restart, except a change of the port. A change that affects results (weights, vocabularies) starts a background recomputation and the answer returns at once.
 

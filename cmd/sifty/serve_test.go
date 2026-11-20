@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -118,22 +119,79 @@ func TestConfigDefaultsPrintsValidYAML(t *testing.T) {
 	}
 }
 
-func TestInvalidSettingsFileStopsStart(t *testing.T) {
+func TestBrokenSettingsFileIsRecoveredAtStart(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "sifty.yaml"), []byte("unknown_key: true\n"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "sifty.yaml"), []byte("{{{: not valid yaml\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
+	port, cancel := startServe(t, dir)
+	defer cancel()
 
-	var stderr bytes.Buffer
-	err := run(context.Background(),
-		[]string{"serve", "--data-dir", dir, "--port", "0"},
-		io.Discard, &stderr)
-
-	if err == nil {
-		t.Fatal("invalid settings file should stop the start")
+	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/api/status", port))
+	if err != nil {
+		t.Fatalf("GET /api/status: %v", err)
 	}
-	if !strings.Contains(stderr.String(), "unknown_key") {
-		t.Errorf("error should name the bad key; got stderr: %q", stderr.String())
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	var status struct {
+		Recovered []struct {
+			File   string `json:"file"`
+			Err    string `json:"err"`
+			Broken string `json:"broken"`
+		} `json:"recovered"`
+	}
+	if err := json.Unmarshal(body, &status); err != nil {
+		t.Fatalf("parse status: %v", err)
+	}
+	if len(status.Recovered) == 0 {
+		t.Error("broken settings file should appear in status recovered list")
+	} else {
+		if status.Recovered[0].Broken == "" {
+			t.Error("recovery should name the broken file")
+		}
+		if !strings.Contains(status.Recovered[0].File, "sifty.yaml") {
+			t.Errorf("recovery file = %q, want sifty.yaml", status.Recovered[0].File)
+		}
+	}
+}
+
+func TestUnknownConfigKeyAppearsInStatusRecovered(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "sifty.yaml"), []byte("unknown_top_key: true\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	port, cancel := startServe(t, dir)
+	defer cancel()
+
+	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/api/status", port))
+	if err != nil {
+		t.Fatalf("GET /api/status: %v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	var status struct {
+		Recovered []struct {
+			File   string `json:"file"`
+			Err    string `json:"err"`
+			Broken string `json:"broken"`
+		} `json:"recovered"`
+	}
+	if err := json.Unmarshal(body, &status); err != nil {
+		t.Fatalf("parse status: %v", err)
+	}
+	if len(status.Recovered) == 0 {
+		t.Error("unknown key should appear in status recovered list")
+		return
+	}
+	r := status.Recovered[0]
+	if r.Broken != "" {
+		t.Error("unknown key should not rename the settings file")
+	}
+	if !strings.Contains(r.Err, "unknown_top_key") {
+		t.Errorf("recovery error should name the unknown key, got %q", r.Err)
+	}
+	if !strings.Contains(r.File, "sifty.yaml") {
+		t.Errorf("recovery file should be sifty.yaml, got %q", r.File)
 	}
 }
 

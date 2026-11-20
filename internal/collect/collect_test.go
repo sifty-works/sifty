@@ -80,7 +80,7 @@ func newEnvClock(t *testing.T, now func() time.Time, offline bool) *env {
 	t.Helper()
 	database := openDB(t)
 	dir := t.TempDir()
-	store, err := config.Open(filepath.Join(dir, "sifty.yaml"))
+	store, _, err := config.Open(filepath.Join(dir, "sifty.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}

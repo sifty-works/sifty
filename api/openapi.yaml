@@ -954,6 +954,19 @@ components:
             required:
                 - id
             type: object
+        RecoveredFile:
+            properties:
+                broken:
+                    type: string
+                err:
+                    type: string
+                file:
+                    type: string
+            required:
+                - file
+                - err
+                - broken
+            type: object
         ReferenceCountry:
             properties:
                 code:
@@ -1277,6 +1290,10 @@ components:
                         - type: "null"
                 offline:
                     type: boolean
+                recovered:
+                    items:
+                        $ref: '#/components/schemas/RecoveredFile'
+                    type: array
                 version:
                     type: string
             required:
@@ -1287,6 +1304,7 @@ components:
                 - lastRun
                 - catalogue
                 - attention
+                - recovered
             type: object
         Tile:
             properties:
