@@ -124,8 +124,8 @@ func toRow(rr repoRow, now time.Time, inputs int64) Row {
 	}
 }
 
-func profileVisibility(ctx context.Context, database *db.DB, profileID int64, vocabNames []string) candidate.Filter {
-	p, err := candidate.ProfileSearch(ctx, database, profileID, vocabNames)
+func profileVisibility(ctx context.Context, database *db.DB, profileID int64) candidate.Filter {
+	p, err := candidate.ProfileSearch(ctx, database, profileID)
 	if err != nil {
 		return candidate.Filter{SQL: "1=0"}
 	}
@@ -142,8 +142,8 @@ func buildCounts(cm map[string]int) Counts {
 	}
 }
 
-func loadCounts(ctx context.Context, database *db.DB, now time.Time, profileID int64, vocabNames []string) (Counts, error) {
-	vis := profileVisibility(ctx, database, profileID, vocabNames)
+func loadCounts(ctx context.Context, database *db.DB, now time.Time, profileID int64) (Counts, error) {
+	vis := profileVisibility(ctx, database, profileID)
 	cm, err := stageCounts(ctx, database, now, profileID, vis)
 	if err != nil {
 		return Counts{}, err
@@ -151,8 +151,8 @@ func loadCounts(ctx context.Context, database *db.DB, now time.Time, profileID i
 	return buildCounts(cm), nil
 }
 
-func rowAndCounts(ctx context.Context, database *db.DB, now func() time.Time, profileID, vacancyID int64, vocabNames []string, r fit.Rules) (Row, Counts, error) {
-	vis := profileVisibility(ctx, database, profileID, vocabNames)
+func rowAndCounts(ctx context.Context, database *db.DB, now func() time.Time, profileID, vacancyID int64, r fit.Rules) (Row, Counts, error) {
+	vis := profileVisibility(ctx, database, profileID)
 	_, row, _, err := loadVacancyFull(ctx, database, profileID, vacancyID)
 	if err != nil {
 		return Row{}, Counts{}, err
@@ -165,8 +165,8 @@ func rowAndCounts(ctx context.Context, database *db.DB, now func() time.Time, pr
 	return toRow(row, t, fitInputs(ctx, database, profileID, r)), buildCounts(cm), nil
 }
 
-func list(ctx context.Context, database *db.DB, now func() time.Time, profileID int64, stage, q, sort string, vocabNames []string, industries []string, f Filters, r fit.Rules) ([]Row, Counts, []IndustryCount, []SourceCount, int, error) {
-	vis := profileVisibility(ctx, database, profileID, vocabNames)
+func list(ctx context.Context, database *db.DB, now func() time.Time, profileID int64, stage, q, sort string, industries []string, f Filters, r fit.Rules) ([]Row, Counts, []IndustryCount, []SourceCount, int, error) {
+	vis := profileVisibility(ctx, database, profileID)
 	f.inputs = fitInputs(ctx, database, profileID, r)
 	t := now()
 	cm, err := stageCounts(ctx, database, t, profileID, vis)
@@ -194,7 +194,7 @@ func list(ctx context.Context, database *db.DB, now func() time.Time, profileID 
 }
 
 func applyDecision(ctx context.Context, database *db.DB, now func() time.Time,
-	vacancyID, profileID int64, from, to, reason string, confirmed bool, vocabNames []string, r fit.Rules) (Row, Counts, error) {
+	vacancyID, profileID int64, from, to, reason string, confirmed bool, r fit.Rules) (Row, Counts, error) {
 
 	var currentStage string
 	err := database.QueryRowContext(ctx,
@@ -214,7 +214,7 @@ func applyDecision(ctx context.Context, database *db.DB, now func() time.Time,
 	}
 
 	if from == to {
-		return rowAndCounts(ctx, database, now, profileID, vacancyID, vocabNames, r)
+		return rowAndCounts(ctx, database, now, profileID, vacancyID, r)
 	}
 
 	if err := validateMove(from, to, reason, confirmed); err != nil {
@@ -252,7 +252,7 @@ func applyDecision(ctx context.Context, database *db.DB, now func() time.Time,
 	if err := tx.Commit(); err != nil {
 		return Row{}, Counts{}, fmt.Errorf("inbox: decision: commit: %w", err)
 	}
-	return rowAndCounts(ctx, database, now, profileID, vacancyID, vocabNames, r)
+	return rowAndCounts(ctx, database, now, profileID, vacancyID, r)
 }
 
 func validateMove(from, to, reason string, confirmed bool) error {

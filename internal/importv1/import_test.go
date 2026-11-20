@@ -1705,7 +1705,7 @@ func TestImport_ProfileSearchFieldsImported(t *testing.T) {
 	}
 }
 
-func TestImport_IndustriesAssignedFromDefaultVocab(t *testing.T) {
+func TestImport_IndustriesReadFromBoardURL(t *testing.T) {
 	fromDir := makeOldDir(t, "")
 	oldDB := openOldDB(t, fromDir)
 
@@ -1713,9 +1713,9 @@ func TestImport_IndustriesAssignedFromDefaultVocab(t *testing.T) {
 		INSERT INTO jobs (id, identity, title, company, original_url,
 		  description, description_status, first_seen, last_seen, description_html)
 		VALUES (1, 'chain|dev', 'Blockchain developer', 'ChainCo',
-		  'https://example.com/jobs/chaindev',
+		  'https://web3.career/jobs/chaindev',
 		  '', 'available', '2024-01-01T00:00:00Z', '2024-01-02T00:00:00Z',
-		  '<p>Write smart contract code using solidity for ethereum protocols.</p>')`)
+		  '<p>Write smart contract code.</p>')`)
 	if err != nil {
 		t.Fatalf("insert job: %v", err)
 	}
@@ -1733,7 +1733,7 @@ func TestImport_IndustriesAssignedFromDefaultVocab(t *testing.T) {
 	}
 }
 
-func TestImport_VacancyWithNoMatchingKeywordsKeepsEmptyIndustries(t *testing.T) {
+func TestImport_VacancyFromUnknownBoardKeepsEmptyIndustries(t *testing.T) {
 	fromDir := makeOldDir(t, "")
 	oldDB := openOldDB(t, fromDir)
 
@@ -1758,7 +1758,7 @@ func TestImport_VacancyWithNoMatchingKeywordsKeepsEmptyIndustries(t *testing.T) 
 		t.Fatalf("query industries: %v", err)
 	}
 	if industriesJSON != "[]" {
-		t.Errorf("vacancy with no keyword matches: got %q, want []", industriesJSON)
+		t.Errorf("vacancy from unknown board: got %q, want []", industriesJSON)
 	}
 }
 

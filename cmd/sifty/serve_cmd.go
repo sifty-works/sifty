@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -24,8 +23,6 @@ import (
 	"github.com/sifty-works/sifty-server/internal/fetch/fetchtest"
 	"github.com/sifty-works/sifty-server/internal/fit"
 	"github.com/sifty-works/sifty-server/internal/inbox"
-	"github.com/sifty-works/sifty-server/internal/industry"
-	"github.com/sifty-works/sifty-server/internal/listing"
 	"github.com/sifty-works/sifty-server/internal/models"
 	"github.com/sifty-works/sifty-server/internal/runner"
 	"github.com/sifty-works/sifty-server/internal/server"
@@ -124,13 +121,6 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	gate := models.NewGate(database, store, offline, secrets)
 	defer gate.Stop(context.Background())
 
-	vocabPath := filepath.Join(dataDir, "vocab", "industries.yaml")
-	vocab, err := industry.LoadOrDefault(vocabPath)
-	if err != nil {
-		logger.Warn("industry vocab load failed; using default", "err", err)
-		vocab = industry.DefaultVocab()
-	}
-
 	var fetcher fetch.Fetcher
 	if flags.replayDir != "" {
 		rm, err := fetchtest.Load(flags.replayDir)
@@ -146,20 +136,8 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		})
 	}
 
-	vocabRef := &vocab
-	assignFn := func(title, tags, text string) []string {
-		return industry.Assign(title, tags, text, *vocabRef)
-	}
-	cat := catalog.New(database, time.Now, assignFn)
+	cat := catalog.New(database, time.Now)
 	r := runner.New(database, map[string]int{"browser": 1, "net": 4, "cpu": 1}, time.Now, logger)
-
-	r.Register(runner.Kind{
-		Name:   "assign_industries",
-		Resume: true,
-		Run: func(runCtx context.Context, j *runner.Job) error {
-			return runAssignIndustries(runCtx, j, cat, vocabRef)
-		},
-	})
 
 	rules := func() fit.Rules { c := store.Get(); return fit.Rules{Weights: c.Weights, Rates: c.Rates} }
 	recomputeFit := func() { r.Enqueue(runner.Spec{Kind: "recompute_fit"}) }
@@ -217,31 +195,6 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 
 	filesDir := filepath.Join(dataDir, "files")
 
-	getVocab := func() []inbox.IndustryItem {
-		v := *vocabRef
-		items := make([]inbox.IndustryItem, len(v.Industries))
-		for i, ind := range v.Industries {
-			items[i] = inbox.IndustryItem{Name: ind.Name, Keywords: ind.Keywords}
-		}
-		return items
-	}
-	saveVocab := func(items []inbox.IndustryItem) error {
-		inds := make([]industry.Industry, len(items))
-		for i, it := range items {
-			inds[i] = industry.Industry{Name: it.Name, Keywords: it.Keywords}
-		}
-		newVocab := industry.Vocab{Industries: inds}
-		if err := industry.Validate(newVocab); err != nil {
-			return err
-		}
-		if err := industry.Save(vocabPath, newVocab); err != nil {
-			return err
-		}
-		*vocabRef = newVocab
-		r.Enqueue(runner.Spec{Kind: "assign_industries", Subject: "", Priority: 0})
-		return nil
-	}
-
 	handler := server.New(server.Options{
 		Version:           version,
 		APISha256:         siftyapi.Sha256(),
@@ -255,14 +208,6 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		BinaryUploadPaths: []string{"/api/me/photo"},
 		Recovered:         recovered,
 	}, func(mux *http.ServeMux) {
-		getVocabNames := func() []string {
-			v := *vocabRef
-			names := make([]string, len(v.Industries))
-			for i, ind := range v.Industries {
-				names[i] = ind.Name
-			}
-			return names
-		}
 		registerModelRoutes(mux, gate, logger)
 		inbox.RegisterRoutes(mux, database, time.Now, logger, collectActive, func() map[string]string {
 			cfg := store.Get()
@@ -273,8 +218,8 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 				}
 			}
 			return m
-		}, getVocabNames, rules)
-		inbox.RegisterIndustryRoutes(mux, logger, getVocab, saveVocab)
+		}, rules)
+		inbox.RegisterIndustryRoutes(mux, logger)
 		candidate.RegisterRoutes(mux, database, filesDir, logger, recomputeFit)
 		col.RegisterRoutes(mux)
 	})
@@ -384,55 +329,4 @@ func retentionDue(now time.Time, r *runner.Runner) bool {
 		return true
 	}
 	return now.After(last.Created.Add(24 * time.Hour))
-}
-
-func runAssignIndustries(ctx context.Context, j *runner.Job, cat *catalog.Catalog, vocabRef *industry.Vocab) error {
-	rel, err := j.Lane(ctx, "cpu")
-	if err != nil {
-		return err
-	}
-	defer rel()
-
-	total, err := cat.CountVacancies(ctx)
-	if err != nil {
-		return fmt.Errorf("assign_industries: count: %w", err)
-	}
-
-	const batchSize = 200
-	done := 0
-	for after := int64(0); ; {
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		batch, err := cat.VacancyTexts(ctx, after, batchSize)
-		if err != nil {
-			return fmt.Errorf("assign_industries: load batch: %w", err)
-		}
-		if len(batch) == 0 {
-			break
-		}
-		after = batch[len(batch)-1].ID
-		v := *vocabRef
-		for _, row := range batch {
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-			var tags []string
-			json.Unmarshal([]byte(row.TagsJSON), &tags)
-			tagsText := strings.Join(tags, " ")
-			var plainText string
-			if len(row.Body) > 0 {
-				if h, err := catalog.Body(row.Body); err == nil {
-					plainText = listing.PlainText(h)
-				}
-			}
-			names := industry.Assign(row.Title, tagsText, plainText, v)
-			if err := cat.SetIndustries(ctx, row.ID, names); err != nil {
-				return fmt.Errorf("assign_industries: set %d: %w", row.ID, err)
-			}
-			done++
-		}
-		j.Progress(done, total, "")
-	}
-	return nil
 }

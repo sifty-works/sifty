@@ -45,7 +45,7 @@ func newTestServer(t *testing.T, d *db.DB) *httptest.Server {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	h := server.New(server.Options{Version: "test", Port: 9999, Logger: logger},
 		func(mux *http.ServeMux) {
-			inbox.RegisterRoutes(mux, d, testNowFn, logger, func() bool { return false }, nil, nil, nil)
+			inbox.RegisterRoutes(mux, d, testNowFn, logger, func() bool { return false }, nil, nil)
 		})
 	ts := httptest.NewServer(h)
 	t.Cleanup(ts.Close)
@@ -756,7 +756,7 @@ func TestDelete_Refused(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	h := server.New(server.Options{Version: "test", Port: 9999, Logger: logger},
 		func(mux *http.ServeMux) {
-			inbox.RegisterRoutes(mux, d, testNowFn, logger, func() bool { return true }, nil, nil, nil)
+			inbox.RegisterRoutes(mux, d, testNowFn, logger, func() bool { return true }, nil, nil)
 		})
 	ts2 := httptest.NewServer(h)
 	defer ts2.Close()
@@ -902,7 +902,7 @@ func TestVacancyView_Sources(t *testing.T) {
 	h := server.New(server.Options{Version: "test", Port: 9999, Logger: logger},
 		func(mux *http.ServeMux) {
 			inbox.RegisterRoutes(mux, d, testNowFn, logger, func() bool { return false },
-				func() map[string]string { return map[string]string{"src": "Named Board"} }, nil, nil)
+				func() map[string]string { return map[string]string{"src": "Named Board"} }, nil)
 		})
 	ts := httptest.NewServer(h)
 	t.Cleanup(ts.Close)
@@ -951,7 +951,7 @@ func TestVacancyView_SourceNameFromLiveConfig(t *testing.T) {
 						out[k] = v
 					}
 					return out
-				}, nil, nil)
+				}, nil)
 		})
 	ts := httptest.NewServer(h)
 	t.Cleanup(ts.Close)

@@ -112,7 +112,7 @@ func TestOutOfDateResultsAreDimmedUntilRecomputed(t *testing.T) {
 	add(t, newCat(d), post("https://example.com/jobs/be", "Senior Backend Engineer", "Co"))
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	ts := httptest.NewServer(server.New(server.Options{Version: "test", Port: 9999, Logger: logger}, func(mux *http.ServeMux) {
-		inbox.RegisterRoutes(mux, d, testNowFn, logger, func() bool { return false }, nil, nil, nil)
+		inbox.RegisterRoutes(mux, d, testNowFn, logger, func() bool { return false }, nil, nil)
 		candidate.RegisterRoutes(mux, d, "", logger, nil)
 	}))
 	t.Cleanup(ts.Close)

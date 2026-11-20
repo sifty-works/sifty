@@ -18,13 +18,14 @@ var ErrNothingRecognised = errors.New("nothing recognised on the page")
 type Attr struct{ Attr, Substr string }
 
 type Site struct {
-	Name        string `yaml:"-"`
-	Address     string `yaml:"-"`
-	ListAddress string `yaml:"list_address"`
-	Content     []Attr `yaml:"content"`
-	LinkPattern string `yaml:"link_pattern"`
-	ScriptVar   string `yaml:"script_var"`
-	SkipJSONLD  bool   `yaml:"skip_json_ld"`
+	Name        string   `yaml:"-"`
+	Address     string   `yaml:"-"`
+	ListAddress string   `yaml:"list_address"`
+	Content     []Attr   `yaml:"content"`
+	LinkPattern string   `yaml:"link_pattern"`
+	ScriptVar   string   `yaml:"script_var"`
+	SkipJSONLD  bool     `yaml:"skip_json_ld"`
+	Industries  []string `yaml:"industries"`
 }
 
 type Module interface {
@@ -67,6 +68,18 @@ func GroupKey(u *url.URL) string {
 		return g.Group(u)
 	}
 	return canonHost(u)
+}
+
+func BoardIndustriesForURL(urlStr string) []string {
+	u, err := url.Parse(urlStr)
+	if err != nil || u.Host == "" {
+		return nil
+	}
+	entry, ok := sitesByHost[canonHost(u)]
+	if !ok {
+		return nil
+	}
+	return entry.site.Industries
 }
 
 func fetchJSON(ctx context.Context, f fetch.Fetcher, apiURL string, dst any) error {

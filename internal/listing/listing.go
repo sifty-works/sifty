@@ -21,6 +21,7 @@ type Posting struct {
 	Location       string
 	Tags           []string
 	Fields         map[string]string
+	Industries     []string
 
 	Published      time.Time
 	PublishedBasis string

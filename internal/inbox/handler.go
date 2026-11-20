@@ -85,7 +85,7 @@ type PreviewResp struct {
 	Text string `json:"text"`
 }
 
-func RegisterRoutes(mux *http.ServeMux, database *db.DB, now func() time.Time, logger *slog.Logger, collectActive func() bool, getSourceNames func() map[string]string, getVocabNames func() []string, rules func() fit.Rules) {
+func RegisterRoutes(mux *http.ServeMux, database *db.DB, now func() time.Time, logger *slog.Logger, collectActive func() bool, getSourceNames func() map[string]string, rules func() fit.Rules) {
 	cat := catalog.New(database, now)
 	if rules == nil {
 		rules = func() fit.Rules { d := config.Defaults(); return fit.Rules{Weights: d.Weights, Rates: d.Rates} }
@@ -95,12 +95,6 @@ func RegisterRoutes(mux *http.ServeMux, database *db.DB, now func() time.Time, l
 			return nil
 		}
 		return getSourceNames()
-	}
-	vocabNames := func() []string {
-		if getVocabNames == nil {
-			return nil
-		}
-		return getVocabNames()
 	}
 
 	server.Handle(mux, "GET /api/vacancies", logger, func(r *http.Request, req ListReq) (ListResp, error) {
@@ -135,7 +129,7 @@ func RegisterRoutes(mux *http.ServeMux, database *db.DB, now func() time.Time, l
 			Unread:     unread,
 			Fit:        splitComma(req.Fit),
 		}
-		rows, counts, indCounts, srcCounts, total, err := list(r.Context(), database, now, pid, stage, strings.TrimSpace(req.Q), req.Sort, vocabNames(), industries, f, rules())
+		rows, counts, indCounts, srcCounts, total, err := list(r.Context(), database, now, pid, stage, strings.TrimSpace(req.Q), req.Sort, industries, f, rules())
 		if err != nil {
 			return ListResp{}, err
 		}
@@ -179,7 +173,7 @@ func RegisterRoutes(mux *http.ServeMux, database *db.DB, now func() time.Time, l
 		if err != nil {
 			return DecisionResp{}, err
 		}
-		row, counts, err := applyDecision(r.Context(), database, now, vacancyID, pid, string(req.From), string(req.To), req.Reason, req.Confirmed, vocabNames(), rules())
+		row, counts, err := applyDecision(r.Context(), database, now, vacancyID, pid, string(req.From), string(req.To), req.Reason, req.Confirmed, rules())
 		if err != nil {
 			return DecisionResp{}, err
 		}
@@ -222,7 +216,7 @@ func RegisterRoutes(mux *http.ServeMux, database *db.DB, now func() time.Time, l
 		if err := cat.Delete(r.Context(), vacancyID); err != nil {
 			return DeleteVacancyResp{}, err
 		}
-		counts, err := loadCounts(r.Context(), database, now(), pid, vocabNames())
+		counts, err := loadCounts(r.Context(), database, now(), pid)
 		if err != nil {
 			return DeleteVacancyResp{}, err
 		}

@@ -17,6 +17,7 @@ import (
 
 	"github.com/sifty-works/sifty-server/internal/apperr"
 	"github.com/sifty-works/sifty-server/internal/db"
+	"github.com/sifty-works/sifty-server/internal/industry"
 	"github.com/sifty-works/sifty-server/internal/server"
 )
 
@@ -729,16 +730,16 @@ func EffectiveProfile(ctx context.Context, database *db.DB, profileID int64) (Pr
 	return Effective(pd, base), nil
 }
 
-func ProfileSearch(ctx context.Context, database *db.DB, profileID int64, vocabNames []string) (Profile, error) {
+func ProfileSearch(ctx context.Context, database *db.DB, profileID int64) (Profile, error) {
 	pd, err := EffectiveProfile(ctx, database, profileID)
 	if err != nil {
 		return Profile{}, nil
 	}
 
 	industries := pd.TargetIndustries
-	if vocabNames != nil && len(industries) > 0 {
-		allowed := make(map[string]bool, len(vocabNames))
-		for _, n := range vocabNames {
+	if len(industries) > 0 {
+		allowed := make(map[string]bool, len(industry.Names()))
+		for _, n := range industry.Names() {
 			allowed[n] = true
 		}
 		filtered := industries[:0:0]

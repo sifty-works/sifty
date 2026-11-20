@@ -19,7 +19,7 @@ What the user gets: for the chosen profile, the vacancies that fit its search, i
 - **Inbox** shows the vacancies with no decision in this profile that fit its search:
   - **Target roles and keywords.** When the profile has both, a vacancy fits when a target role is in its title and a keyword is in its title, tags or text. When it has only one of the two, only that one applies. A profile with neither sees an empty Inbox. Terms match whole words and phrases, ignoring case and punctuation.
   - **All of these.** Every term listed under "All of these" must be in the vacancy's title, tags or text. Terms match whole words and phrases, ignoring case and punctuation.
-  - **Target industries**, the profile's own or inherited from the first profile. When there are any, a vacancy fits when it has at least one of them or has no industry at all; a vacancy whose industries are all outside the targets does not fit. Target industry names that are not in the current vocabulary are ignored; the remaining names apply.
+  - **Target industries**, the profile's own or inherited from the first profile. When there are any, a vacancy fits when it has at least one of them or has no industry at all; a vacancy whose industries are all outside the targets does not fit. Target industry names not in the fixed list are ignored; the remaining names apply.
 - **Shortlist, Applied and Dismissed** show every vacancy the profile decided that way, whether or not it still fits the search, so a decision never disappears when the search changes or a vacancy's text is removed.
 - **Exclusions** hide a matching vacancy in every list (see below).
 - Counters count the same sets.

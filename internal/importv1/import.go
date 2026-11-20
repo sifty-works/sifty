@@ -21,8 +21,8 @@ import (
 	"github.com/sifty-works/sifty-server/internal/catalog"
 	"github.com/sifty-works/sifty-server/internal/config"
 	"github.com/sifty-works/sifty-server/internal/db"
-	"github.com/sifty-works/sifty-server/internal/industry"
 	"github.com/sifty-works/sifty-server/internal/listing"
+	"github.com/sifty-works/sifty-server/internal/source"
 	"gopkg.in/yaml.v3"
 	_ "modernc.org/sqlite"
 )
@@ -403,11 +403,7 @@ func runImport(ctx context.Context, fromDir, dbPath, settingsPath, dataDir strin
 		nonImportedKeys = nil
 	}
 
-	defaultVocab := industry.DefaultVocab()
-	assignFn := func(title, tags, text string) []string {
-		return industry.Assign(title, tags, text, defaultVocab)
-	}
-	report, err := doImport(ctx, copyDB, newDB, store, oldCfg, assignFn)
+	report, err := doImport(ctx, copyDB, newDB, store, oldCfg)
 	if err != nil {
 		return err
 	}
@@ -437,7 +433,7 @@ func runImport(ctx context.Context, fromDir, dbPath, settingsPath, dataDir strin
 	return nil
 }
 
-func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.Store, oldCfg *oldConfig, assign func(title, tags, text string) []string) (*importReport, error) {
+func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.Store, oldCfg *oldConfig) (*importReport, error) {
 	report := &importReport{}
 
 	jobs, err := readJobs(ctx, copyDB)
@@ -702,6 +698,11 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 		}
 	}
 
+	sightingsByJob := make(map[int64][]oldSighting)
+	for _, s := range sightings {
+		sightingsByJob[s.jobID] = append(sightingsByJob[s.jobID], s)
+	}
+
 	tx, err := newDB.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("begin transaction: %w", err)
@@ -743,14 +744,23 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 		}
 
 		industriesJSON := "[]"
-		if assign != nil {
-			var plainText string
-			if len(md.body) > 0 {
-				if h, berr := catalog.Body(md.body); berr == nil {
-					plainText = listing.PlainText(h)
+		{
+			seen := make(map[string]bool)
+			var names []string
+			for _, s := range sightingsByJob[j.id] {
+				for _, ind := range source.BoardIndustriesForURL(s.url) {
+					if !seen[ind] {
+						seen[ind] = true
+						names = append(names, ind)
+					}
 				}
 			}
-			names := assign(j.title, j.tags, plainText)
+			for _, ind := range source.BoardIndustriesForURL(vj.canonURL) {
+				if !seen[ind] {
+					seen[ind] = true
+					names = append(names, ind)
+				}
+			}
 			if len(names) > 0 {
 				if b, jerr := json.Marshal(names); jerr == nil {
 					industriesJSON = string(b)
@@ -780,11 +790,6 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 		if md.seenAt != "" {
 			report.ReadMarksWritten++
 		}
-	}
-
-	sightingsByJob := make(map[int64][]oldSighting)
-	for _, s := range sightings {
-		sightingsByJob[s.jobID] = append(sightingsByJob[s.jobID], s)
 	}
 
 	report.SightingsRead = len(sightings)

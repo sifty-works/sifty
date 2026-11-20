@@ -51,7 +51,7 @@ func (c *Catalog) Upsert(ctx context.Context, p Posting, src string) (int64, Out
 - `Detail` is called only when the listing has no text and the posting is new, or known without text and not requested in the last 7 days, and never while its domain is blocked; `Catalog.Known` tells which. The audit proposed requesting every known vacancy every 7 days to detect changes; that is not done, because a vacancy with text is never requested again.
 - `Posting` carries the structured fields a source states (salary, employment type and the like) as a compact `source_fields` value, which the reader uses before asking a model.
 - Sources are read in parallel, one after another within one requested host (boards sharing a Greenhouse, Lever or Ashby API form one group). Each source's result is written to `source_run`.
-- **Industries** (`industry`): a vocabulary of industries with keywords, shipped as embedded data and edited in Settings (written to `<data>/vocab/industries.yaml`). Industries are assigned by keyword match when a vacancy's title, tags or text change, and stored on the vacancy because the list filters on them in SQL. A change of the vocabulary queues reassignment of all vacancies as CPU work; a vacancy without text keeps its industries. No model call.
+- **Industries** (`industry`): fifteen fixed names embedded in the application. A vacancy's industries come from the board it was collected from; known boards carry industry labels in the embedded site descriptions, Getro boards carry per-organisation tags mapped by an embedded labels file. Industries are stored on the vacancy because the list filters on them in SQL. No model call.
 
 ### Assessment
 
@@ -108,9 +108,9 @@ type Runner interface {
 }
 ```
 
-- One table `job(id, kind, subject, priority, state, attempts, not_before, progress, error, params, created, updated)` runs every kind of background work: `collect`, `read_vacancy`, `recompute_fit`, `assign_industries`, `shortlist_check`, `locate`, `prepare`, `analyze_document`, `retention`. Finished jobs are kept for 90 days.
+- One table `job(id, kind, subject, priority, state, attempts, not_before, progress, error, params, created, updated)` runs every kind of background work: `collect`, `read_vacancy`, `recompute_fit`, `shortlist_check`, `locate`, `prepare`, `analyze_document`, `retention`. Finished jobs are kept for 90 days.
 - **Lanes are taken per stage, not per job:** `browser` (1) for reading a form, `net` (several) for collection and search, `cpu` (1) for recomputation. A model is not a lane; a stage that needs one takes the model gate per call and holds no lane while it waits, so reading a form never waits for a model.
-- **Restart:** a job that was running becomes `interrupted`. Automatic kinds (`read_vacancy`, `recompute_fit`, `assign_industries`, `shortlist_check`, `retention`) are queued again while they have had fewer than three attempts, else `failed`. `locate` is queued again as a boards-only search. `collect`, `prepare` and `analyze_document` stay `interrupted` until the user retries; for `prepare` this follows the decision that failed preparations are not retried automatically.
+- **Restart:** a job that was running becomes `interrupted`. Automatic kinds (`read_vacancy`, `recompute_fit`, `shortlist_check`, `retention`) are queued again while they have had fewer than three attempts, else `failed`. `locate` is queued again as a boards-only search. `collect`, `prepare` and `analyze_document` stay `interrupted` until the user retries; for `prepare` this follows the decision that failed preparations are not retried automatically.
 - **Retries:** one policy, exponential pause, at most three attempts.
 - **Schedule:** a ticker every five minutes queues `collect` when automatic collection is on and the interval since the start of the last run has passed. Loading the application calls `POST /api/collect` without `force`, which applies the same rule at once. "Collect jobs" calls it with `force`. `retention` is queued daily.
 - **Status:** one endpoint or event stream replaces separate polls of queues, analysis and health. The list reloads only when decisions or visibility change; a new fit result reloads only visible rows or the open vacancy.
@@ -164,7 +164,7 @@ type Response struct { Text string; InTokens, OutTokens int }
 ## Configuration
 
 - One file, `<data>/sifty.yaml`, holds what the user configures: sources (keyed by their normalised address), the collection interval and switch, providers and their cost, the provider of each kind of work, paid bulk permission, the daily model limit, the web search provider, weights and rates. Every key is optional; an unknown key is ignored and reported. Defaults are one Go function; `sifty config defaults` prints the full file, so no template is stored and no personal value is in the repository.
-- Vocabularies (places, skills, sections, form phrasings, industries, site descriptions) are embedded data of their package, overridden by `<data>/vocab/<name>.yaml`. The site description (`vocab/sites.yaml`) is merged by host over the embedded one so new sites added by a release still arrive; an override entry that fails validation renames the file and uses the embedded description alone.
+- Vocabularies (places, skills, sections, form phrasings, site descriptions) are embedded data of their package, overridden by `<data>/vocab/<name>.yaml`. The site description (`vocab/sites.yaml`) is merged by host over the embedded one so new sites added by a release still arrive; an override entry that fails validation renames the file and uses the embedded description alone.
 - A `sifty.yaml` that fails to parse or validate at start is renamed to `<name>.broken-<time>`; the newest valid backup is used, or defaults if none. A file that cannot be read is not renamed. Each recovery appears in `GET /api/status` under `recovered`.
 - What the application remembers about its use lives in the `settings` table, not in the file.
 - Secrets come only from the environment or `<data>/secrets.env`; saving a plain-text key in the file is refused.
@@ -195,7 +195,7 @@ The web client lives in `github.com/sifty-works/sifty-web`. Its source is in tha
 | Group | Endpoints |
 |---|---|
 | Lists and vacancies | `GET /api/vacancies?profile&stage&q&sort&filters` (rows of about 350 bytes, counts per stage and per filter value); `GET /api/vacancies/{id}?profile`; `POST /api/vacancies/{id}/decision {profile,from,to,reason?,confirmed?}`; `POST /api/vacancies/{id}/seen`; `DELETE /api/vacancies/{id}?profile`; `POST /api/vacancies/{id}/refresh` |
-| Exclusions and industries | `GET/POST/DELETE /api/exclusions?profile` (word exclusions take an optional profile scope; company exclusions are global), `GET /api/exclusions/preview`; `GET/PUT /api/industries` |
+| Exclusions and industries | `GET/POST/DELETE /api/exclusions?profile` (word exclusions take an optional profile scope; company exclusions are global), `GET /api/exclusions/preview`; `GET /api/industries` |
 | Collection | `GET/POST/PATCH/DELETE /api/sources`; `PUT /api/sources/schedule`; `POST /api/collect {force}` |
 | Profiles | `GET/PATCH /api/me`; `PUT/DELETE/GET /api/me/photo` (png, jpg or webp, at most 2 MiB, real type checked from bytes); `GET/POST/PATCH/DELETE /api/profiles`; `GET /api/profiles/{id}`; `PUT /api/active-profile`; `POST /api/me/skills` (+ and − from a vacancy) |
 | Documents | `POST/DELETE /api/documents`, `POST /api/documents/{id}/analyze`, `POST /api/documents/{id}/refresh`; `POST /api/proposals/{id}/accept`, `/reject` |

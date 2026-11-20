@@ -3,16 +3,11 @@ package inbox_test
 import (
 	"context"
 	"encoding/json"
-	"io"
-	"log/slog"
 	"net/http"
-	"net/http/httptest"
 	"testing"
 
 	"github.com/sifty-works/sifty-server/internal/db"
-	"github.com/sifty-works/sifty-server/internal/inbox"
 	"github.com/sifty-works/sifty-server/internal/listing"
-	"github.com/sifty-works/sifty-server/internal/server"
 )
 
 func setVacancyIndustries(t *testing.T, d *db.DB, id int64, industries []string) {
@@ -34,19 +29,6 @@ func setProfileTargetIndustries(t *testing.T, d *db.DB, industries []string) {
 	if _, err := d.Exec(`UPDATE profile SET data=? WHERE id=1`, string(b)); err != nil {
 		t.Fatalf("setProfileTargetIndustries: %v", err)
 	}
-}
-
-func newServerWithVocab(t *testing.T, d *db.DB, vocabNames []string) *httptest.Server {
-	t.Helper()
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	getVocabNames := func() []string { return vocabNames }
-	h := server.New(server.Options{Version: "test", Port: 9999, Logger: logger},
-		func(mux *http.ServeMux) {
-			inbox.RegisterRoutes(mux, d, testNowFn, logger, func() bool { return false }, nil, getVocabNames, nil)
-		})
-	ts := httptest.NewServer(h)
-	t.Cleanup(ts.Close)
-	return ts
 }
 
 func TestRows_IndustriesField(t *testing.T) {
@@ -201,8 +183,7 @@ func TestVisibility_TargetIndustries_ShowsMatchingAndNoIndustry(t *testing.T) {
 	setVacancyIndustries(t, d, id1, []string{"Web3"})
 	setVacancyIndustries(t, d, id3, []string{"Software"})
 
-	vocabNames := []string{"Web3", "Software"}
-	ts := newServerWithVocab(t, d, vocabNames)
+	ts := newTestServer(t, d)
 	rs := getRows(apiGet(t, ts, "/api/vacancies"))
 
 	var ids []float64
@@ -242,8 +223,7 @@ func TestVisibility_TargetIndustries_OutsideVocabIgnored(t *testing.T) {
 
 	setVacancyIndustries(t, d, id2, []string{"Software"})
 
-	vocabNames := []string{"Software"}
-	ts := newServerWithVocab(t, d, vocabNames)
+	ts := newTestServer(t, d)
 	rs := getRows(apiGet(t, ts, "/api/vacancies"))
 
 	if len(rs) != 2 {
@@ -275,8 +255,7 @@ func TestVisibility_TargetIndustries_InheritedFromFirstProfile(t *testing.T) {
 	setVacancyIndustries(t, d, id1, []string{"Web3"})
 	setVacancyIndustries(t, d, id3, []string{"Software"})
 
-	vocabNames := []string{"Web3", "Software"}
-	ts := newServerWithVocab(t, d, vocabNames)
+	ts := newTestServer(t, d)
 
 	rs := getRows(apiGet(t, ts, "/api/vacancies?profile=2"))
 	var hasID3 bool
@@ -298,6 +277,8 @@ func TestVisibility_TargetIndustries_InheritedFromFirstProfile(t *testing.T) {
 	if !hasID2 {
 		t.Errorf("vacancy with no industry should be visible even with inherited target industries")
 	}
+
+	_ = id1
 }
 
 func TestVacancyPage_IndustriesField(t *testing.T) {
@@ -416,7 +397,7 @@ func TestVisibility_TargetIndustries_InheritedFromNewFirstAfterDeletion(t *testi
 	setVacancyIndustries(t, d, idW, []string{"Web3"})
 	d.Exec(`DELETE FROM profile WHERE id=1`)
 	d.Exec(`UPDATE profile SET data='{"name":"P2","keywords":["description"],"targetIndustries":["Software"]}' WHERE id=2`)
-	ts := newServerWithVocab(t, d, []string{"Web3", "Software"})
+	ts := newTestServer(t, d)
 	rs := getRows(apiGet(t, ts, "/api/vacancies?profile=3"))
 	if len(rs) != 1 || rowID(rs[0]) != float64(idS) {
 		t.Errorf("after first-profile deletion: profile 3 should inherit Software from new first, got %d rows", len(rs))

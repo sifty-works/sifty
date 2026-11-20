@@ -129,3 +129,31 @@ func TestLoadSitesDuplicateHostRenamesFile(t *testing.T) {
 		t.Errorf("error should mention duplicate: %s", err)
 	}
 }
+
+func TestLoadSites_UnknownIndustryRenamesFile(t *testing.T) {
+	path := writeSitesYAML(t, "sites:\n  - host: board.example.com\n    module: feed\n    industries:\n      - NoSuchIndustry\n")
+	broken, err := source.LoadSites(path)
+	if err == nil {
+		t.Fatal("unknown industry should produce a recovery")
+	}
+	if broken == "" {
+		t.Error("file with unknown industry should be renamed")
+	}
+	if !strings.Contains(err.Error(), "unknown industry") {
+		t.Errorf("error should mention 'unknown industry': %s", err)
+	}
+}
+
+func TestBoardIndustriesForURL_KnownBoardReturnsIndustries(t *testing.T) {
+	inds := source.BoardIndustriesForURL("https://web3.career/jobs/developer")
+	if len(inds) != 1 || inds[0] != "Web3" {
+		t.Errorf("web3.career industries: got %v, want [Web3]", inds)
+	}
+}
+
+func TestBoardIndustriesForURL_UnknownHostReturnsNil(t *testing.T) {
+	inds := source.BoardIndustriesForURL("https://unknown-board.example.com/jobs")
+	if inds != nil {
+		t.Errorf("unknown host: got %v, want nil", inds)
+	}
+}

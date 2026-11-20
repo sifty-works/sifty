@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sifty-works/sifty-server/internal/industry"
 	"gopkg.in/yaml.v3"
 )
 
@@ -62,6 +63,15 @@ func parseSites(data []byte) ([]siteEntry, error) {
 		if e.LinkPattern != "" {
 			if _, err := regexp.Compile(e.LinkPattern); err != nil {
 				return nil, fmt.Errorf("sites: invalid link_pattern for host %q: %w", e.Host, err)
+			}
+		}
+		allowed := make(map[string]bool, len(industry.Names()))
+		for _, n := range industry.Names() {
+			allowed[n] = true
+		}
+		for _, ind := range e.Site.Industries {
+			if !allowed[ind] {
+				return nil, fmt.Errorf("sites: unknown industry %q for host %q", ind, e.Host)
 			}
 		}
 	}

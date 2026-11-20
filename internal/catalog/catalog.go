@@ -30,17 +30,12 @@ const (
 )
 
 type Catalog struct {
-	db     *db.DB
-	now    func() time.Time
-	assign func(title, tags, text string) []string
+	db  *db.DB
+	now func() time.Time
 }
 
-func New(database *db.DB, now func() time.Time, assign ...func(title, tags, text string) []string) *Catalog {
-	c := &Catalog{db: database, now: now}
-	if len(assign) > 0 {
-		c.assign = assign[0]
-	}
-	return c
+func New(database *db.DB, now func() time.Time) *Catalog {
+	return &Catalog{db: database, now: now}
 }
 
 func Encode(html string) (body []byte, hash string, err error) {
@@ -183,7 +178,7 @@ func (c *Catalog) Upsert(ctx context.Context, p listing.Posting, src string) (in
 			contentHash:    newHash,
 			version:        1,
 			body:           newBody,
-			industries:     c.computeIndustries(p.Title, tagsJSON, newBody),
+			industries:     marshalTags(p.Industries),
 		}
 		if p.Requested {
 			row.detailRequestedAt = nowStr
@@ -264,9 +259,7 @@ func (c *Catalog) Upsert(ctx context.Context, p listing.Posting, src string) (in
 
 	titleChanged := p.Title != ex.title
 	tagsChanged := len(p.Tags) > 0 && tagsJSON != ex.tagsJSON
-	if titleChanged || tagsChanged || textChanged {
-		upd.industries = c.computeIndustries(upd.title, upd.tagsJSON, upd.body)
-	}
+	upd.industries = unionIndustriesStr(ex.industries, p.Industries)
 
 	if _, err := save(ctx, tx, upd); err != nil {
 		return 0, 0, fmt.Errorf("catalog: upsert: update: %w", err)
@@ -472,6 +465,26 @@ func contentHash(plainText string) string {
 	}
 	h := sha256.Sum256([]byte(plainText))
 	return hex.EncodeToString(h[:])
+}
+
+func unionIndustriesStr(existingJSON string, incoming []string) string {
+	var current []string
+	json.Unmarshal([]byte(existingJSON), &current)
+	seen := make(map[string]bool, len(current)+len(incoming))
+	for _, s := range current {
+		seen[s] = true
+	}
+	for _, s := range incoming {
+		if s != "" && !seen[s] {
+			seen[s] = true
+			current = append(current, s)
+		}
+	}
+	if len(current) == 0 {
+		return "[]"
+	}
+	b, _ := json.Marshal(current)
+	return string(b)
 }
 
 func marshalTags(tags []string) string {
@@ -687,6 +700,9 @@ func performMerge(ctx context.Context, tx *sql.Tx, matchIDs []int64) error {
 			upd.version++
 			textChanged = true
 		}
+		var mergedInds []string
+		json.Unmarshal([]byte(r.industries), &mergedInds)
+		upd.industries = unionIndustriesStr(upd.industries, mergedInds)
 	}
 
 	ph := strings.Repeat("?,", len(matchIDs))
@@ -743,42 +759,6 @@ func performMerge(ctx context.Context, tx *sql.Tx, matchIDs []int64) error {
 	return nil
 }
 
-func (c *Catalog) computeIndustries(title, tagsJSON string, body []byte) string {
-	if c.assign == nil {
-		return "[]"
-	}
-	var tags []string
-	json.Unmarshal([]byte(tagsJSON), &tags)
-	tagsText := strings.Join(tags, " ")
-
-	var plainText string
-	if len(body) > 0 {
-		h, err := Body(body)
-		if err == nil {
-			plainText = listing.PlainText(h)
-		}
-	}
-
-	names := c.assign(title, tagsText, plainText)
-	if len(names) == 0 {
-		return "[]"
-	}
-	b, err := json.Marshal(names)
-	if err != nil {
-		return "[]"
-	}
-	return string(b)
-}
-
-func (c *Catalog) SetIndustries(ctx context.Context, vacancyID int64, names []string) error {
-	_, err := c.db.ExecContext(ctx,
-		`UPDATE vacancy SET industries=? WHERE id=?`, marshalTags(names), vacancyID)
-	if err != nil {
-		return fmt.Errorf("catalog: set industries: %w", err)
-	}
-	return nil
-}
-
 type VacancyText struct {
 	ID, Version                                      int64
 	Title, Location, TagsJSON, FieldsJSON, TextState string
@@ -802,12 +782,6 @@ func (c *Catalog) VacancyTexts(ctx context.Context, after int64, limit int) ([]V
 		out = append(out, r)
 	}
 	return out, rows.Err()
-}
-
-func (c *Catalog) CountVacancies(ctx context.Context) (int, error) {
-	var n int
-	err := c.db.QueryRowContext(ctx, `SELECT count(*) FROM vacancy`).Scan(&n)
-	return n, err
 }
 
 func pickEarlier(a, b string) string {

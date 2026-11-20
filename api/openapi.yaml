@@ -409,15 +409,10 @@ components:
             type: object
         IndustryItem:
             properties:
-                keywords:
-                    items:
-                        type: string
-                    type: array
                 name:
                     type: string
             required:
                 - name
-                - keywords
             type: object
         InheritedSource:
             properties:
@@ -1596,23 +1591,6 @@ paths:
     /api/industries:
         get:
             operationId: getApiIndustries
-            responses:
-                4XX:
-                    $ref: '#/components/responses/Error'
-                "200":
-                    content:
-                        application/json:
-                            schema:
-                                $ref: '#/components/schemas/IndustriesResp'
-                    description: OK
-        put:
-            operationId: putApiIndustries
-            requestBody:
-                content:
-                    application/json:
-                        schema:
-                            $ref: '#/components/schemas/IndustriesResp'
-                required: true
             responses:
                 4XX:
                     $ref: '#/components/responses/Error'

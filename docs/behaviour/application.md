@@ -57,8 +57,7 @@ Diagnostic panels (questionnaire coverage, the technical record of form reading,
 |---|---|---|---|
 | Collection | interval, opening the application, "Collect jobs" (see `collection.md`) | progress in the header and on the Sources page | none |
 | Reading vacancy texts | new or changed texts, a vacancy becoming visible (see `assessment.md`) | the requirements counter's states | 1 per text |
-| Recomputing Fits you | changes of vacancies, goals, My data, weights or vocabularies | dimmed results until done | none |
-| Assigning industries | changes of title, tags or text; a change of the industries vocabulary | badges | none |
+| Recomputing Fits you | changes of vacancies, goals, My data, or weights | dimmed results until done | none |
 | Text retention | daily (see `settings-and-data.md`) | "Text removed after 60 days unseen" | none |
 | Shortlist check | entering Shortlist; opening a shortlisted vacancy whose check is outdated (see `assessment.md`) | the check on the vacancy page | 1 |
 | Employer's page | entering Shortlist, the Apply button, startup | the Apply button's state | none; web search |
@@ -75,7 +74,7 @@ Settings › Background work lists what runs, what waits and what failed, with t
 - One model serves one call at a time; others wait and show "Waiting for the model: N ahead".
 - One preparation per vacancy runs at a time, and one collection at a time.
 - Reading a form never waits for a model.
-- A failed or interrupted preparation, document analysis or collection keeps its state "failed" or "interrupted" with the reason and runs again only when the user asks; a restart does not retry it. Reading texts, recomputing, assigning industries and the Shortlist check resume by themselves after a restart, up to three attempts.
+- A failed or interrupted preparation, document analysis or collection keeps its state "failed" or "interrupted" with the reason and runs again only when the user asks; a restart does not retry it. Reading texts, recomputing and the Shortlist check resume by themselves after a restart, up to three attempts.
 - When a provider is unavailable, background model work pauses and resumes by itself when the provider answers again.
 
 ## Not carried over
