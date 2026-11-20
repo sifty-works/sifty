@@ -33,7 +33,7 @@ func cmdGenAPI(args []string, stdout, stderr io.Writer) error {
 	server.ResetRoutes()
 	devNull := slog.New(slog.NewTextHandler(io.Discard, nil))
 	server.New(server.Options{Logger: devNull}, func(mux *http.ServeMux) {
-		inbox.RegisterRoutes(mux, nil, nil, devNull, nil, nil, nil)
+		inbox.RegisterRoutes(mux, nil, nil, devNull, nil, nil, nil, nil)
 		inbox.RegisterIndustryRoutes(mux, devNull)
 		candidate.RegisterRoutes(mux, nil, "", devNull, nil)
 		collect.New(nil, nil, nil, nil, nil, false, nil, devNull).RegisterRoutes(mux)

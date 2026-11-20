@@ -714,6 +714,10 @@ func ActiveProfileID(ctx context.Context, database *db.DB) (int64, error) {
 	return activeProfileID(ctx, database)
 }
 
+func SaveMe(ctx context.Context, database *db.DB, me MeData) error {
+	return saveMeData(ctx, database, me)
+}
+
 func EffectiveProfile(ctx context.Context, database *db.DB, profileID int64) (ProfileData, error) {
 	pd, err := loadProfileRow(ctx, database, profileID)
 	if err != nil {

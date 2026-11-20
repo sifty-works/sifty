@@ -219,7 +219,7 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		Recovered:         recovered,
 	}, func(mux *http.ServeMux) {
 		registerModelRoutes(mux, gate, logger)
-		inbox.RegisterRoutes(mux, database, time.Now, logger, collectActive, func() map[string]string {
+		sourceNames := func() map[string]string {
 			cfg := store.Get()
 			m := make(map[string]string, len(cfg.Sources))
 			for _, s := range cfg.Sources {
@@ -228,7 +228,8 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 				}
 			}
 			return m
-		}, rules)
+		}
+		inbox.RegisterRoutes(mux, database, time.Now, logger, collectActive, sourceNames, rules, recomputeFit)
 		inbox.RegisterIndustryRoutes(mux, logger)
 		candidate.RegisterRoutes(mux, database, filesDir, logger, recomputeFit)
 		col.RegisterRoutes(mux)

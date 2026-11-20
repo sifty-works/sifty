@@ -2,6 +2,8 @@ package skills
 
 import (
 	_ "embed"
+	"fmt"
+	"regexp"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -10,6 +12,12 @@ import (
 
 	"github.com/sifty-works/sifty-server/internal/candidate"
 	"github.com/sifty-works/sifty-server/internal/reading"
+)
+
+var (
+	leadKeyRe     = regexp.MustCompile(`(?i)\b(lead|leading|manage|managing|management|head|director|vp|cto|ceo|coo|president)\b`)
+	engKeyRe      = regexp.MustCompile(`(?i)\b(engineer|engineering|developer|architect|programmer|technical|backend|frontend|software)\b`)
+	yearsInTextRe = regexp.MustCompile(`(?i)\b\d+\+?\s+years?\b`)
 )
 
 //go:embed vocab.yaml
@@ -217,18 +225,25 @@ func groupsOf(hits []hit) []string {
 type Index struct {
 	byGroup     map[string]bool
 	absentGroup map[string]bool
+	skillNames  map[string][]string
+	absentNames map[string][]string
 }
 
 func NewIndex(skills []candidate.Skill, absent []candidate.AbsentSkill) *Index {
-	idx := &Index{byGroup: map[string]bool{}, absentGroup: map[string]bool{}}
+	idx := &Index{
+		byGroup: map[string]bool{}, absentGroup: map[string]bool{},
+		skillNames: map[string][]string{}, absentNames: map[string][]string{},
+	}
 	for _, s := range skills {
 		for _, g := range groupsOf(defaultVocab.scanName(s.Name)) {
 			idx.byGroup[g] = true
+			idx.skillNames[g] = append(idx.skillNames[g], s.Name)
 		}
 	}
 	for _, a := range absent {
 		for _, g := range groupsOf(defaultVocab.scanName(a.Name)) {
 			idx.absentGroup[g] = true
+			idx.absentNames[g] = append(idx.absentNames[g], a.Name)
 		}
 	}
 	return idx
@@ -239,39 +254,21 @@ func normalizeKey(s string) string {
 	return strings.Trim(s, ".,;:!?–—-'\"()")
 }
 
-func Decide(req reading.Requirement, idx *Index, confirmed []candidate.ConfirmedFact) string {
-	if req.Kind == "experience" {
-		return "?"
-	}
-	key := normalizeKey(req.Text)
-	for _, c := range confirmed {
-		if normalizeKey(c.Text) == key {
-			if c.Have {
-				return "✓"
-			}
-			return "✕"
-		}
-	}
+type DecisionResult struct {
+	Verdict     string
+	Evidence    string
+	NamedSkills []string
+}
+
+func reqGroups(req reading.Requirement) (named []string, anyOf bool, canDecide bool) {
 	if len(req.Alts) > 0 {
-		return decideAlts(req.Alts, idx)
+		for _, alt := range req.Alts {
+			named = append(named, groupsOf(defaultVocab.scanName(alt))...)
+		}
+		return named, true, true
 	}
-	return decideText(req.Text, idx)
-}
-
-func decideAlts(alts []string, idx *Index) string {
-	var gs []string
-	for _, alt := range alts {
-		gs = append(gs, groupsOf(defaultVocab.scanName(alt))...)
-	}
-	if len(gs) == 0 {
-		return "?"
-	}
-	return verdictForGroups(gs, true, idx)
-}
-
-func decideText(text string, idx *Index) string {
-	hits, rejected, toks, covered := defaultVocab.scan(text)
-	gs := groupsOf(hits)
+	hits, rejected, toks, covered := defaultVocab.scan(req.Text)
+	named = groupsOf(hits)
 	orPresent := false
 	leftover := len(rejected) > 0
 	for k, t := range toks {
@@ -287,13 +284,80 @@ func decideText(text string, idx *Index) string {
 		}
 		leftover = true
 	}
-	if leftover && !orPresent {
-		return "?"
+	return named, orPresent, !(leftover && !orPresent)
+}
+
+func DecideFull(req reading.Requirement, idx *Index, confirmed []candidate.ConfirmedFact, dy candidate.DerivedYears) DecisionResult {
+	if req.Kind == "experience" {
+		return DecisionResult{Verdict: "?", Evidence: experienceEvidence(req.Text, dy)}
 	}
-	if len(gs) == 0 {
-		return "?"
+	key := normalizeKey(req.Text)
+	for _, c := range confirmed {
+		if normalizeKey(c.Text) == key {
+			v := "✓"
+			if !c.Have {
+				v = "✕"
+			}
+			return DecisionResult{Verdict: v, Evidence: "Confirmed by you"}
+		}
 	}
-	return verdictForGroups(gs, orPresent, idx)
+	named, anyOf, canDecide := reqGroups(req)
+	if !canDecide || len(named) == 0 {
+		return DecisionResult{Verdict: "?", NamedSkills: named}
+	}
+	v := verdictForGroups(named, anyOf, idx)
+	var ev []string
+	switch v {
+	case "✓":
+		for _, g := range named {
+			ev = append(ev, idx.skillNames[g]...)
+		}
+	case "✕":
+		for _, g := range named {
+			ev = append(ev, idx.absentNames[g]...)
+		}
+	}
+	return DecisionResult{Verdict: v, Evidence: joinEvidence(ev), NamedSkills: named}
+}
+
+func Decide(req reading.Requirement, idx *Index, confirmed []candidate.ConfirmedFact) string {
+	return DecideFull(req, idx, confirmed, candidate.DerivedYears{}).Verdict
+}
+
+func NamedSkillsFor(req reading.Requirement) []string {
+	named, _, _ := reqGroups(req)
+	return named
+}
+
+func experienceEvidence(text string, dy candidate.DerivedYears) string {
+	if !yearsInTextRe.MatchString(text) {
+		return ""
+	}
+	years := dy.Total
+	if leadKeyRe.MatchString(text) {
+		years = dy.Leading
+	} else if engKeyRe.MatchString(text) {
+		years = dy.Engineering
+	}
+	if years <= 0 {
+		return ""
+	}
+	if years == 1 {
+		return "1 year"
+	}
+	return fmt.Sprintf("%d years", years)
+}
+
+func joinEvidence(names []string) string {
+	seen := map[string]bool{}
+	var out []string
+	for _, n := range names {
+		if !seen[n] {
+			seen[n] = true
+			out = append(out, n)
+		}
+	}
+	return strings.Join(out, " · ")
 }
 
 func verdictForGroups(gs []string, anyOf bool, idx *Index) string {

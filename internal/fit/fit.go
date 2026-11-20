@@ -18,6 +18,17 @@ type ProfileView struct {
 	Skills         []candidate.Skill
 	AbsentSkills   []candidate.AbsentSkill
 	Confirmed      []candidate.ConfirmedFact
+	DerivedYears   candidate.DerivedYears
+}
+
+type RequirementLine struct {
+	Index       int      `json:"index"`
+	Text        string   `json:"text"`
+	Alts        []string `json:"alts,omitempty"`
+	Level       string   `json:"level"`
+	Verdict     string   `json:"verdict"`
+	Evidence    string   `json:"evidence,omitempty"`
+	NamedSkills []string `json:"namedSkills,omitempty"`
 }
 
 type Rules struct{ Weights, Rates map[string]float64 }
@@ -63,6 +74,7 @@ type Fit struct {
 	Tiles                  []Tile
 	ReqRead                bool
 	ReqOK, ReqNo, ReqMaybe int
+	Requirements           []RequirementLine
 }
 
 const na = -1.0
@@ -110,12 +122,13 @@ func Score(p ProfileView, v reading.VacancyReading, r Rules) Fit {
 	if v.RequirementsRead {
 		idx := skills.NewIndex(p.Skills, p.AbsentSkills)
 		var reqNum, reqDen float64
-		for _, req := range v.Requirements {
+		for i, req := range v.Requirements {
 			w := 1.0
 			if req.Level == "required" {
 				w = 2.0
 			}
-			switch skills.Decide(req, idx, p.Confirmed) {
+			dr := skills.DecideFull(req, idx, p.Confirmed, p.DerivedYears)
+			switch dr.Verdict {
 			case "✓":
 				reqNum += w
 				f.ReqOK++
@@ -126,6 +139,10 @@ func Score(p ProfileView, v reading.VacancyReading, r Rules) Fit {
 				f.ReqMaybe++
 			}
 			reqDen += w
+			f.Requirements = append(f.Requirements, RequirementLine{
+				Index: i, Text: req.Text, Alts: req.Alts, Level: req.Level,
+				Verdict: dr.Verdict, Evidence: dr.Evidence, NamedSkills: dr.NamedSkills,
+			})
 		}
 		f.ReqRead = true
 		if reqDen > 0 && (f.ReqOK > 0 || f.ReqNo > 0) {

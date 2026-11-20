@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"strings"
+	"time"
 
 	"github.com/sifty-works/sifty-server/internal/apperr"
 	"github.com/sifty-works/sifty-server/internal/candidate"
@@ -111,6 +112,7 @@ func LoadProfile(ctx context.Context, database *db.DB, id int64, r Rules) (Profi
 		Skills:         me.Skills,
 		AbsentSkills:   me.AbsentSkills,
 		Confirmed:      me.ConfirmedFacts,
+		DerivedYears:   candidate.DeriveYears(me.Experience, time.Now()),
 	}
 	return Profile{id, v, Inputs(v, r)}, nil
 }
@@ -177,6 +179,23 @@ func vacancy(t catalog.VacancyText) (reading.Vacancy, reading.VacancyReading, er
 		return v, code, nil
 	}
 	return v, reading.Merge(code, rec), nil
+}
+
+func RecomputeVacancy(ctx context.Context, database *db.DB, vacancyID int64, r Rules) error {
+	profiles, err := LoadProfiles(ctx, database, r)
+	if err != nil {
+		return err
+	}
+	batch, err := catalog.New(database, nil).VacancyTexts(ctx, vacancyID-1, 1)
+	if err != nil || len(batch) == 0 || batch[0].ID != vacancyID {
+		return err
+	}
+	stale := map[int64][]Profile{}
+	for _, p := range profiles {
+		stale[vacancyID] = append(stale[vacancyID], p)
+	}
+	_, err = writeBatch(ctx, database, batch, stale, r)
+	return err
 }
 
 func Recompute(ctx context.Context, database *db.DB, rules func() Rules, progress func(done, total int, current string)) error {

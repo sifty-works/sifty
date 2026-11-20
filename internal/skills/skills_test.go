@@ -222,3 +222,63 @@ func TestDecide_nonPrefixBlocksTermMatch(t *testing.T) {
 		t.Fatalf("non- prefix should block match, got %q", got)
 	}
 }
+
+func TestDecideFull_evidenceForMatchedSkill(t *testing.T) {
+	i := idx([]string{"Go"}, nil)
+	dr := DecideFull(req("Golang expertise", "skill"), i, nil, candidate.DerivedYears{})
+	if dr.Verdict != "✓" {
+		t.Fatalf("verdict: got %q, want ✓", dr.Verdict)
+	}
+	if dr.Evidence != "Go" {
+		t.Errorf("evidence: got %q, want %q", dr.Evidence, "Go")
+	}
+}
+
+func TestDecideFull_evidenceForAbsentSkill(t *testing.T) {
+	i := idx(nil, []string{"Python"})
+	dr := DecideFull(req("Python", "skill"), i, nil, candidate.DerivedYears{})
+	if dr.Verdict != "✕" {
+		t.Fatalf("verdict: got %q, want ✕", dr.Verdict)
+	}
+	if dr.Evidence != "Python" {
+		t.Errorf("evidence: got %q, want %q", dr.Evidence, "Python")
+	}
+}
+
+func TestDecideFull_evidenceForConfirmed(t *testing.T) {
+	i := idx(nil, nil)
+	facts := []candidate.ConfirmedFact{{Text: "security clearance", Have: true}}
+	dr := DecideFull(req("security clearance", "skill"), i, facts, candidate.DerivedYears{})
+	if dr.Verdict != "✓" {
+		t.Fatalf("verdict: got %q, want ✓", dr.Verdict)
+	}
+	if dr.Evidence != "Confirmed by you" {
+		t.Errorf("evidence: got %q, want %q", dr.Evidence, "Confirmed by you")
+	}
+}
+
+func TestDecideFull_experienceEvidence(t *testing.T) {
+	for _, tc := range []struct {
+		text string
+		dy   candidate.DerivedYears
+		want string
+	}{
+		{"5+ years leading teams", candidate.DerivedYears{Total: 10, Leading: 5, Engineering: 3}, "5 years"},
+		{"3+ years of backend engineering", candidate.DerivedYears{Total: 10, Leading: 5, Engineering: 3}, "3 years"},
+		{"8+ years experience", candidate.DerivedYears{Total: 8, Leading: 2, Engineering: 4}, "8 years"},
+		{"KYC/KYB experience", candidate.DerivedYears{Total: 10, Leading: 5, Engineering: 3}, ""},
+	} {
+		dr := DecideFull(req(tc.text, "experience"), nil, nil, tc.dy)
+		if dr.Evidence != tc.want {
+			t.Errorf("%q: evidence got %q, want %q", tc.text, dr.Evidence, tc.want)
+		}
+	}
+}
+
+func TestDecideFull_namedSkillsFromAlts(t *testing.T) {
+	i := idx(nil, nil)
+	dr := DecideFull(req("Go or Rust", "skill", "Go", "Rust"), i, nil, candidate.DerivedYears{})
+	if len(dr.NamedSkills) < 2 {
+		t.Errorf("named skills from alts: got %v, want at least [Go Rust]", dr.NamedSkills)
+	}
+}

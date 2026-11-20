@@ -85,7 +85,19 @@ type PreviewResp struct {
 	Text string `json:"text"`
 }
 
-func RegisterRoutes(mux *http.ServeMux, database *db.DB, now func() time.Time, logger *slog.Logger, collectActive func() bool, getSourceNames func() map[string]string, rules func() fit.Rules) {
+type SkillsDecisionReq struct {
+	VacancyID   int64  `json:"vacancyId"`
+	ReqIndex    int    `json:"requirementIndex"`
+	Have        bool   `json:"have"`
+	ChosenSkill string `json:"chosenSkill,omitempty"`
+}
+
+type SkillsDecisionResp struct {
+	Notice      string      `json:"notice"`
+	VacancyView VacancyView `json:"vacancyView"`
+}
+
+func RegisterRoutes(mux *http.ServeMux, database *db.DB, now func() time.Time, logger *slog.Logger, collectActive func() bool, getSourceNames func() map[string]string, rules func() fit.Rules, changed func()) {
 	cat := catalog.New(database, now)
 	if rules == nil {
 		rules = func() fit.Rules { d := config.Defaults(); return fit.Rules{Weights: d.Weights, Rates: d.Rates} }
@@ -96,6 +108,33 @@ func RegisterRoutes(mux *http.ServeMux, database *db.DB, now func() time.Time, l
 		}
 		return getSourceNames()
 	}
+
+	server.Handle(mux, "POST /api/me/skills", logger, func(req *http.Request, body SkillsDecisionReq) (SkillsDecisionResp, error) {
+		ctx := req.Context()
+		if body.VacancyID <= 0 {
+			return SkillsDecisionResp{}, apperr.Invalid{Message: "vacancyId is required."}
+		}
+		vacancyID, err := resolveVacancy(ctx, database, body.VacancyID)
+		if err != nil {
+			return SkillsDecisionResp{}, err
+		}
+		pid, err := resolveProfile(ctx, database, 0)
+		if err != nil {
+			return SkillsDecisionResp{}, err
+		}
+		res, err := applySkillsDecision(ctx, database, vacancyID, body.ReqIndex, body.Have, body.ChosenSkill, rules())
+		if err != nil {
+			return SkillsDecisionResp{}, err
+		}
+		if changed != nil && res.added {
+			changed()
+		}
+		view, err := vacancyView(ctx, database, now, vacancyID, pid, sourceNamesFor(), rules())
+		if err != nil {
+			return SkillsDecisionResp{}, err
+		}
+		return SkillsDecisionResp{Notice: res.notice, VacancyView: view}, nil
+	})
 
 	server.Handle(mux, "GET /api/vacancies", logger, func(r *http.Request, req ListReq) (ListResp, error) {
 		stage := strings.TrimSpace(string(req.Stage))

@@ -67,12 +67,19 @@ type FitMark struct {
 	RequirementsText string `json:"requirementsText"`
 }
 
+type RequirementGroup struct {
+	Label string                `json:"label"`
+	Items []fit.RequirementLine `json:"items"`
+}
+
 type Band struct {
-	Score            *int       `json:"score"`
-	Bucket           string     `json:"bucket"`
-	Text             string     `json:"text"`
-	Tiles            []fit.Tile `json:"tiles"`
-	RequirementsText string     `json:"requirementsText"`
+	Score            *int               `json:"score"`
+	Bucket           string             `json:"bucket"`
+	Text             string             `json:"text"`
+	Tiles            []fit.Tile         `json:"tiles"`
+	RequirementsText string             `json:"requirementsText"`
+	RequirementCount int                `json:"requirementCount"`
+	Groups           []RequirementGroup `json:"groups"`
 }
 
 func reqText(state string, reqRead bool, reqOK, reqNo, reqMaybe int, inReadingSet bool) string {
@@ -595,8 +602,29 @@ func vacancyView(ctx context.Context, database *db.DB, now func() time.Time,
 	if err != nil {
 		return VacancyView{}, err
 	}
-	band := Band{Bucket: f.Bucket, Text: f.Text, Tiles: f.Tiles,
-		RequirementsText: reqText(f.State, f.ReqRead, f.ReqOK, f.ReqNo, f.ReqMaybe, rs[vacancyID])}
+	var groups []RequirementGroup
+	if f.ReqRead && len(f.Requirements) > 0 {
+		var req, nice []fit.RequirementLine
+		for _, r := range f.Requirements {
+			if r.Level == "required" {
+				req = append(req, r)
+			} else {
+				nice = append(nice, r)
+			}
+		}
+		if len(req) > 0 {
+			groups = append(groups, RequirementGroup{"Required", req})
+		}
+		if len(nice) > 0 {
+			groups = append(groups, RequirementGroup{"Nice to have", nice})
+		}
+	}
+	band := Band{
+		Bucket: f.Bucket, Text: f.Text, Tiles: f.Tiles,
+		RequirementsText: reqText(f.State, f.ReqRead, f.ReqOK, f.ReqNo, f.ReqMaybe, rs[vacancyID]),
+		RequirementCount: len(f.Requirements),
+		Groups:           groups,
+	}
 	if f.State == fit.Scored {
 		band.Score, band.Text = &f.Score, fmt.Sprintf("Fits you %d /100", f.Score)
 	}
