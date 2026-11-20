@@ -4,6 +4,7 @@ Notable changes of Sifty, newest first. Versions follow `MAJOR.MINOR.PATCH`.
 
 ## Unreleased
 
+- A model reader of vacancy texts: requirements with kind, level and alternatives, and the conditions code did not find, each tied to an exact excerpt of the text; the Ollama and OpenAI-compatible adapters send the answer schema, and reading runs without the model's thinking.
 - The previous version's model readings are imported and Fits you uses their conditions where code found none; readings are kept per vacancy with the version and reader they belong to.
 - Command-line model providers work: the Claude command line and opencode, run with a reduced environment and no tools.
 - Web client 0.5.0: Settings no longer has an industries editor.

@@ -32,11 +32,13 @@ func newOllama(endpoint, model, _ string, timeoutMS, contextChars int, _ map[str
 }
 
 type ollamaRequest struct {
-	Model     string `json:"model"`
-	Prompt    string `json:"prompt"`
-	Stream    bool   `json:"stream"`
-	KeepAlive string `json:"keep_alive,omitempty"`
-	NumCtx    int    `json:"num_ctx,omitempty"`
+	Model     string          `json:"model"`
+	Prompt    string          `json:"prompt"`
+	Stream    bool            `json:"stream"`
+	Format    json.RawMessage `json:"format,omitempty"`
+	Think     *bool           `json:"think,omitempty"`
+	KeepAlive string          `json:"keep_alive,omitempty"`
+	NumCtx    int             `json:"num_ctx,omitempty"`
 }
 
 type ollamaResponse struct {
@@ -70,6 +72,11 @@ func (a *ollamaAdapter) Complete(ctx context.Context, r Request) (Response, erro
 		Stream:    false,
 		KeepAlive: "1h",
 		NumCtx:    numCtx,
+		Format:    r.Schema,
+	}
+	if r.Think != "" {
+		b := r.Think == "on"
+		req.Think = &b
 	}
 	var resp ollamaResponse
 	if err := a.send(ctx, req, &resp); err != nil {

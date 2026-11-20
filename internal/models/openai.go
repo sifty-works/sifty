@@ -43,10 +43,16 @@ type openaiMessage struct {
 	Content string `json:"content"`
 }
 
+type openaiResponseFormat struct {
+	Type       string          `json:"type"`
+	JSONSchema json.RawMessage `json:"json_schema,omitempty"`
+}
+
 type openaiReq struct {
-	Model    string          `json:"model"`
-	Messages []openaiMessage `json:"messages"`
-	Stream   bool            `json:"stream"`
+	Model          string                `json:"model"`
+	Messages       []openaiMessage       `json:"messages"`
+	Stream         bool                  `json:"stream"`
+	ResponseFormat *openaiResponseFormat `json:"response_format,omitempty"`
 }
 
 type openaiResp struct {
@@ -66,6 +72,10 @@ func (a *openaiAdapter) Complete(ctx context.Context, r Request) (Response, erro
 		Model:    a.model,
 		Messages: []openaiMessage{{Role: "user", Content: r.Prompt}},
 		Stream:   false,
+	}
+	if len(r.Schema) > 0 {
+		js, _ := json.Marshal(map[string]any{"name": "output", "strict": true, "schema": r.Schema})
+		body.ResponseFormat = &openaiResponseFormat{Type: "json_schema", JSONSchema: js}
 	}
 	b, err := json.Marshal(body)
 	if err != nil {

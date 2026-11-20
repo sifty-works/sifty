@@ -377,6 +377,47 @@ func TestCheckWithFailingEndpointReturnsError(t *testing.T) {
 	}
 }
 
+func TestOllamaSendsFormatAndThink(t *testing.T) {
+	var body map[string]interface{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		if err := json.Unmarshal(b, &body); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		if body["prompt"] == "" || body["prompt"] == nil {
+			w.Write(ollamaReply(""))
+			return
+		}
+		w.Write(ollamaReply(`{"requirements":[],"conditions":{}}`))
+	}))
+	defer srv.Close()
+
+	cfg := config.Defaults()
+	cfg.Providers = map[string]config.ProviderConfig{"local": providerConfig("ollama", srv.URL, "phi3", "local")}
+	cfg.Work = &config.WorkConfig{Reading: "local"}
+	store := openTestStore(t, cfg)
+	gate := models.NewGate(openTestDB(t), store, false, nil)
+	defer gate.Stop(context.Background())
+
+	schema := json.RawMessage(`{"type":"object","properties":{}}`)
+	gate.For("reading", "user").Complete(context.Background(), models.Request{
+		Prompt: "test vacancy",
+		Schema: schema,
+		Think:  "off",
+	})
+
+	if body["format"] == nil {
+		t.Error("ollama request missing format field")
+	}
+	thinkVal, hasThink := body["think"]
+	if !hasThink {
+		t.Error("ollama request missing think field")
+	} else if thinkVal != false {
+		t.Errorf("ollama request think = %v, want false", thinkVal)
+	}
+}
+
 func TestSecretsFileLoaded(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "secrets.env"), []byte("MYHOST_KEY=secret123\n"), 0600)

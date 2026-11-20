@@ -1491,8 +1491,8 @@ func importReadings(ctx context.Context, oldDB *sql.DB, newDB *db.DB) (int, erro
 				Alts:  req.Alternatives,
 			}
 			if req.Quote != "" {
-				if idx := strings.Index(plainText, req.Quote); idx >= 0 {
-					r.Quote = reading.Quote{Start: idx, End: idx + len(req.Quote)}
+				if q, ok := reading.LocateQuote(plainText, req.Quote); ok {
+					r.Quote = q
 				} else {
 					r.Quote = reading.Quote{Text: req.Quote}
 				}
