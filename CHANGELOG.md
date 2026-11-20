@@ -4,6 +4,7 @@ Notable changes of Sifty, newest first. Versions follow `MAJOR.MINOR.PATCH`.
 
 ## Unreleased
 
+- Web client 0.6.0: the requirements counter beside Fits you in list rows, with the state in the tooltip, and under the bucket in the vacancy band.
 - Requirements counter: each requirement of a vacancy is decided by code against your skills, the skills you do not have and Confirmed by you, using an embedded skills vocabulary; Inbox rows and the vacancy band show "✓ 4 · ✕ 1 · ? 6" or the state (Analysing requirements…, Not analysed yet, No requirements stated, Not checked yet). The Requirements criterion of Fits you has weight 0 until it is set.
 - Vacancy texts visible in a profile are read by the model in the background, one at a time, in arrival order; a busy, paused or limited model postpones the queue without using up attempts; the call journal names the vacancy.
 - A model reader of vacancy texts: requirements with kind, level and alternatives, and the conditions code did not find, each tied to an exact excerpt of the text; the Ollama and OpenAI-compatible adapters send the answer schema, and reading runs without the model's thinking.
