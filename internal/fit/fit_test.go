@@ -148,6 +148,31 @@ func TestTimeZoneFromStatedZoneThenPlaces(t *testing.T) {
 	}
 }
 
+func TestRequirementsScoreAffectsWeightedAverageWhenWeightIsNonZero(t *testing.T) {
+	p := fit.ProfileView{
+		Goals:  candidate.GoalsView{TargetRoles: []string{"Engineer"}},
+		Skills: []candidate.Skill{{Name: "Go"}},
+	}
+	r0 := fit.Rules{Weights: map[string]float64{"role": 1}, Rates: rules().Rates}
+	r1 := fit.Rules{Weights: map[string]float64{"role": 1, "requirements": 1}, Rates: rules().Rates}
+	v := reading.VacancyReading{
+		Title:            "Engineer",
+		Full:             true,
+		RequirementsRead: true,
+		Requirements: []reading.Requirement{
+			{Text: "Go", Level: "required"},
+			{Text: "Kubernetes", Level: "nice_to_have"},
+		},
+	}
+	noReqV := reading.VacancyReading{Title: "Engineer", Full: true}
+	if fit.Score(p, v, r0).Score != fit.Score(p, noReqV, r0).Score {
+		t.Error("requirements weight 0: score differs with and without requirements read")
+	}
+	if fit.Score(p, v, r1).Score == fit.Score(p, noReqV, r1).Score {
+		t.Error("requirements weight 1: score identical with and without requirements read")
+	}
+}
+
 func TestNumberIsWeightedMeanWithUnknownAsHalfAndZeroWeightLeftOut(t *testing.T) {
 	p := goals(candidate.GoalsView{TargetRoles: []string{"Go Engineer"}, Compensation: eur})
 	v := reading.Vacancy{Title: "Go Engineer", Text: "Salary: EUR 100,000 per year"}

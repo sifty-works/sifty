@@ -9,16 +9,20 @@ import (
 	"github.com/sifty-works/sifty-server/internal/candidate"
 	"github.com/sifty-works/sifty-server/internal/places"
 	"github.com/sifty-works/sifty-server/internal/reading"
+	"github.com/sifty-works/sifty-server/internal/skills"
 )
 
 type ProfileView struct {
 	Goals          candidate.GoalsView
 	Authorizations []candidate.WorkAuthorization
+	Skills         []candidate.Skill
+	AbsentSkills   []candidate.AbsentSkill
+	Confirmed      []candidate.ConfirmedFact
 }
 
 type Rules struct{ Weights, Rates map[string]float64 }
 
-var Criteria = []string{"role", "money", "location", "remote_restriction", "work_mode", "engagement", "hours", "time_zone"}
+var Criteria = []string{"role", "money", "location", "remote_restriction", "work_mode", "engagement", "hours", "time_zone", "requirements"}
 
 const (
 	Scored  = "scored"
@@ -51,12 +55,14 @@ type Tile struct {
 }
 
 type Fit struct {
-	State    string
-	Score    int
-	Bucket   string
-	Text     string
-	Criteria []Criterion
-	Tiles    []Tile
+	State                  string
+	Score                  int
+	Bucket                 string
+	Text                   string
+	Criteria               []Criterion
+	Tiles                  []Tile
+	ReqRead                bool
+	ReqOK, ReqNo, ReqMaybe int
 }
 
 const na = -1.0
@@ -88,6 +94,7 @@ func Score(p ProfileView, v reading.VacancyReading, r Rules) Fit {
 		"work_mode":          na,
 		"engagement":         overlap(g.Engagement, engagementDefault(v.Engagement)),
 		"hours":              hours(g.Hours, v.Hours),
+		"requirements":       na,
 	}
 	if len(g.TimeZones) > 0 {
 		zones := places.ZoneBands(v.TimeZone)
@@ -100,6 +107,31 @@ func Score(p ProfileView, v reading.VacancyReading, r Rules) Fit {
 		u["work_mode"] = na
 	}
 	f := Fit{Bucket: "Not scored"}
+	if v.RequirementsRead {
+		idx := skills.NewIndex(p.Skills, p.AbsentSkills)
+		var reqNum, reqDen float64
+		for _, req := range v.Requirements {
+			w := 1.0
+			if req.Level == "required" {
+				w = 2.0
+			}
+			switch skills.Decide(req, idx, p.Confirmed) {
+			case "✓":
+				reqNum += w
+				f.ReqOK++
+			case "✕":
+				f.ReqNo++
+			default:
+				reqNum += w * 0.5
+				f.ReqMaybe++
+			}
+			reqDen += w
+		}
+		f.ReqRead = true
+		if reqDen > 0 && (f.ReqOK > 0 || f.ReqNo > 0) {
+			u["requirements"] = reqNum / reqDen
+		}
+	}
 	var num, den float64
 	for _, name := range Criteria {
 		if w := r.Weights[name]; w > 0 {

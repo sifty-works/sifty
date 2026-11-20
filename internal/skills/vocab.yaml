@@ -1,0 +1,287 @@
+version: 1
+
+technology_context:
+  - language
+  - languages
+  - programming
+  - developer
+  - development
+  - engineer
+  - engineering
+  - stack
+  - backend
+  - back-end
+  - frontend
+  - front-end
+  - fullstack
+  - full-stack
+  - framework
+  - library
+  - code
+  - coding
+  - scripting
+  - services
+  - microservices
+  - tooling
+  - proficiency
+  - proficient
+  - expertise
+  - expert
+  - experience
+  - experienced
+
+generic_words:
+  - experience
+  - experienced
+  - years
+  - year
+  - strong
+  - solid
+  - proven
+  - track
+  - record
+  - ability
+  - able
+  - knowledge
+  - understanding
+  - skills
+  - skill
+  - proficiency
+  - proficient
+  - working
+  - work
+  - hands
+  - hands-on
+  - deep
+  - good
+  - excellent
+  - preferred
+  - required
+  - plus
+  - bonus
+  - familiarity
+  - fluency
+  - familiar
+  - mastery
+  - background
+  - demonstrated
+  - practical
+  - professional
+  - including
+  - related
+  - similar
+  - ideally
+  - least
+  - using
+  - within
+  - across
+  - role
+  - roles
+  - team
+  - teams
+  - company
+  - business
+  - level
+  - senior
+  - junior
+  - expertise
+  - expert
+  - advanced
+  - seasoned
+  - extensive
+  - the
+  - and
+  - for
+  - with
+  - that
+  - this
+  - are
+  - you
+  - our
+  - your
+  - have
+  - has
+  - from
+  - such
+  - other
+  - any
+  - all
+  - not
+  - can
+  - will
+  - who
+  - into
+  - how
+  - about
+
+groups:
+  - name: Go
+    terms:
+      - Golang
+    ambiguous_terms:
+      - Go
+  - name: TypeScript
+    ambiguous_terms:
+      - TS
+  - name: JavaScript
+    terms:
+      - ECMAScript
+      - ES6
+    ambiguous_terms:
+      - JS
+  - name: Python
+    terms:
+      - Python3
+  - name: Rust
+  - name: Java
+  - name: Kotlin
+  - name: Swift
+    ambiguous_terms:
+      - Swift
+  - name: Scala
+  - name: Ruby
+  - name: PHP
+  - name: Elixir
+  - name: Haskell
+  - name: Solidity
+  - name: C++
+    terms:
+      - Cpp
+  - name: "C#"
+    terms:
+      - CSharp
+  - name: C
+    ambiguous_terms:
+      - C
+  - name: R
+    ambiguous_terms:
+      - R
+  - name: SQL
+    terms:
+      - Structured Query Language
+  - name: Bash
+    terms:
+      - Shell scripting
+      - Bash scripting
+    ambiguous_terms:
+      - Shell
+  - name: React
+    terms:
+      - React.js
+      - ReactJS
+  - name: Next.js
+    terms:
+      - NextJS
+  - name: Vue
+    terms:
+      - Vue.js
+      - VueJS
+  - name: Angular
+    terms:
+      - AngularJS
+  - name: Node.js
+    terms:
+      - NodeJS
+    ambiguous_terms:
+      - Node
+  - name: Django
+  - name: Flask
+  - name: FastAPI
+  - name: Spring
+    terms:
+      - Spring Boot
+    ambiguous_terms:
+      - Spring
+  - name: Rails
+    terms:
+      - Ruby on Rails
+  - name: GraphQL
+  - name: gRPC
+  - name: REST
+    terms:
+      - RESTful
+      - REST API
+      - REST APIs
+    ambiguous_terms:
+      - REST
+  - name: .NET
+    terms:
+      - dotnet
+      - ASP.NET
+  - name: PostgreSQL
+    terms:
+      - Postgres
+  - name: MySQL
+    terms:
+      - MariaDB
+  - name: MongoDB
+    terms:
+      - Mongo
+  - name: Redis
+  - name: Kafka
+    terms:
+      - Apache Kafka
+  - name: Elasticsearch
+    terms:
+      - ElasticSearch
+      - OpenSearch
+  - name: SQLite
+  - name: Snowflake
+  - name: BigQuery
+  - name: Spark
+    terms:
+      - Apache Spark
+      - PySpark
+    ambiguous_terms:
+      - Spark
+  - name: dbt
+  - name: Kubernetes
+    terms:
+      - K8s
+      - K8
+  - name: Docker
+  - name: Terraform
+    terms:
+      - OpenTofu
+  - name: AWS
+    terms:
+      - Amazon Web Services
+  - name: GCP
+    terms:
+      - Google Cloud
+      - Google Cloud Platform
+  - name: Azure
+    terms:
+      - Microsoft Azure
+  - name: Linux
+  - name: Git
+    terms:
+      - GitHub
+      - GitLab
+  - name: CI/CD
+    terms:
+      - CICD
+      - Continuous Integration
+      - Continuous Delivery
+      - Continuous Deployment
+  - name: Prometheus
+  - name: Grafana
+  - name: Machine learning
+    terms:
+      - ML
+  - name: LLM
+    terms:
+      - LLMs
+      - Large Language Models
+      - Large Language Model
+  - name: PyTorch
+  - name: TensorFlow
+  - name: Ethereum
+    terms:
+      - EVM
+  - name: Smart contracts
+    terms:
+      - Smart contract
+  - name: Web3
+    terms:
+      - Web 3

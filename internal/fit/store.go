@@ -14,26 +14,28 @@ import (
 	"github.com/sifty-works/sifty-server/internal/db"
 	"github.com/sifty-works/sifty-server/internal/listing"
 	"github.com/sifty-works/sifty-server/internal/reading"
+	"github.com/sifty-works/sifty-server/internal/skills"
 )
 
-const ScoringVersion = 3
+const ScoringVersion = 4
 
 const current = `(f.inputs IS ? AND f.version IS v.version)`
 
 const Join = `LEFT JOIN fit f ON f.profile=? AND f.vacancy=v.id`
 
-const Columns = `f.state, f.score, f.inputs, f.version IS v.version`
+const Columns = `f.state, f.score, f.inputs, f.version IS v.version, f.req_ok, f.req_no, f.req_maybe`
 
 const OrderBestFit = `ORDER BY CASE WHEN ` + current + ` AND f.state IS 'scored' THEN f.score ELSE -1 END DESC, v.id ASC`
 
 type Stored struct {
-	State              sql.NullString
-	Score, Inputs      sql.NullInt64
-	SameVacancyVersion bool
+	State                  sql.NullString
+	Score, Inputs          sql.NullInt64
+	SameVacancyVersion     bool
+	ReqOK, ReqNo, ReqMaybe sql.NullInt64
 }
 
 func (s *Stored) Dest() []any {
-	return []any{&s.State, &s.Score, &s.Inputs, &s.SameVacancyVersion}
+	return []any{&s.State, &s.Score, &s.Inputs, &s.SameVacancyVersion, &s.ReqOK, &s.ReqNo, &s.ReqMaybe}
 }
 
 func (s Stored) Current(inputs int64) bool {
@@ -90,6 +92,7 @@ func Inputs(p ProfileView, r Rules) int64 {
 	}{ScoringVersion, p, r})
 	h := fnv.New64a()
 	h.Write(b)
+	h.Write(skills.VocabBytes)
 	return int64(h.Sum64())
 }
 
@@ -102,7 +105,13 @@ func LoadProfile(ctx context.Context, database *db.DB, id int64, r Rules) (Profi
 	if err != nil {
 		return Profile{}, err
 	}
-	v := ProfileView{Goals: candidate.Goals(pd), Authorizations: me.WorkAuthorizations}
+	v := ProfileView{
+		Goals:          candidate.Goals(pd),
+		Authorizations: me.WorkAuthorizations,
+		Skills:         me.Skills,
+		AbsentSkills:   me.AbsentSkills,
+		Confirmed:      me.ConfirmedFacts,
+	}
 	return Profile{id, v, Inputs(v, r)}, nil
 }
 
@@ -246,15 +255,19 @@ func writeBatch(ctx context.Context, database *db.DB, batch []catalog.VacancyTex
 		}
 		for _, p := range stale[t.ID] {
 			f := Score(p.View, read, r)
-			var score any
+			var score, reqOK, reqNo, reqMaybe any
 			if f.State == Scored {
 				score = f.Score
 			}
-			res, err := tx.ExecContext(ctx, `INSERT INTO fit (profile, vacancy, version, inputs, listing, state, score)
-				SELECT ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM profile WHERE id=?) AND EXISTS (SELECT 1 FROM vacancy WHERE id=?)
+			if f.ReqRead {
+				reqOK, reqNo, reqMaybe = f.ReqOK, f.ReqNo, f.ReqMaybe
+			}
+			res, err := tx.ExecContext(ctx, `INSERT INTO fit (profile, vacancy, version, inputs, listing, state, score, req_ok, req_no, req_maybe)
+				SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM profile WHERE id=?) AND EXISTS (SELECT 1 FROM vacancy WHERE id=?)
 				ON CONFLICT (profile, vacancy) DO UPDATE SET version=excluded.version, inputs=excluded.inputs,
-				listing=excluded.listing, state=excluded.state, score=excluded.score`,
-				p.ID, t.ID, t.Version, p.Inputs, listingKey(t), f.State, score, p.ID, t.ID)
+				listing=excluded.listing, state=excluded.state, score=excluded.score,
+				req_ok=excluded.req_ok, req_no=excluded.req_no, req_maybe=excluded.req_maybe`,
+				p.ID, t.ID, t.Version, p.Inputs, listingKey(t), f.State, score, reqOK, reqNo, reqMaybe, p.ID, t.ID)
 			if err != nil {
 				return 0, fmt.Errorf("fit: write %d: %w", t.ID, err)
 			}

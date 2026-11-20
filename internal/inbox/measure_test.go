@@ -98,6 +98,26 @@ func buildFixtureDB(t *testing.T) *db.DB {
 			t.Fatalf("upsert vacancy %d: %v", i, err)
 		}
 	}
+	var vacIDs []int64
+	idRows, err := database.QueryContext(context.Background(), `SELECT id FROM vacancy ORDER BY id LIMIT 50`)
+	if err != nil {
+		t.Fatalf("query vacancy ids: %v", err)
+	}
+	for idRows.Next() {
+		var id int64
+		if err := idRows.Scan(&id); err != nil {
+			idRows.Close()
+			t.Fatalf("scan vacancy id: %v", err)
+		}
+		vacIDs = append(vacIDs, id)
+	}
+	idRows.Close()
+	for _, id := range vacIDs {
+		database.Exec(`INSERT INTO job (kind, subject, state, priority, not_before, created, updated)
+			VALUES ('read_vacancy', ?, 'queued', 0, '', '2026-11-01T00:00:00Z', '2026-11-01T00:00:00Z')`,
+			fmt.Sprintf("%d/1", id))
+	}
+
 	database.Exec(`UPDATE profile SET data='{"name":"Profile","keywords":["engineer"],"targetRoles":["Software Engineer"]}' WHERE id=1`)
 	if err := fit.Recompute(context.Background(), database, defaultRules, func(int, int, string) {}); err != nil {
 		t.Fatalf("recompute fit: %v", err)

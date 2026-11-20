@@ -239,6 +239,22 @@ func TestStoringReadingMakesStoredFitStale(t *testing.T) {
 	}
 }
 
+func TestReadingWithNoRequirementsStoresZeroReqCounts(t *testing.T) {
+	d, cat, _ := fixture(t)
+	id := noSalaryVacancy(t, cat)
+	insertReading(t, d, id, 1, "test-reader", `{"requirements":[]}`, "2026-01-01T00:00:00Z")
+	recompute(t, d, nil)
+	var reqOK, reqNo, reqMaybe sql.NullInt64
+	d.QueryRow(`SELECT req_ok, req_no, req_maybe FROM fit WHERE profile=1 AND vacancy=?`, id).
+		Scan(&reqOK, &reqNo, &reqMaybe)
+	if !reqOK.Valid || !reqNo.Valid || !reqMaybe.Valid {
+		t.Errorf("want req counts not null, got req_ok=%v req_no=%v req_maybe=%v", reqOK, reqNo, reqMaybe)
+	}
+	if reqOK.Int64 != 0 || reqNo.Int64 != 0 || reqMaybe.Int64 != 0 {
+		t.Errorf("want 0,0,0 got %d,%d,%d", reqOK.Int64, reqNo.Int64, reqMaybe.Int64)
+	}
+}
+
 func TestDeletingVacancyRemovesReading(t *testing.T) {
 	d, cat, ids := fixture(t)
 	insertReading(t, d, ids[0], 1, "import-1", `{}`, "2024-01-01T00:00:00Z")

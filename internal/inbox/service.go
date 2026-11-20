@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -59,26 +60,72 @@ type Row struct {
 }
 
 type FitMark struct {
-	Score  *int   `json:"score"`
-	Bucket string `json:"bucket"`
-	Text   string `json:"text"`
-	Dimmed bool   `json:"dimmed"`
+	Score            *int   `json:"score"`
+	Bucket           string `json:"bucket"`
+	Text             string `json:"text"`
+	Dimmed           bool   `json:"dimmed"`
+	RequirementsText string `json:"requirementsText"`
 }
 
 type Band struct {
-	Score  *int       `json:"score"`
-	Bucket string     `json:"bucket"`
-	Text   string     `json:"text"`
-	Tiles  []fit.Tile `json:"tiles"`
+	Score            *int       `json:"score"`
+	Bucket           string     `json:"bucket"`
+	Text             string     `json:"text"`
+	Tiles            []fit.Tile `json:"tiles"`
+	RequirementsText string     `json:"requirementsText"`
 }
 
-func fitMark(s fit.Stored, inputs int64) FitMark {
+func reqText(state string, reqRead bool, reqOK, reqNo, reqMaybe int, inReadingSet bool) string {
+	if state == fit.NoText {
+		return "Full job description is unavailable"
+	}
+	if !reqRead {
+		if inReadingSet {
+			return "Analysing requirements…"
+		}
+		return "Not analysed yet"
+	}
+	total := reqOK + reqNo + reqMaybe
+	if total == 0 {
+		return "No requirements stated"
+	}
+	if reqOK == 0 && reqNo == 0 {
+		return "Not checked yet"
+	}
+	return fmt.Sprintf("✓ %d · ✕ %d · ? %d", reqOK, reqNo, reqMaybe)
+}
+
+func queryReadingSet(ctx context.Context, database *db.DB) (map[int64]bool, error) {
+	rows, err := database.QueryContext(ctx,
+		`SELECT subject FROM job WHERE kind='read_vacancy' AND state IN ('queued','running')`)
+	if err != nil {
+		return nil, fmt.Errorf("inbox: reading set: %w", err)
+	}
+	defer rows.Close()
+	out := map[int64]bool{}
+	for rows.Next() {
+		var subject string
+		if err := rows.Scan(&subject); err != nil {
+			return nil, fmt.Errorf("inbox: reading set: %w", err)
+		}
+		part, _, _ := strings.Cut(subject, "/")
+		if id, err := strconv.ParseInt(part, 10, 64); err == nil {
+			out[id] = true
+		}
+	}
+	return out, rows.Close()
+}
+
+func fitMark(s fit.Stored, inputs int64, vacancyID int64, readingSet map[int64]bool) FitMark {
 	m := FitMark{Bucket: "Not scored", Text: fit.Texts[s.State.String], Dimmed: s.State.Valid && !s.Current(inputs)}
 	if s.State.String == fit.Scored {
 		n := int(s.Score.Int64)
 		m.Score, m.Bucket = &n, fit.Bucket(n)
 		m.Text = fmt.Sprintf("Fits you %d: %s", n, m.Bucket)
 	}
+	m.RequirementsText = reqText(s.State.String, s.ReqOK.Valid,
+		int(s.ReqOK.Int64), int(s.ReqNo.Int64), int(s.ReqMaybe.Int64),
+		readingSet[vacancyID])
 	return m
 }
 
@@ -95,7 +142,7 @@ type Counts struct {
 	Archive   int `json:"archive"`
 }
 
-func toRow(rr repoRow, now time.Time, inputs int64) Row {
+func toRow(rr repoRow, now time.Time, inputs int64, readingSet map[int64]bool) Row {
 	company := rr.company
 	if company == "" {
 		company = "Unknown"
@@ -120,7 +167,7 @@ func toRow(rr repoRow, now time.Time, inputs int64) Row {
 		Reason:     rr.reason,
 		Applied:    appliedText(rr.appliedAt, rr.appliedName, rr.stage, now),
 		Expired:    rr.expiresAt != "" && rr.expiresAt <= nowStr,
-		Fit:        fitMark(rr.fit, inputs),
+		Fit:        fitMark(rr.fit, inputs, rr.id, readingSet),
 	}
 }
 
@@ -162,7 +209,11 @@ func rowAndCounts(ctx context.Context, database *db.DB, now func() time.Time, pr
 	if err != nil {
 		return Row{}, Counts{}, err
 	}
-	return toRow(row, t, fitInputs(ctx, database, profileID, r)), buildCounts(cm), nil
+	rs, err := queryReadingSet(ctx, database)
+	if err != nil {
+		return Row{}, Counts{}, err
+	}
+	return toRow(row, t, fitInputs(ctx, database, profileID, r), rs), buildCounts(cm), nil
 }
 
 func list(ctx context.Context, database *db.DB, now func() time.Time, profileID int64, stage, q, sort string, industries []string, f Filters, r fit.Rules) ([]Row, Counts, []IndustryCount, []SourceCount, int, error) {
@@ -181,13 +232,17 @@ func list(ctx context.Context, database *db.DB, now func() time.Time, profileID 
 	if err != nil {
 		return nil, Counts{}, nil, nil, 0, err
 	}
+	rs, err := queryReadingSet(ctx, database)
+	if err != nil {
+		return nil, Counts{}, nil, nil, 0, err
+	}
 	raw, err := listRows(ctx, database, t, profileID, stage, q, sort, vis, f, industries...)
 	if err != nil {
 		return nil, Counts{}, nil, nil, 0, err
 	}
 	rows := make([]Row, len(raw))
 	for i, rr := range raw {
-		rows[i] = toRow(rr, t, f.inputs)
+		rows[i] = toRow(rr, t, f.inputs, rs)
 	}
 	total := cm[stage]
 	return rows, buildCounts(cm), indCounts, srcCounts, total, nil
@@ -536,11 +591,16 @@ func vacancyView(ctx context.Context, database *db.DB, now func() time.Time,
 	if err != nil {
 		return VacancyView{}, err
 	}
-	band := Band{Bucket: f.Bucket, Text: f.Text, Tiles: f.Tiles}
+	rs, err := queryReadingSet(ctx, database)
+	if err != nil {
+		return VacancyView{}, err
+	}
+	band := Band{Bucket: f.Bucket, Text: f.Text, Tiles: f.Tiles,
+		RequirementsText: reqText(f.State, f.ReqRead, f.ReqOK, f.ReqNo, f.ReqMaybe, rs[vacancyID])}
 	if f.State == fit.Scored {
 		band.Score, band.Text = &f.Score, fmt.Sprintf("Fits you %d /100", f.Score)
 	}
-	apiRow := toRow(row, t, fitInputs(ctx, database, profileID, r))
+	apiRow := toRow(row, t, fitInputs(ctx, database, profileID, r), rs)
 	return VacancyView{
 		Row:      apiRow,
 		Sources:  sources,

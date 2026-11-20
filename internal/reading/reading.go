@@ -33,14 +33,16 @@ type Hours struct {
 }
 
 type VacancyReading struct {
-	Title      string
-	Full       bool
-	Money      *Money
-	WorkModes  []string
-	Engagement string
-	Hours      *Hours
-	Locations  []string
-	TimeZone   string
+	Title            string
+	Full             bool
+	Money            *Money
+	WorkModes        []string
+	Engagement       string
+	Hours            *Hours
+	Locations        []string
+	TimeZone         string
+	Requirements     []Requirement
+	RequirementsRead bool
 }
 
 //go:embed labels.yaml
@@ -107,6 +109,8 @@ func Merge(code VacancyReading, rec Record) VacancyReading {
 	if r.Hours == nil && rec.Hours != nil && rec.Hours.Value != "" {
 		r.setHours(rec.Hours.Value)
 	}
+	r.Requirements = rec.Requirements
+	r.RequirementsRead = true
 	return r
 }
 
