@@ -58,8 +58,6 @@ func (s *hnSource) List(ctx context.Context, f fetch.Fetcher, cfg Site) ([]listi
 	return out, nil
 }
 
-const hnWorkTypeStr = " remote onsite hybrid full-time part-time contract intern "
-
 func hnCommentToPosting(c *hnComment) (listing.Posting, bool) {
 	firstLine, _, _ := strings.Cut(c.Text, "<p>")
 	firstLine = listing.PlainText(firstLine)
@@ -68,21 +66,48 @@ func hnCommentToPosting(c *hnComment) (listing.Posting, bool) {
 	if len(parts) < 2 || company == "" {
 		return listing.Posting{}, false
 	}
-	var title, loc string
+	var title, loc, workType, employType, salary string
 	for _, pt := range parts[1:] {
 		pt = strings.TrimSpace(pt)
 		low := strings.ToLower(pt)
-		if strings.Contains(hnWorkTypeStr, " "+low+" ") || strings.ContainsAny(pt, "$£€") || strings.HasPrefix(low, "http") ||
-			(strings.Contains(pt, ".") && !strings.Contains(pt, " ")) {
+		if strings.HasPrefix(low, "http") || (strings.Contains(pt, ".") && !strings.Contains(pt, " ")) {
+			continue
+		}
+		if strings.ContainsAny(pt, "$£€") {
+			if salary == "" {
+				salary = pt
+			}
+			continue
+		}
+		prefix, inner := hnParenthetical(pt)
+		prefixLow := strings.ToLower(prefix)
+		if prefixLow == "remote" || prefixLow == "onsite" || prefixLow == "on-site" || prefixLow == "hybrid" {
+			if workType == "" {
+				workType = prefix
+			}
+			if inner != "" && loc == "" {
+				loc = inner
+			}
+			continue
+		}
+		if low == "full-time" || low == "full time" || low == "part-time" || low == "part time" ||
+			low == "fulltime" || low == "parttime" ||
+			low == "contract" || low == "freelance" || low == "intern" || low == "temporary" {
+			if employType == "" {
+				employType = pt
+			}
 			continue
 		}
 		if title == "" {
 			title = pt
 			continue
 		}
-		if loc == "" && pt != title {
+		if loc == "" {
 			loc = pt
 		}
+	}
+	if title == "" && len(parts) >= 2 {
+		title = strings.TrimSpace(parts[1])
 	}
 	if title == "" {
 		return listing.Posting{}, false
@@ -90,10 +115,20 @@ func hnCommentToPosting(c *hnComment) (listing.Posting, bool) {
 	p := listing.Posting{
 		URL:     fmt.Sprintf("https://news.ycombinator.com/item?id=%d", c.ID),
 		Company: company, Title: title, Location: loc,
-		Text: c.Text,
+		Text:   c.Text,
+		Fields: setFields("workplace_type", workType, "employment_type", employType, "salary", salary),
 	}
 	if t, ok := parseDate(c.CreatedAt); ok {
 		p.Published, p.PublishedBasis = t, "created_at"
 	}
 	return p, true
+}
+
+func hnParenthetical(s string) (string, string) {
+	i := strings.Index(s, "(")
+	j := strings.Index(s, ")")
+	if i > 0 && j > i {
+		return strings.TrimSpace(s[:i]), strings.TrimSpace(s[i+1 : j])
+	}
+	return s, ""
 }

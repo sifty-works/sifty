@@ -42,6 +42,11 @@ func parseFeedXML(body []byte, base string) ([]listing.Posting, error) {
 					url: item.Link, title: title, company: company,
 					tags: item.Categories, text: text,
 					published: item.PubDate, pubBasis: "pubDate",
+					region:     trim(stripSMPChars(item.Region)),
+					country:    trim(stripSMPChars(item.Country)),
+					location:   item.Location,
+					employType: item.Type,
+					expiresAt:  item.ExpiresAt,
 				})
 			}
 			return buildPostings(items, base), nil
@@ -89,13 +94,18 @@ func parseFeedXML(body []byte, base string) ([]listing.Posting, error) {
 }
 
 type feedItem struct {
-	url       string
-	title     string
-	company   string
-	tags      []string
-	text      string
-	published string
-	pubBasis  string
+	url        string
+	title      string
+	company    string
+	tags       []string
+	text       string
+	published  string
+	pubBasis   string
+	location   string
+	region     string
+	country    string
+	employType string
+	expiresAt  string
 }
 
 func buildPostings(items []feedItem, base string) []listing.Posting {
@@ -108,9 +118,21 @@ func buildPostings(items []feedItem, base string) []listing.Posting {
 			Tags:    it.tags,
 			Text:    it.text,
 		}
+		switch {
+		case it.country != "":
+			p.Location = it.country
+		case it.region != "":
+			p.Location = it.region
+		case it.location != "":
+			p.Location = it.location
+		}
+		p.Fields = setFields("employment_type", it.employType)
 		if pub, ok := parseDate(it.published); ok {
 			p.Published = pub
 			p.PublishedBasis = it.pubBasis
+		}
+		if exp, ok := parseDate(it.expiresAt); ok {
+			p.Expires = exp
 		}
 		if p, ok := finalise(p, base); ok {
 			out = append(out, p)
@@ -131,6 +153,11 @@ type rssItem struct {
 	Encoded    string   `xml:"http://purl.org/rss/1.0/modules/content/ encoded"`
 	Company    string   `xml:"company"`
 	Categories []string `xml:"category"`
+	Type       string   `xml:"type"`
+	Region     string   `xml:"region"`
+	Country    string   `xml:"country"`
+	Location   string   `xml:"location"`
+	ExpiresAt  string   `xml:"expires_at"`
 }
 
 type atomFeed struct {
@@ -168,4 +195,13 @@ func splitCompanyTitle(title, company string) (string, string) {
 		return title[:idx], title[idx+4:]
 	}
 	return title, ""
+}
+
+func stripSMPChars(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r > 0xFFFF {
+			return -1
+		}
+		return r
+	}, s)
 }

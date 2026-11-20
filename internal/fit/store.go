@@ -16,7 +16,7 @@ import (
 	"github.com/sifty-works/sifty-server/internal/reading"
 )
 
-const ScoringVersion = 2
+const ScoringVersion = 3
 
 const current = `(f.inputs IS ? AND f.version IS v.version)`
 

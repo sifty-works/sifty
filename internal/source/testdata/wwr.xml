@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:wwr="https://weworkremotely.com/">
+  <channel>
+    <title>We Work Remotely</title>
+    <item>
+      <title>Acme: Backend Engineer</title>
+      <link>https://weworkremotely.com/remote-jobs/view/1</link>
+      <pubDate>Mon, 11 Mar 2024 10:00:00 +0000</pubDate>
+      <description><![CDATA[<p>Backend role at Acme.</p>]]></description>
+      <wwr:type>Full-Time</wwr:type>
+      <wwr:region>🌎 Anywhere in the World</wwr:region>
+      <wwr:country>Worldwide</wwr:country>
+      <wwr:expires_at>2024-03-31 10:00:00 -0700</wwr:expires_at>
+    </item>
+  </channel>
+</rss>

@@ -279,10 +279,14 @@ regions:
     countries: [AT, BE, BG, HR, CY, CZ, DK, EE, FI, FR, DE, GR, HU, IE, IS, IT, LV, LI, LT, LU, MT, NL, "NO", PL, PT, RO, SK, SI, ES, SE, GB, CH, UA, RS, BA, AL, ME, MK, MD, BY, GE, AM, AZ, TR]
   - code: APAC
     name: APAC
-    aliases: [Asia Pacific, Asia-Pacific]
+    aliases: [Asia Pacific, Asia-Pacific, Asia]
     countries: [AU, NZ, JP, KR, SG, HK, CN, IN, TW, ID, TH, MY, PH, VN, BD, PK, LK]
+  - code: oceania
+    name: Oceania
+    aliases: []
+    countries: [AU, NZ, FJ, FM, KI, MH, NR, PG, PW, SB, TO, TV, VU, WS]
 
-worldwide: [worldwide, anywhere, earth, global, international, remote, telecommute, telecommuting, telework, teleworking]
+worldwide: [worldwide, anywhere, anywhere in the world, earth, global, international, remote, telecommute, telecommuting, telework, teleworking]
 
 ignore: [hybrid, onsite, on-site, on site, office, in-office, in office, flexible, home, distributed, nationwide]
 

@@ -505,8 +505,8 @@ func TestHN_list(t *testing.T) {
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
-	if len(ps) != 1 {
-		t.Fatalf("got %d postings, want 1 (no-pipe, deleted and no-title skipped)", len(ps))
+	if len(ps) != 2 {
+		t.Fatalf("got %d postings, want 2 (no-pipe and deleted skipped; no-title now falls back)", len(ps))
 	}
 	if ps[0].Company != "Acme Corp" {
 		t.Errorf("company = %q", ps[0].Company)
@@ -522,6 +522,214 @@ func TestHN_list(t *testing.T) {
 	}
 	if !strings.Contains(ps[0].URL, "101") {
 		t.Errorf("URL = %q, want comment id 101", ps[0].URL)
+	}
+}
+
+func TestHN_fields_from_tokens(t *testing.T) {
+	searchURL := "https://hn.algolia.com/api/v1/search_by_date?tags=story,author_whoishiring&hitsPerPage=5"
+	storyURL := "https://hn.algolia.com/api/v1/items/55"
+	searchBody := `{"hits":[{"objectID":"55","title":"Ask HN: Who is hiring? (Feb 2026)"}]}`
+	storyBody := `{"id":55,"children":[
+		{"id":201,"text":"Zeta Corp | Software Engineer | REMOTE (US) | Full-time | $90k-120k<p>Details","created_at":"2026-02-01T00:00:00Z","children":[]}
+	]}`
+	m := fetchtest.NewMap()
+	m.Set(searchURL, fetchtest.MapEntry{Response: fetch.Response{URL: searchURL, Status: 200, Body: []byte(searchBody)}})
+	m.Set(storyURL, fetchtest.MapEntry{Response: fetch.Response{URL: storyURL, Status: 200, Body: []byte(storyBody)}})
+	mod, site := source.For(mustParseURL(t, "https://news.ycombinator.com/"))
+	ps, err := mod.List(context.Background(), m, site)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(ps) != 1 {
+		t.Fatalf("got %d postings, want 1", len(ps))
+	}
+	p := ps[0]
+	if p.Title != "Software Engineer" {
+		t.Errorf("title = %q", p.Title)
+	}
+	if p.Location != "US" {
+		t.Errorf("location = %q, want US (from REMOTE parenthetical)", p.Location)
+	}
+	if p.Fields["workplace_type"] == "" {
+		t.Errorf("workplace_type empty, want remote token")
+	}
+	if p.Fields["employment_type"] != "Full-time" {
+		t.Errorf("employment_type = %q, want Full-time", p.Fields["employment_type"])
+	}
+	if p.Fields["salary"] != "$90k-120k" {
+		t.Errorf("salary = %q, want $90k-120k", p.Fields["salary"])
+	}
+}
+
+func TestHN_no_title_falls_back_to_first_token(t *testing.T) {
+	searchURL := "https://hn.algolia.com/api/v1/search_by_date?tags=story,author_whoishiring&hitsPerPage=5"
+	storyURL := "https://hn.algolia.com/api/v1/items/70"
+	searchBody := `{"hits":[{"objectID":"70","title":"Ask HN: Who is hiring? (Mar 2026)"}]}`
+	storyBody := `{"id":70,"children":[
+		{"id":301,"text":"Acme Co | Remote (EU) | https://acme.example","created_at":"2026-03-01T00:00:00Z","children":[]}
+	]}`
+	m := fetchtest.NewMap()
+	m.Set(searchURL, fetchtest.MapEntry{Response: fetch.Response{URL: searchURL, Status: 200, Body: []byte(searchBody)}})
+	m.Set(storyURL, fetchtest.MapEntry{Response: fetch.Response{URL: storyURL, Status: 200, Body: []byte(storyBody)}})
+	mod, site := source.For(mustParseURL(t, "https://news.ycombinator.com/"))
+	ps, err := mod.List(context.Background(), m, site)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(ps) != 1 {
+		t.Fatalf("got %d postings, want 1 (posting should not be dropped when only mode/url tokens follow company)", len(ps))
+	}
+	if ps[0].Company != "Acme Co" {
+		t.Errorf("company = %q, want Acme Co", ps[0].Company)
+	}
+	if ps[0].Title == "" {
+		t.Errorf("title empty, want fallback to first token")
+	}
+}
+
+func TestHN_spaced_engagement_tokens(t *testing.T) {
+	cases := []struct {
+		name  string
+		token string
+	}{
+		{"Full time", "Full time"},
+		{"Part time", "Part time"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			searchURL := "https://hn.algolia.com/api/v1/search_by_date?tags=story,author_whoishiring&hitsPerPage=5"
+			storyURL := "https://hn.algolia.com/api/v1/items/80"
+			searchBody := `{"hits":[{"objectID":"80","title":"Ask HN: Who is hiring? (Apr 2026)"}]}`
+			storyBody := `{"id":80,"children":[
+				{"id":401,"text":"Beta Inc | ` + tc.token + ` | Python developer<p>Details","created_at":"2026-04-01T00:00:00Z","children":[]}
+			]}`
+			m := fetchtest.NewMap()
+			m.Set(searchURL, fetchtest.MapEntry{Response: fetch.Response{URL: searchURL, Status: 200, Body: []byte(searchBody)}})
+			m.Set(storyURL, fetchtest.MapEntry{Response: fetch.Response{URL: storyURL, Status: 200, Body: []byte(storyBody)}})
+			mod, site := source.For(mustParseURL(t, "https://news.ycombinator.com/"))
+			ps, err := mod.List(context.Background(), m, site)
+			if err != nil {
+				t.Fatalf("List: %v", err)
+			}
+			if len(ps) != 1 {
+				t.Fatalf("got %d postings, want 1", len(ps))
+			}
+			p := ps[0]
+			if p.Title != "Python developer" {
+				t.Errorf("title = %q, want Python developer (%q should be engagement, not title)", p.Title, tc.token)
+			}
+			if p.Fields["employment_type"] == "" {
+				t.Errorf("employment_type empty, want %q classified as engagement", tc.token)
+			}
+		})
+	}
+}
+
+func TestFeed_WWR_structured_fields(t *testing.T) {
+	body := mustReadFile(t, "testdata/wwr.xml")
+	feedURL := "https://weworkremotely.com/remote-jobs.rss"
+	m := fetchtest.NewMap()
+	m.Set(feedURL, fetchtest.MapEntry{Response: fetch.Response{URL: feedURL, Status: 200, ContentType: "application/rss+xml", Body: body}})
+	mod, site := source.For(mustParseURL(t, "https://weworkremotely.com/"))
+	ps, err := mod.List(context.Background(), m, site)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(ps) != 1 {
+		t.Fatalf("got %d postings, want 1", len(ps))
+	}
+	p := ps[0]
+	if p.Location != "Worldwide" {
+		t.Errorf("location = %q, want Worldwide (from wwr:country)", p.Location)
+	}
+	if p.Fields["employment_type"] != "Full-Time" {
+		t.Errorf("employment_type = %q, want Full-Time", p.Fields["employment_type"])
+	}
+	if p.Expires.IsZero() {
+		t.Errorf("expires not set, want date from wwr:expires_at")
+	}
+}
+
+func TestFeed_Remotive_structured_fields(t *testing.T) {
+	body := mustReadFile(t, "testdata/remotive.xml")
+	feedURL := "https://remotive.com/api/remote-jobs"
+	m := fetchtest.NewMap()
+	m.Set(feedURL, fetchtest.MapEntry{Response: fetch.Response{URL: feedURL, Status: 200, ContentType: "application/rss+xml", Body: body}})
+	mod, site := source.For(mustParseURL(t, feedURL))
+	ps, err := mod.List(context.Background(), m, site)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(ps) != 1 {
+		t.Fatalf("got %d postings, want 1", len(ps))
+	}
+	p := ps[0]
+	if p.Location != "Worldwide" {
+		t.Errorf("location = %q, want Worldwide (from <location>)", p.Location)
+	}
+	if p.Fields["employment_type"] != "full_time" {
+		t.Errorf("employment_type = %q, want full_time", p.Fields["employment_type"])
+	}
+}
+
+func TestJSONLD_salary_monetary_amount(t *testing.T) {
+	const body = `<html><head><script type="application/ld+json">
+{"@type":"JobPosting","title":"Protocol Engineer","url":"https://jobs.example.com/job/42",
+"baseSalary":{"@type":"MonetaryAmount","currency":"USD","value":{"@type":"QuantitativeValue","minValue":100000,"maxValue":150000,"unitText":"YEAR"}}}
+</script></head></html>`
+	addr := "https://jobs.example.com/"
+	m := fetchtest.NewMap()
+	m.Set(addr, fetchtest.MapEntry{Response: fetch.Response{URL: addr, Status: 200, Body: []byte(body)}})
+	ps, err := listGeneric(t, m, addr)
+	if err != nil || len(ps) != 1 {
+		t.Fatalf("List err=%v len=%d, want 1", err, len(ps))
+	}
+	sal := ps[0].Fields["salary"]
+	if !strings.Contains(sal, "100000") || !strings.Contains(sal, "150000") {
+		t.Errorf("salary = %q, want both 100000 and 150000", sal)
+	}
+	if !strings.Contains(sal, "USD") {
+		t.Errorf("salary = %q, want USD currency", sal)
+	}
+	if !strings.Contains(sal, "/year") {
+		t.Errorf("salary = %q, want /year period", sal)
+	}
+}
+
+func TestJSONLD_employment_type_array(t *testing.T) {
+	const body = `<html><head><script type="application/ld+json">
+{"@type":"JobPosting","title":"Protocol Engineer","url":"https://jobs.example.com/job/42","employmentType":["FULL_TIME","CONTRACTOR"]}
+</script></head></html>`
+	addr := "https://jobs.example.com/"
+	m := fetchtest.NewMap()
+	m.Set(addr, fetchtest.MapEntry{Response: fetch.Response{URL: addr, Status: 200, Body: []byte(body)}})
+	ps, err := listGeneric(t, m, addr)
+	if err != nil || len(ps) != 1 {
+		t.Fatalf("List err=%v len=%d, want 1", err, len(ps))
+	}
+	if ps[0].Fields["employment_type"] != "FULL_TIME" {
+		t.Errorf("employment_type = %q, want FULL_TIME (first array element)", ps[0].Fields["employment_type"])
+	}
+}
+
+func TestJSONLD_applicant_location_requirements(t *testing.T) {
+	const body = `<html><head><script type="application/ld+json">
+{"@type":"JobPosting","title":"Protocol Engineer","url":"https://jobs.example.com/job/42",
+"jobLocationType":"TELECOMMUTE","applicantLocationRequirements":{"@type":"Country","name":"US"}}
+</script></head></html>`
+	addr := "https://jobs.example.com/"
+	m := fetchtest.NewMap()
+	m.Set(addr, fetchtest.MapEntry{Response: fetch.Response{URL: addr, Status: 200, Body: []byte(body)}})
+	ps, err := listGeneric(t, m, addr)
+	if err != nil || len(ps) != 1 {
+		t.Fatalf("List err=%v len=%d, want 1", err, len(ps))
+	}
+	loc := ps[0].Location
+	if !strings.Contains(loc, "Remote") {
+		t.Errorf("location = %q, want Remote (TELECOMMUTE)", loc)
+	}
+	if !strings.Contains(loc, "US") {
+		t.Errorf("location = %q, want US (applicantLocationRequirements)", loc)
 	}
 }
 
@@ -548,6 +756,11 @@ func TestDetail_company_recovery(t *testing.T) {
 			"page title fills company when no json-ld present",
 			`<html><head><title>Smart Contract Dev at DeFi Labs</title></head><body><main><p>desc</p></main></body></html>`,
 			"Smart Contract Dev", "DeFi Labs",
+		},
+		{
+			"json-ld title punct stripped single item fallback",
+			`<html><head><script type="application/ld+json">{"@type":"JobPosting","title":"Rust Engineer, Remote","url":"https://other.example.com/job/42","hiringOrganization":{"name":"Chain Labs"},"description":"<p>text</p>"}</script></head><body><main><p>b</p></main></body></html>`,
+			"Rust Engineer Remote", "Chain Labs",
 		},
 	}
 	for _, tc := range cases {

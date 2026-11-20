@@ -51,6 +51,7 @@ var (
 	currencyRe    = regexp.MustCompile(`(?i)\b(USD|EUR|GBP|CAD|AUD|CHF)\b`)
 	notCashRe     = regexp.MustCompile(`(?i)\b(bonus|equity|stock[- ]option|commission|estimate|survey|ote|allowance|relocation)\b`)
 	weeklyRe      = regexp.MustCompile(`(?i)(\d+(?:\.\d+)?)(?:\s*(?:-|–|—|to)\s*(\d+(?:\.\d+)?))?\s*(?:h|hr|hrs|hours)\s*(?:/|per)?\s*week`)
+	internRe      = regexp.MustCompile(`\bintern(ship)?\b`)
 )
 
 func FromCode(v Vacancy) VacancyReading {
@@ -62,8 +63,14 @@ func FromCode(v Vacancy) VacancyReading {
 		r.Engagement = engagement(t)
 		r.setHours(t)
 	}
-	if m, ok := workMode(v.Fields["workplace_type"]); ok {
-		r.addMode(m)
+	switch strings.ToLower(strings.TrimSpace(v.Fields["workplace_type"])) {
+	case "onsite_or_remote":
+		r.addMode("remote")
+		r.addMode("onsite")
+	default:
+		if m, ok := workMode(v.Fields["workplace_type"]); ok {
+			r.addMode(m)
+		}
 	}
 	r.addPlaces(v.Location)
 	for _, line := range strings.Split(v.Text, "\n") {
@@ -133,9 +140,9 @@ func (r *VacancyReading) setHours(value string) {
 	low := strings.ToLower(value)
 	h := Hours{}
 	switch {
-	case strings.Contains(low, "full-time") || strings.Contains(low, "full time"):
+	case strings.Contains(low, "full-time") || strings.Contains(low, "full time") || strings.Contains(low, "fulltime"):
 		h.Mode = "full_time"
-	case strings.Contains(low, "part-time") || strings.Contains(low, "part time"):
+	case strings.Contains(low, "part-time") || strings.Contains(low, "part time") || strings.Contains(low, "parttime"):
 		h.Mode = "part_time"
 	}
 	if m := weeklyRe.FindStringSubmatch(value); m != nil {
@@ -174,10 +181,14 @@ func loadWords() (map[string]string, map[string]string) {
 
 func engagement(low string) string {
 	switch {
-	case strings.Contains(low, "contract") || strings.Contains(low, "freelance"):
+	case strings.Contains(low, "contract") || strings.Contains(low, "freelance") ||
+		internRe.MatchString(low) || strings.Contains(low, "temporar"):
 		return "contract"
 	case strings.Contains(low, "employment") || strings.Contains(low, "permanent") ||
-		strings.Contains(low, "full-time") || strings.Contains(low, "full time") || strings.Contains(low, "employee"):
+		strings.Contains(low, "full-time") || strings.Contains(low, "full time") ||
+		strings.Contains(low, "fulltime") || strings.Contains(low, "employee") ||
+		strings.Contains(low, "part-time") || strings.Contains(low, "part time") ||
+		strings.Contains(low, "parttime"):
 		return "employment"
 	}
 	return ""
@@ -199,13 +210,16 @@ func money(value, line string) *Money {
 		m.Tax = "net"
 	}
 	var amounts []float64
+	var hasK []bool
 	idx := amountRe.FindAllStringSubmatchIndex(value, -1)
 	for _, x := range idx {
 		n, err := strconv.ParseFloat(strings.NewReplacer(",", "", " ", "").Replace(value[x[2]:x[3]]), 64)
 		if err != nil {
 			return nil
 		}
-		if x[4] >= 0 {
+		k := x[4] >= 0
+		hasK = append(hasK, k)
+		if k {
 			n *= 1000
 		}
 		amounts = append(amounts, n)
@@ -226,6 +240,9 @@ func money(value, line string) *Money {
 		between := strings.ToLower(strings.Trim(value[idx[0][1]:idx[1][0]], "$€£ \t,"))
 		if between != "-" && between != "–" && between != "—" && between != "to" {
 			return nil
+		}
+		if hasK[1] && !hasK[0] {
+			amounts[0] *= 1000
 		}
 		m.Min, m.Max = min(amounts[0], amounts[1]), max(amounts[0], amounts[1])
 	case len(amounts) == 1 && (hasAny(low, " from ", "starting at", "starting from", "minimum", "at least", ">=") || strings.HasPrefix(low, "from ")):
@@ -252,13 +269,13 @@ func currency(s string) string {
 
 func period(low string) string {
 	switch {
-	case hasAny(low, "per year", "/year", "annual", "p.a."):
+	case hasAny(low, "per year", "/year", "yearly", "annual", "p.a.", "per-year-salary", "1 year"):
 		return "year"
-	case hasAny(low, "per month", "/month", "monthly"):
+	case hasAny(low, "per month", "/month", "monthly", "1 month"):
 		return "month"
 	case hasAny(low, "per day", "/day", "daily"):
 		return "day"
-	case hasAny(low, "per hour", "/hour", "hourly"):
+	case hasAny(low, "per hour", "/hour", "hourly", "1 hour"):
 		return "hour"
 	}
 	return ""

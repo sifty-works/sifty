@@ -3,9 +3,11 @@ package source
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
+	"strings"
+
 	"github.com/sifty-works/sifty-server/internal/listing"
 	xhtml "golang.org/x/net/html"
-	"strings"
 )
 
 func parseJSONLD(body []byte, pageURL string, keepNoURL bool) []listing.Posting {
@@ -78,6 +80,13 @@ func jsonldToPosting(o map[string]any, pageURL string, nItems int, keepNoURL boo
 	var loc []string
 	if strings.EqualFold(ldStr(o, "jobLocationType"), "TELECOMMUTE") {
 		loc = append(loc, "Remote")
+		for _, alr := range ldFlat(o["applicantLocationRequirements"]) {
+			if m, ok := alr.(map[string]any); ok {
+				if s := ldStr(m, "name"); s != "" {
+					loc = append(loc, s)
+				}
+			}
+		}
 	}
 	for _, jl := range ldFlat(o["jobLocation"]) {
 		if m, ok := jl.(map[string]any); ok {
@@ -98,7 +107,7 @@ func jsonldToPosting(o map[string]any, pageURL string, nItems int, keepNoURL boo
 			uniq = append(uniq, s)
 		}
 	}
-	p := listing.Posting{URL: postURL, Title: trim(title), Company: trim(company), Location: strings.Join(uniq, ", ")}
+	p := listing.Posting{URL: postURL, Title: trim(title), Company: trim(company), Location: strings.Join(uniq, " · ")}
 	if desc := ldStr(o, "description"); desc != "" {
 		p.Text = desc
 	}
@@ -108,7 +117,7 @@ func jsonldToPosting(o map[string]any, pageURL string, nItems int, keepNoURL boo
 	if t, ok := parseDate(ldStr(o, "validThrough")); ok {
 		p.Expires = t
 	}
-	p.Fields = setFields("employment_type", ldStr(o, "employmentType"), "salary", ldSalaryText(o["baseSalary"]))
+	p.Fields = setFields("employment_type", ldStrFirst(o["employmentType"]), "salary", ldSalaryText(o["baseSalary"]))
 	return p, true
 }
 
@@ -135,10 +144,35 @@ func matchJSONLD(cs []listing.Posting, p listing.Posting) (listing.Posting, bool
 	if len(ms) == 1 {
 		return ms[0], true, false
 	}
+	if len(ms) == 0 && len(cs) == 1 {
+		ct := strings.ToLower(removePunct(trim(cs[0].Title)))
+		if ct != "" && ct == strings.ToLower(removePunct(trim(p.Title))) {
+			return cs[0], true, false
+		}
+	}
 	return listing.Posting{}, false, len(ms) > 1
 }
 
 func ldStr(m map[string]any, k string) string { s, _ := m[k].(string); return s }
+
+func ldStrFirst(v any) string {
+	switch t := v.(type) {
+	case string:
+		return t
+	case []any:
+		if len(t) > 0 {
+			s, _ := t[0].(string)
+			return s
+		}
+	}
+	return ""
+}
+
+func ldFloat(m map[string]any, k string) float64 {
+	n, _ := m[k].(float64)
+	return n
+}
+
 func ldFlat(v any) []any {
 	if a, ok := v.([]any); ok {
 		return a
@@ -150,10 +184,43 @@ func ldFlat(v any) []any {
 }
 
 func ldSalaryText(v any) string {
-	b, _ := json.Marshal(v)
-	s := strings.Trim(string(b), `"`)
-	if s != "" && s != "null" {
-		return s
+	m, ok := v.(map[string]any)
+	if !ok {
+		return ""
 	}
-	return ""
+	cur := ldStr(m, "currency")
+	qv, ok := m["value"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	unit := strings.ToLower(ldStr(qv, "unitText"))
+	per := map[string]string{"year": "/year", "month": "/month", "hour": "/hour", "day": "/day"}[unit]
+	lo, hi, single := ldFloat(qv, "minValue"), ldFloat(qv, "maxValue"), ldFloat(qv, "value")
+	var num string
+	switch {
+	case lo > 0 && hi > 0:
+		num = fmt.Sprintf("%.0f–%.0f", lo, hi)
+	case single > 0:
+		num = fmt.Sprintf("%.0f", single)
+	case hi > 0:
+		num = fmt.Sprintf("%.0f", hi)
+	default:
+		return ""
+	}
+	var parts []string
+	if cur != "" {
+		parts = append(parts, cur)
+	}
+	parts = append(parts, num)
+	return strings.Join(parts, " ") + per
+}
+
+func removePunct(s string) string {
+	s = strings.Map(func(r rune) rune {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == ' ' {
+			return r
+		}
+		return ' '
+	}, s)
+	return strings.Join(strings.Fields(s), " ")
 }

@@ -11,12 +11,12 @@ Collection visits the enabled sources. Each source is recognised by its address.
 | Kind of source | How it is read | Requests per run |
 |---|---|---|
 | Greenhouse, Lever, Ashby boards | the board's public JSON API, which includes descriptions | 1 |
-| RSS or Atom feeds that carry descriptions (We Work Remotely, Cryptocurrency Jobs) | the feed | 1 |
+| RSS or Atom feeds that carry descriptions (We Work Remotely, Remotive, Cryptocurrency Jobs); We Work Remotely and Remotive also carry employment type, location, and expiry date in named feed fields | the feed | 1 |
 | Remote3 | its feed for the list, then the page of each new vacancy | 1 + new vacancies |
 | web3.career, whose own structured data is broken | links on the listing page, then the page of each new vacancy | 1 + new vacancies |
 | Framework Ventures (a Getro board) | the jobs page at its list address | 1 + new vacancies without a description |
 | a16z Frontier | a script variable on the listing page holding an array of companies and their jobs | 1 + new vacancies without a description |
-| Hacker News "Who is hiring?" | two Algolia API requests: the newest "Who is hiring?" story, then its top-level comments as postings | 2 |
+| Hacker News "Who is hiring?" | two Algolia API requests: the newest "Who is hiring?" story, then its top-level comments as postings; work mode, employment type, and salary are read from pipe-separated first-line tokens | 2 |
 | Any other site | JSON-LD `JobPosting` on the listing page; if the answer is XML, RSS or Atom; otherwise links that look like vacancies and Getro `__NEXT_DATA__` | 1 + new vacancies without a description |
 
 Only the first listing page is read; there is no pagination. Sites behind a login are not collected.
@@ -44,7 +44,7 @@ The company of a Greenhouse vacancy is the company name the API gives, not the b
 
 ## Fields and text
 
-- Fields kept for a vacancy: title; company (empty when absent, displayed as "Unknown"); original address, canonical; apply address, only when it points to one concrete vacancy in an applicant tracking system (Greenhouse, Lever, Ashby, Workable), never to the root of a board; location; tags; structured fields the source states, such as salary or employment type; publication date with its basis, only when the source states a publication date (an update date is not accepted, a future date is dropped, a date once set is not replaced by another); expiry date (`validThrough`).
+- Fields kept for a vacancy: title; company (empty when absent, displayed as "Unknown"); original address, canonical; apply address, only when it points to one concrete vacancy in an applicant tracking system (Greenhouse, Lever, Ashby, Workable), never to the root of a board; location; tags; structured fields the source states, such as salary or employment type; publication date with its basis, only when the source states a publication date (an update date is not accepted, a future date is dropped, a date once set is not replaced by another); expiry date (from JSON-LD `validThrough` or from a feed's expiry field).
 - A vacancy past its expiry date shows "Listing expired" with the ◷ mark and is not hidden. When its expiry date has passed by more than a day and no application has been recorded for it, the daily retention run removes it permanently (see `settings-and-data.md`).
 - Any input text (HTML, escaped HTML, Markdown, plain text) becomes sanitised HTML limited to `h2 h3 h4 p ul ol li strong em br`. A paragraph that reads as a known section heading is shown as a heading.
 - On a vacancy's own page, JSON-LD is matched to exactly one listing item, by address or by a unique title; a page where several items share the same title is not guessed. When matched, the item fills empty fields (company, location, dates, employment type, salary); its description fills the text unless the site marks descriptions as unreliable, in which case the body is used for text instead. Without a JSON-LD match (and without ambiguity), the sanitised body of the page is used (the content block, for site-specific sources), and the page title in the form "Role at Company" fills an empty company. A link to one concrete vacancy in an applicant tracking system found on an aggregator's page becomes the apply address.
