@@ -70,10 +70,12 @@ func applySkillsDecision(ctx context.Context, database *db.DB, vacancyID int64, 
 				me.Skills = slices.DeleteFunc(me.Skills, eqName(name))
 			}
 		}
-		upIdx := skills.NewIndex(me.Skills, me.AbsentSkills)
-		want := map[bool]string{true: "✓", false: "✕"}[have]
-		if skills.Decide(req, upIdx, me.ConfirmedFacts) != want {
-			addConfirmed()
+		if chosenSkill == "" || len(named) <= 1 {
+			upIdx := skills.NewIndex(me.Skills, me.AbsentSkills)
+			want := map[bool]string{true: "✓", false: "✕"}[have]
+			if skills.Decide(req, upIdx, me.ConfirmedFacts) != want {
+				addConfirmed()
+			}
 		}
 	} else {
 		addConfirmed()

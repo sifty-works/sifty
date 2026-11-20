@@ -83,7 +83,7 @@ func postSkills(t *testing.T, ts *httptest.Server, vacancyID int64, reqIndex int
 	return out, resp.StatusCode
 }
 
-func reqVerdict(resp map[string]any, idx int) string {
+func reqLine(resp map[string]any, idx int) map[string]any {
 	vv, _ := resp["vacancyView"].(map[string]any)
 	band, _ := vv["band"].(map[string]any)
 	groups, _ := band["groups"].([]any)
@@ -93,12 +93,21 @@ func reqVerdict(resp map[string]any, idx int) string {
 		for _, it := range items {
 			im, _ := it.(map[string]any)
 			if int(im["index"].(float64)) == idx {
-				v, _ := im["verdict"].(string)
-				return v
+				return im
 			}
 		}
 	}
-	return ""
+	return nil
+}
+
+func reqVerdict(resp map[string]any, idx int) string {
+	v, _ := reqLine(resp, idx)["verdict"].(string)
+	return v
+}
+
+func reqNamedSkills(resp map[string]any, idx int) string {
+	names, _ := reqLine(resp, idx)["namedSkills"].([]any)
+	return fmt.Sprint(names)
 }
 
 func reqCounter(resp map[string]any) string {
@@ -140,10 +149,27 @@ func TestSkillsDecision_RecordsTheAnswer(t *testing.T) {
 			absent: []candidate.AbsentSkill{{Name: "Docker"}},
 			req:    reading.Requirement{Text: "Docker", Kind: "skill", Level: "required"},
 			have:   true, wantMe: "skill Docker Proficient", wantVerdict: "✓"},
-		{name: "a chosen part of a compound requirement is confirmed",
-			req:    reading.Requirement{Text: "Docker and Kubernetes", Kind: "skill", Level: "required"},
+		{name: "a chosen skill of a compound requirement is added alone",
+			req:    reading.Requirement{Text: "Docker and Kubernetes in production", Kind: "skill", Level: "required"},
 			have:   true,
-			chosen: "Docker", wantMe: "fact Docker and Kubernetes true; skill Docker Proficient", wantVerdict: "✓"},
+			chosen: "Docker", wantMe: "skill Docker Proficient", wantVerdict: "?"},
+		{name: "a compound requirement answered without a choice is confirmed as a whole",
+			req:    reading.Requirement{Text: "Docker and Kubernetes in production", Kind: "skill", Level: "required"},
+			have:   true,
+			wantMe: "fact Docker and Kubernetes in production true; skill Docker Proficient; skill Kubernetes Proficient", wantVerdict: "✓"},
+		{name: "a compound requirement answered with minus records every skill as absent",
+			req:    reading.Requirement{Text: "Docker and Kubernetes in production", Kind: "skill", Level: "required"},
+			have:   false,
+			wantMe: "absent Docker; absent Kubernetes; fact Docker and Kubernetes in production false", wantVerdict: "✕"},
+		{name: "a requirement naming one skill it cannot decide is confirmed too",
+			req:    reading.Requirement{Text: "Kubernetes in production", Kind: "skill", Level: "required"},
+			have:   true,
+			wantMe: "fact Kubernetes in production true; skill Kubernetes Proficient", wantVerdict: "✓"},
+		{name: "a chosen skill that is the only one named confirms the requirement",
+			req:    reading.Requirement{Text: "Kubernetes in production", Kind: "skill", Level: "required"},
+			have:   true,
+			chosen: "Kubernetes",
+			wantMe: "fact Kubernetes in production true; skill Kubernetes Proficient", wantVerdict: "✓"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			d := openTestDB(t)
@@ -167,10 +193,30 @@ func TestSkillsDecision_RecordsTheAnswer(t *testing.T) {
 			if notice, _ := resp["notice"].(string); notice == "" || notice == "Nothing new to add; your data is already up to date." {
 				t.Errorf("notice: %q — expected something added", notice)
 			}
-			if ct := reqCounter(resp); ct == "Not checked yet" || ct == "" {
-				t.Errorf("requirements counter after the answer: %q", ct)
+			wantCounter := map[string]string{"✓": "✓ 1 · ✕ 0 · ? 0", "✕": "✓ 0 · ✕ 1 · ? 0", "?": "Not checked yet"}[tc.wantVerdict]
+			if ct := reqCounter(resp); ct != wantCounter {
+				t.Errorf("requirements counter after the answer: got %q, want %q", ct, wantCounter)
 			}
 		})
+	}
+}
+
+func TestSkillsDecision_everyNamedSkillStaysAvailable(t *testing.T) {
+	d := openTestDB(t)
+	id := addVacancyWithReading(t, d, "https://example.com/jobs/sk9", "Platform",
+		[]reading.Requirement{{Text: "Docker and Kubernetes in production", Kind: "skill", Level: "required"}})
+	ts := newSkillsServer(t, d, nil)
+
+	first, _ := postSkills(t, ts, id, 0, true, "Docker")
+	if got := reqNamedSkills(first, 0); got != "[Docker Kubernetes]" {
+		t.Errorf("named skills after the first choice: got %q, want both", got)
+	}
+	second, _ := postSkills(t, ts, id, 0, true, "Kubernetes")
+	if got := meSummary(t, d); got != "skill Docker Proficient; skill Kubernetes Proficient" {
+		t.Errorf("My data after both choices: got %q, want both skills and no statement", got)
+	}
+	if notice, _ := second["notice"].(string); notice != `Added "Kubernetes" to your skills (level Proficient; change in your profile).` {
+		t.Errorf("notice of the second choice: %q", notice)
 	}
 }
 

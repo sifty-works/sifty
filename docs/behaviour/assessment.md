@@ -75,7 +75,8 @@ From top to bottom:
    A tile shows ✕ when any of its criteria is a mismatch, ✓ when every comparable criterion matches, and ? otherwise, so a tile never disagrees with the number. Money shows the original range and "≈ €…" after conversion. The Contract tile shows "Employment (assumed)" when the vacancy states no engagement.
 2. **What they ask.** "N requirements" with the counter, then the groups Required and Nice to have. Each row shows the requirement, its alternatives, its verdict, and on the right the evidence from My data ("8 years", "Go · Rust").
    - **+** ("I have this") adds the skill to Skills at the level Proficient when the skills vocabulary knows it, asking which one when the requirement has alternatives; otherwise it adds "You have: …" to Confirmed by you.
-   - **−** adds the skill to the skills the user does not have, or "You do not have: …" to Confirmed by you.
+   - A requirement that names several known skills offers one **+** per skill and one **+** for the requirement as a whole. A **+** on one skill adds that skill alone, so the requirement keeps its verdict and its other skills can still be added, and the notice names only that skill. A **+** on the requirement as a whole adds every skill it names and, when that still leaves it undecided, "You have: …" to Confirmed by you.
+   - **−** adds the skill to the skills the user does not have, or "You do not have: …" to Confirmed by you, and follows the same rule when the requirement names several skills.
    - After a click this vacancy is recomputed at once, on the page and in its Inbox row; other vacancies follow in the background. A notice says what was added and where, for example "Added "Go" to your skills (level Proficient; change in your profile)."
 3. **What they offer** and **Listing text**, described in `inbox.md`.
 4. **Shortlist check**, in Shortlist and Archive when a check exists (see below).
