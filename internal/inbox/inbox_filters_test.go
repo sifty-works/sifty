@@ -1,58 +1,49 @@
 package inbox_test
 
 import (
-	"context"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/sifty-works/sifty-server/internal/catalog"
-	"github.com/sifty-works/sifty-server/internal/listing"
+	"github.com/sifty-works/sifty-server/internal/db"
 )
 
-func addWithSrc(t *testing.T, cat *catalog.Catalog, p listing.Posting, src string) int64 {
+func addAtLocation(t *testing.T, cat *catalog.Catalog, url, title, location string) int64 {
 	t.Helper()
-	id, _, err := cat.Upsert(context.Background(), p, src)
-	if err != nil {
-		t.Fatalf("upsert: %v", err)
-	}
-	return id
+	p := postWithText(url, title, "Co", "job")
+	p.Location = location
+	return add(t, cat, p)
 }
 
-func TestFilter_Collected_7days(t *testing.T) {
-	d := openTestDB(t)
-	cat := catalog.New(d, func() time.Time { return testNow.AddDate(0, 0, -6) })
-	setProfileData(t, d, nil, []string{"engineer"}, nil)
-	id6 := add(t, cat, post("https://example.com/jobs/c1", "Recent Engineer", "Co"))
+func TestFilter_Collected(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		filter      string
+		kept, older int
+	}{
+		{"7 days keeps a vacancy collected 6 days ago", "7", 6, 8},
+		{"30 days keeps a vacancy collected 7 days ago", "30", 7, 31},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := openTestDB(t)
+			setProfileData(t, d, nil, []string{"engineer"}, nil)
+			kept := add(t, catalog.New(d, func() time.Time { return testNow.AddDate(0, 0, -tc.kept) }),
+				post("https://example.com/jobs/c1", "Recent Engineer", "Co"))
+			add(t, catalog.New(d, func() time.Time { return testNow.AddDate(0, 0, -tc.older) }),
+				post("https://example.com/jobs/c2", "Old Engineer", "Co"))
 
-	cat8 := catalog.New(d, func() time.Time { return testNow.AddDate(0, 0, -8) })
-	add(t, cat8, post("https://example.com/jobs/c2", "Old Engineer", "Co"))
-
-	ts := newTestServer(t, d)
-	rs := getRows(apiGet(t, ts, "/api/vacancies?collected=7"))
-	if len(rs) != 1 || rowID(rs[0]) != float64(id6) {
-		t.Errorf("collected=7: got %d rows, want 1 (6-day vacancy); first id %v", len(rs), rowID(rs[0]))
-	}
-	if len(getRows(apiGet(t, ts, "/api/vacancies"))) != 2 {
-		t.Errorf("no filter: want 2 rows")
-	}
-}
-
-func TestFilter_Collected_30days(t *testing.T) {
-	d := openTestDB(t)
-	setProfileData(t, d, nil, []string{"engineer"}, nil)
-
-	cat7 := catalog.New(d, func() time.Time { return testNow.AddDate(0, 0, -7) })
-	add(t, cat7, post("https://example.com/jobs/c3", "Week Engineer", "Co"))
-
-	cat31 := catalog.New(d, func() time.Time { return testNow.AddDate(0, 0, -31) })
-	add(t, cat31, post("https://example.com/jobs/c4", "Month Engineer", "Co"))
-
-	ts := newTestServer(t, d)
-	rs := getRows(apiGet(t, ts, "/api/vacancies?collected=30"))
-	if len(rs) != 1 || field(rs[0], "title") != "Week Engineer" {
-		t.Errorf("collected=30: got %d rows, title %q", len(rs), field(rs[0], "title"))
+			ts := newTestServer(t, d)
+			rs := getRows(apiGet(t, ts, "/api/vacancies?collected="+tc.filter))
+			if len(rs) != 1 || rowID(rs[0]) != float64(kept) {
+				t.Errorf("collected=%s: got %d rows, want 1 (the recent one)", tc.filter, len(rs))
+			}
+			if len(getRows(apiGet(t, ts, "/api/vacancies"))) != 2 {
+				t.Errorf("no filter: want 2 rows")
+			}
+		})
 	}
 }
 
@@ -60,22 +51,21 @@ func TestExpiry_StageCondition(t *testing.T) {
 	d := openTestDB(t)
 	setProfileData(t, d, nil, []string{"engineer"}, nil)
 	cat := newCat(d)
-	ns := testNow.UTC().Format(time.RFC3339)
-	pExpSL := post("https://example.com/jobs/ec1", "Expired Engineer", "Co")
-	pExpSL.Expires = testNow.AddDate(0, 0, -1)
-	expSL := add(t, cat, pExpSL)
+	expire := func(url, title string, days int) int64 {
+		p := post(url, title, "Co")
+		p.Expires = testNow.AddDate(0, 0, days)
+		return add(t, cat, p)
+	}
+	expSL := expire("https://example.com/jobs/ec1", "Expired Engineer", -1)
 	setVacancyIndustries(t, d, expSL, []string{"Ops"})
-	d.Exec(`INSERT INTO decision (profile,vacancy,stage,reason,decided_at) VALUES (1,?,?,?,?)`, expSL, "shortlist", "", ns)
-	pExpAP := post("https://example.com/jobs/ec2", "Applied Expired Engineer", "Co")
-	pExpAP.Expires = testNow.AddDate(0, 0, -2)
-	expAP := add(t, cat, pExpAP)
+	decide(t, d, expSL, "shortlist", "")
+	expAP := expire("https://example.com/jobs/ec2", "Applied Expired Engineer", -2)
 	setVacancyIndustries(t, d, expAP, []string{"Ops"})
-	d.Exec(`INSERT INTO decision (profile,vacancy,stage,reason,decided_at) VALUES (1,?,?,?,?)`, expAP, "applied", "", ns)
-	pFuture := post("https://example.com/jobs/ec3", "Future Engineer", "Co")
-	pFuture.Expires = testNow.AddDate(0, 0, 10)
-	add(t, cat, pFuture)
+	decide(t, d, expAP, "applied", "")
+	expire("https://example.com/jobs/ec3", "Future Engineer", 10)
 	openDM := add(t, cat, post("https://example.com/jobs/ec4", "Live Engineer", "Co"))
-	d.Exec(`INSERT INTO decision (profile,vacancy,stage,reason,decided_at) VALUES (1,?,?,?,?)`, openDM, "dismissed", "", ns)
+	decide(t, d, openDM, "dismissed", "")
+
 	ts := newTestServer(t, d)
 	ib := apiGet(t, ts, "/api/vacancies?stage=inbox")
 	if n, s, ap, dm := countOf(ib, "inbox"), countOf(ib, "shortlist"), countOf(ib, "applied"), countOf(ib, "dismissed"); n != 1 || s != 0 || ap != 1 || dm != 1 {
@@ -90,19 +80,10 @@ func TestExpiry_StageCondition(t *testing.T) {
 	if exp, _ := apRS[0].(map[string]any)["expired"].(bool); !exp {
 		t.Errorf("applied row: expired should be true")
 	}
-	icOf := func(body map[string]any, name string) int {
-		for _, v := range body["industryCounts"].([]any) {
-			if m, _ := v.(map[string]any); m["name"] == name {
-				c, _ := m["count"].(float64)
-				return int(c)
-			}
-		}
-		return 0
-	}
-	if ic := icOf(sl, "Ops"); ic != 0 {
+	if ic := namedCounts(sl, "industryCounts")["Ops"]; ic != 0 {
 		t.Errorf("shortlist Ops industry count: %d, want 0", ic)
 	}
-	if ic := icOf(ap, "Ops"); ic != 1 {
+	if ic := namedCounts(ap, "industryCounts")["Ops"]; ic != 1 {
 		t.Errorf("applied Ops industry count: %d, want 1", ic)
 	}
 }
@@ -111,61 +92,26 @@ func TestFilter_Remote(t *testing.T) {
 	d := openTestDB(t)
 	setProfileData(t, d, nil, []string{"engineer"}, nil)
 	cat := newCat(d)
-	mkLoc := func(url, loc string) listing.Posting {
-		return listing.Posting{
-			URL: url, Title: "Engineer", Company: "Co",
-			Location: loc, Text: "job", TextState: listing.TextFull,
+	for i, tc := range []struct{ title, location, industry string }{
+		{"Remote EU Engineer", "Remote · EU", "Software"},
+		{"Hybrid Engineer", "Remote-first (hybrid)", ""},
+		{"Office Engineer", "New York office only", "Software"},
+		{"Anywhere Engineer", "Worldwide – anywhere", ""},
+		{"Telecommute Engineer", "Telecommute · US", ""},
+		{"City Engineer", "San Francisco", ""},
+	} {
+		id := addAtLocation(t, cat, fmt.Sprintf("https://example.com/jobs/rm%d", i), tc.title, tc.location)
+		if tc.industry != "" {
+			setVacancyIndustries(t, d, id, []string{tc.industry})
 		}
 	}
-	idA := add(t, cat, mkLoc("https://example.com/jobs/r1", "Remote · EU"))
-	idB := add(t, cat, mkLoc("https://example.com/jobs/r2", "Remote-first (hybrid)"))
-	idC := add(t, cat, mkLoc("https://example.com/jobs/r3", "New York office only"))
-	setVacancyIndustries(t, d, idA, []string{"Software"})
-	setVacancyIndustries(t, d, idC, []string{"Software"})
-	ts := newTestServer(t, d)
-	body := apiGet(t, ts, "/api/vacancies?remote=true")
-	rs := getRows(body)
-	got := map[float64]bool{}
-	for _, r := range rs {
-		got[rowID(r)] = true
+	body := apiGet(t, newTestServer(t, d), "/api/vacancies?remote=true")
+	want := "Anywhere Engineer,Hybrid Engineer,Remote EU Engineer,Telecommute Engineer"
+	if got := sortedTitles(body); got != want {
+		t.Errorf("remote rows: got %q, want %q", got, want)
 	}
-	if len(rs) != 2 || !got[float64(idA)] || !got[float64(idB)] {
-		t.Errorf("remote rows: got %d %v, want 2 (Remote EU + Remote-first)", len(rs), got)
-	}
-	icRaw, _ := body["industryCounts"].([]any)
-	var softwareCount int
-	for _, v := range icRaw {
-		if m, _ := v.(map[string]any); m["name"] == "Software" {
-			softwareCount = int(m["count"].(float64))
-		}
-	}
-	if softwareCount != 1 {
-		t.Errorf("industryCounts with remote=true: Software=%d, want 1 (office vacancy excluded)", softwareCount)
-	}
-}
-
-func TestFilter_Remote_Anywhere(t *testing.T) {
-	d := openTestDB(t)
-	setProfileData(t, d, nil, []string{"engineer"}, nil)
-	cat := newCat(d)
-
-	add(t, cat, listing.Posting{
-		URL: "https://example.com/jobs/ra1", Title: "Engineer", Company: "Co",
-		Location: "Worldwide – anywhere", Text: "job", TextState: listing.TextFull,
-	})
-	add(t, cat, listing.Posting{
-		URL: "https://example.com/jobs/ra2", Title: "Engineer", Company: "Co",
-		Location: "Telecommute · US", Text: "job", TextState: listing.TextFull,
-	})
-	add(t, cat, listing.Posting{
-		URL: "https://example.com/jobs/ra3", Title: "Engineer", Company: "Co",
-		Location: "San Francisco", Text: "job", TextState: listing.TextFull,
-	})
-
-	ts := newTestServer(t, d)
-	rs := getRows(apiGet(t, ts, "/api/vacancies?remote=true"))
-	if len(rs) != 2 {
-		t.Errorf("remote anywhere/telecommute: got %d rows, want 2", len(rs))
+	if n := namedCounts(body, "industryCounts")["Software"]; n != 1 {
+		t.Errorf("industryCounts with remote=true: Software=%d, want 1 (office vacancy excluded)", n)
 	}
 }
 
@@ -175,29 +121,25 @@ func TestFilter_Leadership(t *testing.T) {
 	cat := newCat(d)
 
 	cases := []struct {
-		url   string
 		title string
 		match bool
 	}{
-		{"https://example.com/jobs/l1", "Head of Engineering", true},
-		{"https://example.com/jobs/l2", "Lead Generation Specialist", false},
-		{"https://example.com/jobs/l3", "CTO (remote)", true},
-		{"https://example.com/jobs/l4", "Senior Director of Product", true},
-		{"https://example.com/jobs/l5", "Engineering Manager", true},
-		{"https://example.com/jobs/l6", "Lead Software Engineer", true},
-		{"https://example.com/jobs/l7", "Data Analyst", false},
+		{"Head of Engineering", true},
+		{"Lead Generation Specialist", false},
+		{"CTO (remote)", true},
+		{"Senior Director of Product", true},
+		{"Engineering Manager", true},
+		{"Lead Software Engineer", true},
+		{"Data Analyst", false},
+		{"Head of Platform Engineering", true},
+		{"Lead Generation Director", true},
 	}
-	for _, tc := range cases {
-		add(t, cat, listing.Posting{
-			URL: tc.url, Title: tc.title, Company: "Co",
-			Text: "job description", TextState: listing.TextFull,
-		})
+	for i, tc := range cases {
+		add(t, cat, post(fmt.Sprintf("https://example.com/jobs/l%d", i), tc.title, "Co"))
 	}
 
-	ts := newTestServer(t, d)
-	rs := getRows(apiGet(t, ts, "/api/vacancies?leadership=true"))
 	matched := map[string]bool{}
-	for _, r := range rs {
+	for _, r := range getRows(apiGet(t, newTestServer(t, d), "/api/vacancies?leadership=true")) {
 		matched[field(r, "title")] = true
 	}
 	for _, tc := range cases {
@@ -207,134 +149,91 @@ func TestFilter_Leadership(t *testing.T) {
 	}
 }
 
-func TestFilter_Sources(t *testing.T) {
+func sourceFixture(t *testing.T) (*db.DB, *httptest.Server) {
+	t.Helper()
 	d := openTestDB(t)
 	setProfileData(t, d, nil, []string{"engineer"}, nil)
 	cat := newCat(d)
+	idA := addWithSrc(t, cat, post("https://example.com/jobs/s1", "Alpha Engineer", "Co"), "feed-alpha")
+	idB := addWithSrc(t, cat, post("https://example.com/jobs/s2", "Beta Engineer A", "Co"), "feed-beta")
+	addWithSrc(t, cat, post("https://example.com/jobs/s3", "Beta Engineer B", "Co"), "feed-beta")
+	addWithSrc(t, cat, post("https://example.com/jobs/s4", "Gamma Engineer", "Co"), "feed-gamma")
+	setVacancyIndustries(t, d, idA, []string{"Web3"})
+	setVacancyIndustries(t, d, idB, []string{"Software"})
+	return d, newTestServer(t, d)
+}
 
-	idA := addWithSrc(t, cat, post("https://example.com/jobs/s1", "Alpha Engineer", "feed-alpha"), "feed-alpha")
-	add(t, cat, post("https://example.com/jobs/s2", "Beta Engineer", "feed-beta"))
-
-	ts := newTestServer(t, d)
-	rs := getRows(apiGet(t, ts, "/api/vacancies?sources=feed-alpha"))
-	if len(rs) != 1 || rowID(rs[0]) != float64(idA) {
-		t.Errorf("sources filter: got %d rows, want 1 (feed-alpha)", len(rs))
+func TestFilter_Sources(t *testing.T) {
+	_, ts := sourceFixture(t)
+	for _, tc := range []struct{ name, query, want string }{
+		{"one source keeps only its roles", "?sources=feed-alpha", "Alpha Engineer"},
+		{"several sources keep the roles of each", "?sources=feed-alpha,feed-beta",
+			"Alpha Engineer,Beta Engineer A,Beta Engineer B"},
+		{"no source filter keeps every role", "",
+			"Alpha Engineer,Beta Engineer A,Beta Engineer B,Gamma Engineer"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := sortedTitles(apiGet(t, ts, "/api/vacancies"+tc.query)); got != tc.want {
+				t.Errorf("rows: got %q, want %q", got, tc.want)
+			}
+		})
 	}
-	if len(getRows(apiGet(t, ts, "/api/vacancies"))) != 2 {
-		t.Errorf("no filter: want 2 rows")
+}
+
+func TestFilter_SourceAndIndustryCounts(t *testing.T) {
+	_, ts := sourceFixture(t)
+	want := map[string]int{"feed-alpha": 1, "feed-beta": 2, "feed-gamma": 1}
+	for _, query := range []string{"", "?sources=feed-alpha"} {
+		got := namedCounts(apiGet(t, ts, "/api/vacancies"+query), "sourceCounts")
+		for name, n := range want {
+			if got[name] != n {
+				t.Errorf("sourceCounts%q: %s=%d, want %d (the sources filter is ignored)", query, name, got[name], n)
+			}
+		}
+	}
+	ic := namedCounts(apiGet(t, ts, "/api/vacancies?sources=feed-alpha"), "industryCounts")
+	if ic["Web3"] != 1 || ic["Software"] != 0 {
+		t.Errorf("industryCounts with the sources filter: Web3=%d Software=%d, want 1 and 0", ic["Web3"], ic["Software"])
 	}
 }
 
 func TestFilter_Unread(t *testing.T) {
-	d := openTestDB(t)
-	setProfileData(t, d, nil, []string{"engineer"}, nil)
-	cat := newCat(d)
+	for _, stage := range []string{"applied", "dismissed"} {
+		t.Run("ignored in "+stage, func(t *testing.T) {
+			d := openTestDB(t)
+			setProfileData(t, d, nil, []string{"engineer"}, nil)
+			cat := newCat(d)
+			idUnread := add(t, cat, post("https://example.com/jobs/u1", "Unread Engineer", "Co"))
+			idRead := add(t, cat, post("https://example.com/jobs/u2", "Read Engineer", "Co"))
+			d.Exec(`UPDATE vacancy SET seen_at=? WHERE id=?`, testNow.UTC().Format(time.RFC3339), idRead)
 
-	idUnread := add(t, cat, post("https://example.com/jobs/u1", "Unread Engineer", "Co"))
-	idRead := add(t, cat, post("https://example.com/jobs/u2", "Read Engineer", "Co"))
-	d.Exec(`UPDATE vacancy SET seen_at=? WHERE id=?`,
-		testNow.UTC().Format(time.RFC3339), idRead)
-
-	ts := newTestServer(t, d)
-	rs := getRows(apiGet(t, ts, "/api/vacancies?unread=true"))
-	if len(rs) != 1 || rowID(rs[0]) != float64(idUnread) {
-		t.Errorf("unread: got %d rows, want 1 (unread)", len(rs))
-	}
-
-	nowStr := testNow.UTC().Format(time.RFC3339)
-	d.Exec(`INSERT OR REPLACE INTO decision (profile,vacancy,stage,reason,decided_at) VALUES (1,?,?,?,?)`,
-		idRead, "applied", "", nowStr)
-	d.Exec(`INSERT OR REPLACE INTO decision (profile,vacancy,stage,reason,decided_at) VALUES (1,?,?,?,?)`,
-		idUnread, "applied", "", nowStr)
-	rsApplied := getRows(apiGet(t, ts, "/api/vacancies?stage=applied&unread=true"))
-	if len(rsApplied) != 2 {
-		t.Errorf("unread ignored in applied: got %d rows, want 2", len(rsApplied))
+			ts := newTestServer(t, d)
+			rs := getRows(apiGet(t, ts, "/api/vacancies?unread=true"))
+			if len(rs) != 1 || rowID(rs[0]) != float64(idUnread) {
+				t.Errorf("unread in inbox: got %d rows, want 1 (unread)", len(rs))
+			}
+			decide(t, d, idRead, stage, "")
+			decide(t, d, idUnread, stage, "")
+			if rs := getRows(apiGet(t, ts, "/api/vacancies?stage="+stage+"&unread=true")); len(rs) != 2 {
+				t.Errorf("unread ignored in %s: got %d rows, want 2", stage, len(rs))
+			}
+		})
 	}
 }
 
 func TestFilter_Combined(t *testing.T) {
 	d := openTestDB(t)
 	setProfileData(t, d, nil, []string{"engineer"}, nil)
-
 	catRecent := catalog.New(d, func() time.Time { return testNow.AddDate(0, 0, -3) })
 	catOld := catalog.New(d, func() time.Time { return testNow.AddDate(0, 0, -15) })
 
-	idOK := addWithSrc(t, catRecent, listing.Posting{
-		URL: "https://example.com/jobs/cb1", Title: "Engineer", Company: "Co",
-		Location: "Remote · EU", Text: "job", TextState: listing.TextFull,
-	}, "src")
-	add(t, catRecent, listing.Posting{
-		URL: "https://example.com/jobs/cb2", Title: "Engineer", Company: "Co",
-		Location: "London", Text: "job", TextState: listing.TextFull,
-	})
-	add(t, catOld, listing.Posting{
-		URL: "https://example.com/jobs/cb3", Title: "Engineer", Company: "Co",
-		Location: "Remote · US", Text: "job", TextState: listing.TextFull,
-	})
+	idOK := addAtLocation(t, catRecent, "https://example.com/jobs/cb1", "Engineer", "Remote · EU")
+	addAtLocation(t, catRecent, "https://example.com/jobs/cb2", "Engineer", "London")
+	addAtLocation(t, catOld, "https://example.com/jobs/cb3", "Engineer", "Remote · US")
 
-	ts := newTestServer(t, d)
-	rs := getRows(apiGet(t, ts, "/api/vacancies?remote=true&collected=7"))
+	rs := getRows(apiGet(t, newTestServer(t, d), "/api/vacancies?remote=true&collected=7"))
 	if len(rs) != 1 || rowID(rs[0]) != float64(idOK) {
 		t.Errorf("combined remote+collected: got %d rows, want 1", len(rs))
-	}
-}
-
-func TestFilter_SourceCounts_IgnoresSourcesFilter(t *testing.T) {
-	d := openTestDB(t)
-	setProfileData(t, d, nil, []string{"engineer"}, nil)
-	cat := newCat(d)
-
-	addWithSrc(t, cat, post("https://example.com/jobs/sc1", "Alpha Engineer", "feed-alpha"), "feed-alpha")
-	addWithSrc(t, cat, post("https://example.com/jobs/sc2", "Beta Engineer", "feed-beta"), "feed-beta")
-
-	ts := newTestServer(t, d)
-	body := apiGet(t, ts, "/api/vacancies?sources=feed-alpha")
-
-	if len(getRows(body)) != 1 {
-		t.Errorf("rows with sources filter: want 1")
-	}
-
-	scRaw, _ := body["sourceCounts"].([]any)
-	scm := make(map[string]int)
-	for _, v := range scRaw {
-		m, _ := v.(map[string]any)
-		name, _ := m["name"].(string)
-		n, _ := m["count"].(float64)
-		scm[name] = int(n)
-	}
-	if scm["feed-alpha"] != 1 {
-		t.Errorf("sourceCounts feed-alpha: got %d, want 1", scm["feed-alpha"])
-	}
-	if scm["feed-beta"] != 1 {
-		t.Errorf("sourceCounts feed-beta: got %d, want 1 (sources filter ignored)", scm["feed-beta"])
-	}
-}
-
-func TestFilter_IndustryCounts_HonoursSourcesFilter(t *testing.T) {
-	d := openTestDB(t)
-	setProfileData(t, d, nil, []string{"engineer"}, nil)
-	cat := newCat(d)
-
-	idA := addWithSrc(t, cat, post("https://example.com/jobs/ih1", "Alpha Engineer", "feed-alpha"), "feed-alpha")
-	idB := addWithSrc(t, cat, post("https://example.com/jobs/ih2", "Beta Engineer", "feed-beta"), "feed-beta")
-	setVacancyIndustries(t, d, idA, []string{"Web3"})
-	setVacancyIndustries(t, d, idB, []string{"Software"})
-
-	ts := newTestServer(t, d)
-	body := apiGet(t, ts, "/api/vacancies?sources=feed-alpha")
-	icRaw, _ := body["industryCounts"].([]any)
-	counts := make(map[string]int)
-	for _, v := range icRaw {
-		m, _ := v.(map[string]any)
-		name, _ := m["name"].(string)
-		n, _ := m["count"].(float64)
-		counts[name] = int(n)
-	}
-	if counts["Web3"] != 1 {
-		t.Errorf("industryCounts with sources filter: Web3=%d, want 1", counts["Web3"])
-	}
-	if counts["Software"] != 0 {
-		t.Errorf("industryCounts with sources filter: Software=%d, want 0", counts["Software"])
 	}
 }
 
@@ -342,137 +241,26 @@ func TestFilter_Total_UnchangedByFilters(t *testing.T) {
 	d := openTestDB(t)
 	setProfileData(t, d, nil, []string{"engineer"}, nil)
 	cat := newCat(d)
-
 	for i := 0; i < 3; i++ {
-		add(t, cat, listing.Posting{
-			URL: fmt.Sprintf("https://example.com/jobs/tot%d", i), Title: "Engineer", Company: "Co",
-			Location: "London", Text: "job", TextState: listing.TextFull,
-		})
+		addAtLocation(t, cat, fmt.Sprintf("https://example.com/jobs/tot%d", i), "Engineer", "London")
 	}
 
 	ts := newTestServer(t, d)
-	body := apiGet(t, ts, "/api/vacancies")
-	total, _ := body["total"].(float64)
-	if total != 3 {
-		t.Errorf("total no filter: got %v, want 3", total)
-	}
-	body2 := apiGet(t, ts, "/api/vacancies?remote=true")
-	total2, _ := body2["total"].(float64)
-	if total2 != 3 {
-		t.Errorf("total with remote filter: got %v, want 3", total2)
-	}
-	body3 := apiGet(t, ts, "/api/vacancies?q=engineer")
-	total3, _ := body3["total"].(float64)
-	if total3 != 3 {
-		t.Errorf("total with query: got %v, want 3", total3)
-	}
-	if len(getRows(body2)) != 0 {
-		t.Errorf("rows with remote filter: want 0")
-	}
-}
-
-func TestFilter_SourceCounts_Basic(t *testing.T) {
-	d := openTestDB(t)
-	setProfileData(t, d, nil, []string{"engineer"}, nil)
-	cat := newCat(d)
-
-	addWithSrc(t, cat, post("https://example.com/jobs/sb1", "Alpha Engineer", "feed-alpha"), "feed-alpha")
-	addWithSrc(t, cat, post("https://example.com/jobs/sb2", "Beta Engineer A", "feed-beta"), "feed-beta")
-	addWithSrc(t, cat, post("https://example.com/jobs/sb3", "Beta Engineer B", "feed-beta"), "feed-beta")
-
-	ts := newTestServer(t, d)
-	body := apiGet(t, ts, "/api/vacancies")
-	scRaw, _ := body["sourceCounts"].([]any)
-	scm := make(map[string]int)
-	for _, v := range scRaw {
-		m, _ := v.(map[string]any)
-		name, _ := m["name"].(string)
-		n, _ := m["count"].(float64)
-		scm[name] = int(n)
-	}
-	if scm["feed-alpha"] != 1 {
-		t.Errorf("sourceCounts feed-alpha: got %d, want 1", scm["feed-alpha"])
-	}
-	if scm["feed-beta"] != 2 {
-		t.Errorf("sourceCounts feed-beta: got %d, want 2", scm["feed-beta"])
-	}
-}
-
-func TestFilter_Sources_MultipleRequested(t *testing.T) {
-	d := openTestDB(t)
-	setProfileData(t, d, nil, []string{"engineer"}, nil)
-	cat := newCat(d)
-
-	idA := addWithSrc(t, cat, post("https://example.com/jobs/sm1", "Alpha Engineer", "feed-alpha"), "feed-alpha")
-	idB := addWithSrc(t, cat, post("https://example.com/jobs/sm2", "Beta Engineer", "feed-beta"), "feed-beta")
-	addWithSrc(t, cat, post("https://example.com/jobs/sm3", "Gamma Engineer", "feed-gamma"), "feed-gamma")
-
-	ts := newTestServer(t, d)
-	rs := getRows(apiGet(t, ts, "/api/vacancies?sources=feed-alpha,feed-beta"))
-	got := map[float64]bool{rowID(rs[0]): true, rowID(rs[1]): true}
-	if len(rs) != 2 || !got[float64(idA)] || !got[float64(idB)] {
-		t.Errorf("multiple sources: got %d rows %v, want 2 (alpha+beta)", len(rs), got)
-	}
-}
-
-func TestFilter_Leadership_HeadMatch(t *testing.T) {
-	d := openTestDB(t)
-	setProfileData(t, d, nil, []string{"engineer", "developer", "head", "director"}, nil)
-	cat := newCat(d)
-
-	idHead := add(t, cat, listing.Posting{
-		URL: "https://example.com/jobs/lh1", Title: "Head of Platform Engineering", Company: "Co",
-		Text: "job description", TextState: listing.TextFull,
-	})
-	add(t, cat, listing.Posting{
-		URL: "https://example.com/jobs/lh2", Title: "Lead Generation Director", Company: "Co",
-		Text: "job description", TextState: listing.TextFull,
-	})
-
-	ts := newTestServer(t, d)
-	rs := getRows(apiGet(t, ts, "/api/vacancies?leadership=true"))
-	got := map[float64]bool{}
-	for _, r := range rs {
-		got[rowID(r)] = true
-	}
-	if !got[float64(idHead)] {
-		t.Errorf("leadership: Head of Platform not matched")
-	}
-	if len(rs) != 2 {
-		t.Errorf("leadership: got %d rows, want 2", len(rs))
-	}
-}
-
-func TestFilter_Unread_IgnoredInDismissed(t *testing.T) {
-	d := openTestDB(t)
-	setProfileData(t, d, nil, []string{"engineer"}, nil)
-	cat := newCat(d)
-
-	idA := add(t, cat, post("https://example.com/jobs/ud1", "Engineer A", "Co"))
-	idB := add(t, cat, post("https://example.com/jobs/ud2", "Engineer B", "Co"))
-	d.Exec(`UPDATE vacancy SET seen_at=? WHERE id=?`,
-		testNow.UTC().Format(time.RFC3339), idA)
-	nowStr := testNow.UTC().Format(time.RFC3339)
-	d.Exec(`INSERT OR REPLACE INTO decision (profile,vacancy,stage,reason,decided_at) VALUES (1,?,?,?,?)`,
-		idA, "dismissed", "", nowStr)
-	d.Exec(`INSERT OR REPLACE INTO decision (profile,vacancy,stage,reason,decided_at) VALUES (1,?,?,?,?)`,
-		idB, "dismissed", "", nowStr)
-
-	ts := newTestServer(t, d)
-	rs := getRows(apiGet(t, ts, "/api/vacancies?stage=dismissed&unread=true"))
-	if len(rs) != 2 {
-		t.Errorf("unread ignored in dismissed: got %d rows, want 2", len(rs))
+	for _, query := range []string{"", "?remote=true", "?q=engineer"} {
+		body := apiGet(t, ts, "/api/vacancies"+query)
+		if total, _ := body["total"].(float64); total != 3 {
+			t.Errorf("total for %q: got %v, want 3", query, total)
+		}
+		if query == "?remote=true" && len(getRows(body)) != 0 {
+			t.Errorf("rows with remote filter: want 0")
+		}
 	}
 }
 
 func TestFilter_HTTPStatus_InvalidStageWithFilters(t *testing.T) {
 	d := openTestDB(t)
 	ts := newTestServer(t, d)
-	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/vacancies?stage=bogus&remote=true", nil)
-	req.Host = "127.0.0.1:9999"
-	resp, _ := ts.Client().Do(req)
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusUnprocessableEntity {
-		t.Errorf("invalid stage with filters: status %d, want 422", resp.StatusCode)
+	if _, status := apiGetRaw(t, ts, "/api/vacancies?stage=bogus&remote=true"); status != http.StatusUnprocessableEntity {
+		t.Errorf("invalid stage with filters: status %d, want 422", status)
 	}
 }

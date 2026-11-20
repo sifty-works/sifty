@@ -3,20 +3,14 @@ package inbox_test
 import (
 	"context"
 	"fmt"
-	"io"
-	"log/slog"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 
-	"github.com/sifty-works/sifty-server/internal/candidate"
 	"github.com/sifty-works/sifty-server/internal/config"
 	"github.com/sifty-works/sifty-server/internal/db"
 	"github.com/sifty-works/sifty-server/internal/fit"
-	"github.com/sifty-works/sifty-server/internal/inbox"
 	"github.com/sifty-works/sifty-server/internal/listing"
-	"github.com/sifty-works/sifty-server/internal/server"
 )
 
 func defaultRules() fit.Rules {
@@ -46,14 +40,6 @@ func fitFixture(t *testing.T) (*db.DB, map[string]int64) {
 		}
 	}
 	return d, ids
-}
-
-func titles(body map[string]any) string {
-	var out []string
-	for _, r := range getRows(body) {
-		out = append(out, field(r, "title"))
-	}
-	return strings.Join(out, "")
 }
 
 func TestBestFitOrdersCurrentNumbersFirstThenDimmedAndUnscored(t *testing.T) {
@@ -93,8 +79,10 @@ func TestFitFilterSelectsBucketsInEveryListAndDismissedKeepsDecisionOrder(t *tes
 	if sc := body["sourceCounts"].([]any); len(sc) != 1 || sc[0].(map[string]any)["count"] != float64(2) {
 		t.Errorf("source counts under the Fit filter: %v", sc)
 	}
-	d.Exec(`INSERT INTO decision (profile, vacancy, stage, decided_at) VALUES (1,?,'shortlist','2026-11-01T00:00:00Z'),(1,?,'shortlist','2026-11-02T00:00:00Z'),
-		(1,?,'dismissed','2026-11-01T00:00:00Z'),(1,?,'dismissed','2026-11-02T00:00:00Z')`, ids["A"], ids["E"], ids["C"], ids["D"])
+	decide(t, d, ids["A"], "shortlist", "", "2026-11-01T00:00:00Z")
+	decide(t, d, ids["E"], "shortlist", "", "2026-11-02T00:00:00Z")
+	decide(t, d, ids["C"], "dismissed", "", "2026-11-01T00:00:00Z")
+	decide(t, d, ids["D"], "dismissed", "", "2026-11-02T00:00:00Z")
 	if got := titles(apiGet(t, ts, "/api/vacancies?stage=dismissed&sort=fit")); got != "DC" {
 		t.Errorf("Dismissed order %q, want DC (newest decision first)", got)
 	}
@@ -110,12 +98,7 @@ func TestOutOfDateResultsAreDimmedUntilRecomputed(t *testing.T) {
 	d := openTestDB(t)
 	setProfileData(t, d, []string{"Backend Engineer"}, []string{"description"}, nil)
 	add(t, newCat(d), post("https://example.com/jobs/be", "Senior Backend Engineer", "Co"))
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	ts := httptest.NewServer(server.New(server.Options{Version: "test", Port: 9999, Logger: logger}, func(mux *http.ServeMux) {
-		inbox.RegisterRoutes(mux, d, testNowFn, logger, func() bool { return false }, nil, nil, nil)
-		candidate.RegisterRoutes(mux, d, "", logger, nil)
-	}))
-	t.Cleanup(ts.Close)
+	ts := newServer(t, d, serverOpts{withCandidate: true})
 	recompute := func() { fit.Recompute(context.Background(), d, defaultRules, func(int, int, string) {}) }
 	mark := func() map[string]any {
 		return getRows(apiGet(t, ts, "/api/vacancies"))[0].(map[string]any)["fit"].(map[string]any)
@@ -132,8 +115,8 @@ func TestOutOfDateResultsAreDimmedUntilRecomputed(t *testing.T) {
 	if m := mark(); m["dimmed"] != false || m["score"] == before["score"] {
 		t.Errorf("after recomputation: %v, want a new current number", m)
 	}
-	add(t, newCat(d), listing.Posting{URL: "https://example.com/jobs/be", Title: "Senior Backend Engineer", Company: "Co",
-		Text: "job description, now onsite in Berlin", TextState: listing.TextFull})
+	add(t, newCat(d), postWithText("https://example.com/jobs/be", "Senior Backend Engineer", "Co",
+		"job description, now onsite in Berlin"))
 	if m := mark(); m["dimmed"] != true {
 		t.Errorf("after the vacancy changed: %v, want dimmed", m)
 	}
@@ -144,8 +127,9 @@ func TestVacancyPageShowsTheBandWithItsTiles(t *testing.T) {
 	setProfileData(t, d, []string{"Backend Engineer"}, []string{"description"}, nil)
 	cat := newCat(d)
 	full := add(t, cat, post("https://example.com/jobs/full", "Backend Engineer", "Co"))
-	summary := add(t, cat, listing.Posting{URL: "https://example.com/jobs/short", Title: "Backend Engineer", Company: "Co",
-		Text: "job description", TextState: listing.TextSummary})
+	summary := postWithText("https://example.com/jobs/short", "Backend Engineer", "Co", "job description")
+	summary.TextState = listing.TextSummary
+	summaryID := add(t, cat, summary)
 	ts := newTestServer(t, d)
 	band := func(id int64) map[string]any {
 		b, _ := apiGetRaw(t, ts, fmt.Sprintf("/api/vacancies/%d?profile=1", id))
@@ -155,7 +139,7 @@ func TestVacancyPageShowsTheBandWithItsTiles(t *testing.T) {
 	if b["score"] == nil || b["text"] != fmt.Sprintf("Fits you %v /100", b["score"]) || len(b["tiles"].([]any)) != 4 {
 		t.Errorf("band of a scored vacancy: %v", b)
 	}
-	if b := band(summary); b["score"] != nil || b["text"] != "Full job description is unavailable" {
+	if b := band(summaryID); b["score"] != nil || b["text"] != "Full job description is unavailable" {
 		t.Errorf("band without full text: %v", b)
 	}
 	setProfileData(t, d, nil, []string{"description"}, nil)

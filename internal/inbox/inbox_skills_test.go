@@ -5,44 +5,26 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"sort"
+	"strings"
 	"testing"
 
 	"github.com/sifty-works/sifty-server/internal/candidate"
-	"github.com/sifty-works/sifty-server/internal/config"
 	"github.com/sifty-works/sifty-server/internal/db"
-	"github.com/sifty-works/sifty-server/internal/fit"
-	"github.com/sifty-works/sifty-server/internal/inbox"
-	"github.com/sifty-works/sifty-server/internal/listing"
 	"github.com/sifty-works/sifty-server/internal/reading"
-	"github.com/sifty-works/sifty-server/internal/server"
 )
 
 func newSkillsServer(t *testing.T, d *db.DB, changed func()) *httptest.Server {
 	t.Helper()
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	r := func() fit.Rules { c := config.Defaults(); return fit.Rules{Weights: c.Weights, Rates: c.Rates} }
-	h := server.New(server.Options{Version: "test", Port: 9999, Logger: logger},
-		func(mux *http.ServeMux) {
-			inbox.RegisterRoutes(mux, d, testNowFn, logger, func() bool { return false }, nil, r, changed)
-		})
-	ts := httptest.NewServer(h)
-	t.Cleanup(ts.Close)
-	return ts
+	return newServer(t, d, serverOpts{rules: defaultRules, changed: changed})
 }
 
 func addVacancyWithReading(t *testing.T, d *db.DB, url, title string, reqs []reading.Requirement) int64 {
 	t.Helper()
-	cat := newCat(d)
-	id := add(t, cat, listing.Posting{
-		URL: url, Title: title, Company: "Acme",
-		Text: "job text", TextState: listing.TextFull,
-	})
-	rec := reading.Record{Requirements: reqs}
-	b, _ := json.Marshal(rec)
+	id := add(t, newCat(d), postWithText(url, title, "Acme", "job text"))
+	b, _ := json.Marshal(reading.Record{Requirements: reqs})
 	d.Exec(`UPDATE vacancy SET version=1 WHERE id=?`, id)
 	d.Exec(`INSERT INTO vacancy_reading (vacancy_id, version, reader_version, record, created)
 		VALUES (?,1,'test',?,datetime('now'))`, id, string(b))
@@ -55,6 +37,26 @@ func saveMeSkills(t *testing.T, d *db.DB, skills []candidate.Skill, absent []can
 	if err := candidate.SaveMe(context.Background(), d, me); err != nil {
 		t.Fatalf("saveMeSkills: %v", err)
 	}
+}
+
+func meSummary(t *testing.T, d *db.DB) string {
+	t.Helper()
+	me, err := candidate.LoadMe(context.Background(), d)
+	if err != nil {
+		t.Fatalf("loadMe: %v", err)
+	}
+	var out []string
+	for _, s := range me.Skills {
+		out = append(out, fmt.Sprintf("skill %s %s", s.Name, s.Level))
+	}
+	for _, a := range me.AbsentSkills {
+		out = append(out, "absent "+a.Name)
+	}
+	for _, c := range me.ConfirmedFacts {
+		out = append(out, fmt.Sprintf("fact %s %v", c.Text, c.Have))
+	}
+	sort.Strings(out)
+	return strings.Join(out, "; ")
 }
 
 func postSkills(t *testing.T, ts *httptest.Server, vacancyID int64, reqIndex int, have bool, chosen string) (map[string]any, int) {
@@ -106,178 +108,76 @@ func reqCounter(resp map[string]any) string {
 	return v
 }
 
-func TestSkillsDecision_addKnownSkillAddsAtProficientAndCounterChanges(t *testing.T) {
-	d := openTestDB(t)
-	reqs := []reading.Requirement{{Text: "Golang expertise", Kind: "skill", Level: "required"}}
-	id := addVacancyWithReading(t, d, "https://example.com/jobs/sk1", "Go Dev", reqs)
-	ts := newSkillsServer(t, d, nil)
-
-	resp, status := postSkills(t, ts, id, 0, true, "")
-	if status != http.StatusOK {
-		t.Fatalf("POST /api/me/skills: status %d, body: %v", status, resp)
-	}
-	notice, _ := resp["notice"].(string)
-	if notice == "" || notice == "Nothing new to add; your data is already up to date." {
-		t.Errorf("notice: %q — expected something added", notice)
-	}
-	me, _ := candidate.LoadMe(context.Background(), d)
-	found := false
-	for _, s := range me.Skills {
-		if s.Name == "Go" {
-			found = true
-			if s.Level != "Proficient" {
-				t.Errorf("Go skill level: got %q, want Proficient", s.Level)
+func TestSkillsDecision_RecordsTheAnswer(t *testing.T) {
+	for i, tc := range []struct {
+		name        string
+		skills      []candidate.Skill
+		absent      []candidate.AbsentSkill
+		req         reading.Requirement
+		have        bool
+		chosen      string
+		wantMe      string
+		wantVerdict string
+	}{
+		{name: "a known skill is added at Proficient",
+			req:  reading.Requirement{Text: "Golang expertise", Kind: "skill", Level: "required"},
+			have: true, wantMe: "skill Go Proficient", wantVerdict: "✓"},
+		{name: "only the chosen alternative is added",
+			req:    reading.Requirement{Text: "Go or Rust", Kind: "skill", Level: "required", Alts: []string{"Go", "Rust"}},
+			have:   true,
+			chosen: "Rust", wantMe: "skill Rust Proficient", wantVerdict: "✓"},
+		{name: "a requirement outside the vocabulary is confirmed as held",
+			req:  reading.Requirement{Text: "Strong communication skills", Kind: "skill", Level: "required"},
+			have: true, wantMe: "fact Strong communication skills true", wantVerdict: "✓"},
+		{name: "a requirement outside the vocabulary is confirmed as missing",
+			req:  reading.Requirement{Text: "Strong communication skills", Kind: "skill", Level: "required"},
+			have: false, wantMe: "fact Strong communication skills false", wantVerdict: "✕"},
+		{name: "a skill answered with minus moves to the absent list",
+			skills: []candidate.Skill{{Name: "Python", Level: "Expert"}},
+			req:    reading.Requirement{Text: "Python", Kind: "skill", Level: "required"},
+			have:   false, wantMe: "absent Python", wantVerdict: "✕"},
+		{name: "a skill answered with plus leaves the absent list",
+			absent: []candidate.AbsentSkill{{Name: "Docker"}},
+			req:    reading.Requirement{Text: "Docker", Kind: "skill", Level: "required"},
+			have:   true, wantMe: "skill Docker Proficient", wantVerdict: "✓"},
+		{name: "a chosen part of a compound requirement is confirmed",
+			req:    reading.Requirement{Text: "Docker and Kubernetes", Kind: "skill", Level: "required"},
+			have:   true,
+			chosen: "Docker", wantMe: "fact Docker and Kubernetes true; skill Docker Proficient", wantVerdict: "✓"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := openTestDB(t)
+			if tc.skills != nil || tc.absent != nil {
+				saveMeSkills(t, d, tc.skills, tc.absent)
 			}
-		}
-	}
-	if !found {
-		t.Errorf("Go not added to skills; skills: %v", me.Skills)
-	}
-	ct := reqCounter(resp)
-	if ct == "Not checked yet" || ct == "" {
-		t.Errorf("counter after add: %q", ct)
-	}
-}
+			id := addVacancyWithReading(t, d, fmt.Sprintf("https://example.com/jobs/sk%d", i), "Role",
+				[]reading.Requirement{tc.req})
+			ts := newSkillsServer(t, d, nil)
 
-func TestSkillsDecision_addWithChosenAlt(t *testing.T) {
-	d := openTestDB(t)
-	reqs := []reading.Requirement{{Text: "Go or Rust", Kind: "skill", Level: "required", Alts: []string{"Go", "Rust"}}}
-	id := addVacancyWithReading(t, d, "https://example.com/jobs/sk2", "Systems Dev", reqs)
-	ts := newSkillsServer(t, d, nil)
-
-	resp, status := postSkills(t, ts, id, 0, true, "Rust")
-	if status != http.StatusOK {
-		t.Fatalf("status %d", status)
+			resp, status := postSkills(t, ts, id, 0, tc.have, tc.chosen)
+			if status != http.StatusOK {
+				t.Fatalf("POST /api/me/skills: status %d, body %v", status, resp)
+			}
+			if got := meSummary(t, d); got != tc.wantMe {
+				t.Errorf("My data: got %q, want %q", got, tc.wantMe)
+			}
+			if got := reqVerdict(resp, 0); got != tc.wantVerdict {
+				t.Errorf("verdict: got %q, want %q", got, tc.wantVerdict)
+			}
+			if notice, _ := resp["notice"].(string); notice == "" || notice == "Nothing new to add; your data is already up to date." {
+				t.Errorf("notice: %q — expected something added", notice)
+			}
+			if ct := reqCounter(resp); ct == "Not checked yet" || ct == "" {
+				t.Errorf("requirements counter after the answer: %q", ct)
+			}
+		})
 	}
-	me, _ := candidate.LoadMe(context.Background(), d)
-	for _, s := range me.Skills {
-		if s.Name == "Go" {
-			t.Error("Go should not be added when Rust was chosen")
-		}
-	}
-	found := false
-	for _, s := range me.Skills {
-		if s.Name == "Rust" {
-			found = true
-		}
-	}
-	if !found {
-		t.Error("Rust should have been added")
-	}
-	_ = resp
-}
-
-func TestSkillsDecision_addUnknownVocabAddsConfirmedAndVerdictBecomesCheck(t *testing.T) {
-	d := openTestDB(t)
-	reqs := []reading.Requirement{{Text: "Strong communication skills", Kind: "skill", Level: "required"}}
-	id := addVacancyWithReading(t, d, "https://example.com/jobs/sk3", "PM Role", reqs)
-	ts := newSkillsServer(t, d, nil)
-
-	resp, status := postSkills(t, ts, id, 0, true, "")
-	if status != http.StatusOK {
-		t.Fatalf("status %d", status)
-	}
-	me, _ := candidate.LoadMe(context.Background(), d)
-	found := false
-	for _, c := range me.ConfirmedFacts {
-		if c.Text == "Strong communication skills" && c.Have {
-			found = true
-		}
-	}
-	if !found {
-		t.Errorf("confirmed fact not added; facts: %v", me.ConfirmedFacts)
-	}
-	if v := reqVerdict(resp, 0); v != "✓" {
-		t.Errorf("verdict after +: got %q, want ✓", v)
-	}
-}
-
-func TestSkillsDecision_removeUnknownVocabAddsConfirmedAndVerdictBecomesX(t *testing.T) {
-	d := openTestDB(t)
-	reqs := []reading.Requirement{{Text: "Strong communication skills", Kind: "skill", Level: "required"}}
-	id := addVacancyWithReading(t, d, "https://example.com/jobs/sk3b", "PM Role B", reqs)
-	ts := newSkillsServer(t, d, nil)
-
-	resp, status := postSkills(t, ts, id, 0, false, "")
-	if status != http.StatusOK {
-		t.Fatalf("status %d", status)
-	}
-	me, _ := candidate.LoadMe(context.Background(), d)
-	found := false
-	for _, c := range me.ConfirmedFacts {
-		if c.Text == "Strong communication skills" && !c.Have {
-			found = true
-		}
-	}
-	if !found {
-		t.Errorf("confirmed not-have fact not added; facts: %v", me.ConfirmedFacts)
-	}
-	if v := reqVerdict(resp, 0); v != "✕" {
-		t.Errorf("verdict after −: got %q, want ✕", v)
-	}
-}
-
-func TestSkillsDecision_removeAddsToAbsentAndRemovesFromSkills(t *testing.T) {
-	d := openTestDB(t)
-	saveMeSkills(t, d, []candidate.Skill{{Name: "Python", Level: "Expert"}}, nil)
-	reqs := []reading.Requirement{{Text: "Python", Kind: "skill", Level: "required"}}
-	id := addVacancyWithReading(t, d, "https://example.com/jobs/sk4", "Python Dev", reqs)
-	ts := newSkillsServer(t, d, nil)
-
-	resp, status := postSkills(t, ts, id, 0, false, "")
-	if status != http.StatusOK {
-		t.Fatalf("status %d, body: %v", status, resp)
-	}
-	me, _ := candidate.LoadMe(context.Background(), d)
-	for _, s := range me.Skills {
-		if s.Name == "Python" {
-			t.Error("Python should have been removed from skills")
-		}
-	}
-	found := false
-	for _, a := range me.AbsentSkills {
-		if a.Name == "Python" {
-			found = true
-		}
-	}
-	if !found {
-		t.Error("Python should have been added to absent skills")
-	}
-}
-
-func TestSkillsDecision_addRemovesFromAbsentSkills(t *testing.T) {
-	d := openTestDB(t)
-	saveMeSkills(t, d, nil, []candidate.AbsentSkill{{Name: "Docker"}})
-	reqs := []reading.Requirement{{Text: "Docker", Kind: "skill", Level: "required"}}
-	id := addVacancyWithReading(t, d, "https://example.com/jobs/sk4b", "DevOps B", reqs)
-	ts := newSkillsServer(t, d, nil)
-
-	resp, status := postSkills(t, ts, id, 0, true, "")
-	if status != http.StatusOK {
-		t.Fatalf("status %d, body: %v", status, resp)
-	}
-	me, _ := candidate.LoadMe(context.Background(), d)
-	for _, a := range me.AbsentSkills {
-		if a.Name == "Docker" {
-			t.Error("Docker should have been removed from absent skills after +")
-		}
-	}
-	found := false
-	for _, s := range me.Skills {
-		if s.Name == "Docker" {
-			found = true
-		}
-	}
-	if !found {
-		t.Error("Docker should have been added to skills")
-	}
-	_ = resp
 }
 
 func TestSkillsDecision_secondAddDoesNotDuplicate(t *testing.T) {
 	d := openTestDB(t)
-	reqs := []reading.Requirement{{Text: "Docker", Kind: "skill", Level: "required"}}
-	id := addVacancyWithReading(t, d, "https://example.com/jobs/sk5", "DevOps", reqs)
+	id := addVacancyWithReading(t, d, "https://example.com/jobs/sk5", "DevOps",
+		[]reading.Requirement{{Text: "Docker", Kind: "skill", Level: "required"}})
 	ts := newSkillsServer(t, d, nil)
 
 	postSkills(t, ts, id, 0, true, "")
@@ -285,19 +185,11 @@ func TestSkillsDecision_secondAddDoesNotDuplicate(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("second add: status %d", status)
 	}
-	notice, _ := resp["notice"].(string)
-	if notice != "Nothing new to add; your data is already up to date." {
+	if notice, _ := resp["notice"].(string); notice != "Nothing new to add; your data is already up to date." {
 		t.Errorf("second add notice: %q", notice)
 	}
-	me, _ := candidate.LoadMe(context.Background(), d)
-	count := 0
-	for _, s := range me.Skills {
-		if s.Name == "Docker" {
-			count++
-		}
-	}
-	if count != 1 {
-		t.Errorf("Docker count: got %d, want 1", count)
+	if got := meSummary(t, d); got != "skill Docker Proficient" {
+		t.Errorf("My data after the second add: got %q, want one Docker skill", got)
 	}
 }
 
@@ -305,42 +197,18 @@ func TestSkillsDecision_invalidInputRefused(t *testing.T) {
 	d := openTestDB(t)
 	id := addVacancyWithReading(t, d, "https://example.com/jobs/sk6", "X", nil)
 	ts := newSkillsServer(t, d, nil)
-	if _, s := postSkills(t, ts, id, 5, true, ""); s != 422 {
+	if _, s := postSkills(t, ts, id, 5, true, ""); s != http.StatusUnprocessableEntity {
 		t.Errorf("bad index: got %d, want 422", s)
 	}
-	if _, s := postSkills(t, ts, 999999, 0, true, ""); s != 404 {
+	if _, s := postSkills(t, ts, 999999, 0, true, ""); s != http.StatusNotFound {
 		t.Errorf("missing vacancy: got %d, want 404", s)
-	}
-}
-
-func TestSkillsDecision_partialVocabAddsConfirmedFact(t *testing.T) {
-	d := openTestDB(t)
-	id := addVacancyWithReading(t, d, "https://example.com/jobs/sk9", "DevOps X",
-		[]reading.Requirement{{Text: "Docker and Kubernetes", Kind: "skill", Level: "required"}})
-	ts := newSkillsServer(t, d, nil)
-	resp, status := postSkills(t, ts, id, 0, true, "Docker")
-	if status != http.StatusOK {
-		t.Fatalf("status %d", status)
-	}
-	if v := reqVerdict(resp, 0); v != "✓" {
-		t.Errorf("verdict: got %q, want ✓", v)
-	}
-	me, _ := candidate.LoadMe(context.Background(), d)
-	found := false
-	for _, c := range me.ConfirmedFacts {
-		if c.Text == "Docker and Kubernetes" && c.Have {
-			found = true
-		}
-	}
-	if !found {
-		t.Errorf("confirmed fact not added; facts: %v", me.ConfirmedFacts)
 	}
 }
 
 func TestSkillsDecision_recomputeFitQueued(t *testing.T) {
 	d := openTestDB(t)
-	reqs := []reading.Requirement{{Text: "Kubernetes", Kind: "skill", Level: "required"}}
-	id := addVacancyWithReading(t, d, "https://example.com/jobs/sk7", "Infra", reqs)
+	id := addVacancyWithReading(t, d, "https://example.com/jobs/sk7", "Infra",
+		[]reading.Requirement{{Text: "Kubernetes", Kind: "skill", Level: "required"}})
 	queued := 0
 	ts := newSkillsServer(t, d, func() { queued++ })
 
@@ -352,11 +220,10 @@ func TestSkillsDecision_recomputeFitQueued(t *testing.T) {
 
 func TestSkillsDecision_requirementGroupsInBand(t *testing.T) {
 	d := openTestDB(t)
-	reqs := []reading.Requirement{
+	id := addVacancyWithReading(t, d, "https://example.com/jobs/sk8", "Backend", []reading.Requirement{
 		{Text: "Go", Kind: "skill", Level: "required"},
 		{Text: "Docker", Kind: "skill", Level: "preferred"},
-	}
-	id := addVacancyWithReading(t, d, "https://example.com/jobs/sk8", "Backend", reqs)
+	})
 	ts := newSkillsServer(t, d, nil)
 
 	resp, status := apiGetRaw(t, ts, fmt.Sprintf("/api/vacancies/%d?profile=1", id))
@@ -364,8 +231,7 @@ func TestSkillsDecision_requirementGroupsInBand(t *testing.T) {
 		t.Fatalf("GET vacancy: status %d", status)
 	}
 	band, _ := resp["band"].(map[string]any)
-	groups, _ := band["groups"].([]any)
-	if len(groups) == 0 {
+	if groups, _ := band["groups"].([]any); len(groups) == 0 {
 		t.Error("band.groups should not be empty when requirements are read")
 	}
 }
