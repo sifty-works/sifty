@@ -258,6 +258,13 @@ func (g *Gate) Status() *ModelsStatus {
 	return &ModelsStatus{Providers: providers, Paused: paused}
 }
 
+func (g *Gate) Store() *config.Store { return g.store }
+
+func (g *Gate) TodayBackgroundCalls(ctx context.Context) int {
+	n, _ := countTodayCalls(ctx, g.db)
+	return n
+}
+
 func (g *Gate) IsPaused(ctx context.Context) (bool, error) {
 	if g.db == nil {
 		return false, nil

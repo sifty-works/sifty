@@ -4,6 +4,7 @@ Notable changes of Sifty, newest first. Versions follow `MAJOR.MINOR.PATCH`.
 
 ## Unreleased
 
+- Settings › Models has a server side: one address lists the providers with their cost and state, the provider chosen for each kind of model work, the paid-bulk permission, the pause switch, the daily limit of background calls and how many were made today, and changes any of them; the separate pause address is gone.
 - Web client 0.10.0: a tile of the Fits you band shows its converted amount on its own line under the value.
 - The money of a vacancy is written compactly, "$190–225k a year", and the approximate euro amount, rounded to the nearest thousand, stands on its own beside it instead of inside the same line.
 - Web client 0.9.0: the vacancy page shows What they offer beside What they ask, with a tile per benefit the listing names and an "Also offered" list.

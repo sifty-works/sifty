@@ -124,11 +124,30 @@ func Defaults() Config {
 	}
 }
 
+var WorkKinds = []string{"reading", "shortlist_check", "preparation"}
+
 func (c *Config) WorkProviderFor(kind string) string {
 	if c.Work == nil {
 		return ""
 	}
 	return map[string]string{"reading": c.Work.Reading, "shortlist_check": c.Work.ShortlistCheck, "preparation": c.Work.Preparation}[kind]
+}
+
+func (c *Config) SetWorkProvider(kind, provider string) bool {
+	if c.Work == nil {
+		c.Work = &WorkConfig{}
+	}
+	switch kind {
+	case "reading":
+		c.Work.Reading = provider
+	case "shortlist_check":
+		c.Work.ShortlistCheck = provider
+	case "preparation":
+		c.Work.Preparation = provider
+	default:
+		return false
+	}
+	return true
 }
 
 func SourceKey(rawURL string) (string, error) {
