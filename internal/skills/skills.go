@@ -288,9 +288,6 @@ func reqGroups(req reading.Requirement) (named []string, anyOf bool, canDecide b
 }
 
 func DecideFull(req reading.Requirement, idx *Index, confirmed []candidate.ConfirmedFact, dy candidate.DerivedYears) DecisionResult {
-	if req.Kind == "experience" {
-		return DecisionResult{Verdict: "?", Evidence: experienceEvidence(req.Text, dy)}
-	}
 	key := normalizeKey(req.Text)
 	for _, c := range confirmed {
 		if normalizeKey(c.Text) == key {
@@ -300,6 +297,9 @@ func DecideFull(req reading.Requirement, idx *Index, confirmed []candidate.Confi
 			}
 			return DecisionResult{Verdict: v, Evidence: "Confirmed by you"}
 		}
+	}
+	if req.Kind == "experience" {
+		return DecisionResult{Verdict: "?", Evidence: experienceEvidence(req.Text, dy)}
 	}
 	named, anyOf, canDecide := reqGroups(req)
 	if !canDecide || len(named) == 0 {

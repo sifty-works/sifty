@@ -91,11 +91,14 @@ func TestDecide_confirmedHaveNotGivesNo(t *testing.T) {
 	}
 }
 
-func TestDecide_experienceKindIsAlwaysUnclear(t *testing.T) {
+func TestDecide_experienceKindIsUnclearUnlessConfirmed(t *testing.T) {
 	i := idx([]string{"Go"}, nil)
 	r := req("5+ years backend", "experience")
 	if got := Decide(r, i, nil); got != "?" {
-		t.Fatalf("experience kind should always give ?, got %q", got)
+		t.Fatalf("experience kind should give ?, got %q", got)
+	}
+	if got := Decide(r, i, []candidate.ConfirmedFact{{Text: "5+ years backend", Have: true}}); got != "✓" {
+		t.Fatalf("confirmed experience should give ✓, got %q", got)
 	}
 }
 
