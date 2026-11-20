@@ -763,12 +763,16 @@ type VacancyText struct {
 	ID, Version                                      int64
 	Title, Location, TagsJSON, FieldsJSON, TextState string
 	Body                                             []byte
+	ReadingRecord, ReaderVersion, ReadingCreated     string
 }
 
 func (c *Catalog) VacancyTexts(ctx context.Context, after int64, limit int) ([]VacancyText, error) {
 	rows, err := c.db.QueryContext(ctx,
-		`SELECT id, version, title, location, tags, source_fields, text_state, body
-		 FROM vacancy WHERE id>? ORDER BY id LIMIT ?`, after, limit)
+		`SELECT v.id, v.version, v.title, v.location, v.tags, v.source_fields, v.text_state, v.body,
+		        COALESCE(r.record, ''), COALESCE(r.reader_version, ''), COALESCE(r.created, '')
+		 FROM vacancy v
+		 LEFT JOIN vacancy_reading r ON r.vacancy_id=v.id AND r.version=v.version
+		 WHERE v.id>? ORDER BY v.id LIMIT ?`, after, limit)
 	if err != nil {
 		return nil, fmt.Errorf("catalog: vacancy texts: %w", err)
 	}
@@ -776,7 +780,8 @@ func (c *Catalog) VacancyTexts(ctx context.Context, after int64, limit int) ([]V
 	var out []VacancyText
 	for rows.Next() {
 		var r VacancyText
-		if err := rows.Scan(&r.ID, &r.Version, &r.Title, &r.Location, &r.TagsJSON, &r.FieldsJSON, &r.TextState, &r.Body); err != nil {
+		if err := rows.Scan(&r.ID, &r.Version, &r.Title, &r.Location, &r.TagsJSON, &r.FieldsJSON,
+			&r.TextState, &r.Body, &r.ReadingRecord, &r.ReaderVersion, &r.ReadingCreated); err != nil {
 			return nil, fmt.Errorf("catalog: vacancy texts: scan: %w", err)
 		}
 		out = append(out, r)

@@ -66,14 +66,14 @@ func Band(ctx context.Context, database *db.DB, profileID, vacancyID int64, r Ru
 	if err != nil {
 		return Fit{}, err
 	}
-	v, ok, err := LoadVacancy(ctx, catalog.New(database, nil), vacancyID)
+	_, v, ok, err := LoadVacancy(ctx, catalog.New(database, nil), vacancyID)
 	if err != nil {
 		return Fit{}, err
 	}
 	if !ok {
 		return Fit{}, apperr.NotFound{Message: "Role not found."}
 	}
-	return Score(p.View, reading.FromCode(v), r), nil
+	return Score(p.View, v, r), nil
 }
 
 type Profile struct {
@@ -134,31 +134,40 @@ func LoadProfiles(ctx context.Context, database *db.DB, r Rules) ([]Profile, err
 	return out, nil
 }
 
-func LoadVacancy(ctx context.Context, cat *catalog.Catalog, id int64) (reading.Vacancy, bool, error) {
+func LoadVacancy(ctx context.Context, cat *catalog.Catalog, id int64) (reading.Vacancy, reading.VacancyReading, bool, error) {
 	batch, err := cat.VacancyTexts(ctx, id-1, 1)
 	if err != nil || len(batch) == 0 || batch[0].ID != id {
-		return reading.Vacancy{}, false, err
+		return reading.Vacancy{}, reading.VacancyReading{}, false, err
 	}
-	v, err := vacancy(batch[0])
-	return v, err == nil, err
+	raw, merged, err := vacancy(batch[0])
+	return raw, merged, err == nil, err
 }
 
 func listingKey(t catalog.VacancyText) int64 {
 	h := fnv.New64a()
-	fmt.Fprintf(h, "%d\x00%s\x00%s\x00%s\x00%s", t.Version, t.Title, t.Location, t.TagsJSON, t.FieldsJSON)
+	fmt.Fprintf(h, "%d\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s",
+		t.Version, t.Title, t.Location, t.TagsJSON, t.FieldsJSON, t.ReaderVersion, t.ReadingCreated)
 	return int64(h.Sum64())
 }
 
-func vacancy(t catalog.VacancyText) (reading.Vacancy, error) {
+func vacancy(t catalog.VacancyText) (reading.Vacancy, reading.VacancyReading, error) {
 	v := reading.Vacancy{Title: t.Title, Location: t.Location, Full: listing.TextState(t.TextState) == listing.TextFull}
 	json.Unmarshal([]byte(t.TagsJSON), &v.Tags)
 	json.Unmarshal([]byte(t.FieldsJSON), &v.Fields)
 	html, err := catalog.Body(t.Body)
 	if err != nil {
-		return v, fmt.Errorf("fit: vacancy %d: %w", t.ID, err)
+		return v, reading.VacancyReading{}, fmt.Errorf("fit: vacancy %d: %w", t.ID, err)
 	}
 	v.Text = listing.PlainText(html)
-	return v, nil
+	code := reading.FromCode(v)
+	if t.ReadingRecord == "" {
+		return v, code, nil
+	}
+	var rec reading.Record
+	if json.Unmarshal([]byte(t.ReadingRecord), &rec) != nil {
+		return v, code, nil
+	}
+	return v, reading.Merge(code, rec), nil
 }
 
 func Recompute(ctx context.Context, database *db.DB, rules func() Rules, progress func(done, total int, current string)) error {
@@ -179,7 +188,11 @@ func recomputePass(ctx context.Context, database *db.DB, cat *catalog.Catalog, r
 	stale, total := map[int64][]Profile{}, 0
 	for _, p := range profiles {
 		rows, err := database.QueryContext(ctx, `SELECT v.id, v.version, v.title, v.location, v.tags, v.source_fields,
-			`+current+`, f.listing FROM vacancy v `+Join, p.Inputs, p.ID)
+			COALESCE(r.reader_version, ''), COALESCE(r.created, ''),
+			`+current+`, f.listing
+			FROM vacancy v `+Join+`
+			LEFT JOIN vacancy_reading r ON r.vacancy_id=v.id AND r.version=v.version`,
+			p.Inputs, p.ID)
 		if err != nil {
 			return 0, fmt.Errorf("fit: out of date: %w", err)
 		}
@@ -187,7 +200,8 @@ func recomputePass(ctx context.Context, database *db.DB, cat *catalog.Catalog, r
 			var t catalog.VacancyText
 			var ok bool
 			var stored sql.NullInt64
-			if err := rows.Scan(&t.ID, &t.Version, &t.Title, &t.Location, &t.TagsJSON, &t.FieldsJSON, &ok, &stored); err != nil {
+			if err := rows.Scan(&t.ID, &t.Version, &t.Title, &t.Location, &t.TagsJSON, &t.FieldsJSON,
+				&t.ReaderVersion, &t.ReadingCreated, &ok, &stored); err != nil {
 				rows.Close()
 				return 0, fmt.Errorf("fit: out of date: %w", err)
 			}
@@ -226,11 +240,10 @@ func writeBatch(ctx context.Context, database *db.DB, batch []catalog.VacancyTex
 		if len(stale[t.ID]) == 0 {
 			continue
 		}
-		v, err := vacancy(t)
+		_, read, err := vacancy(t)
 		if err != nil {
 			return 0, err
 		}
-		read := reading.FromCode(v)
 		for _, p := range stale[t.ID] {
 			f := Score(p.View, read, r)
 			var score any

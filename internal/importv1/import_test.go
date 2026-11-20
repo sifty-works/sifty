@@ -1925,3 +1925,129 @@ func TestImport_TextlessDuplicateWithFullTextKept(t *testing.T) {
 		t.Errorf("text_state: got %q, want full", state)
 	}
 }
+
+func TestImport_ReadingsImported(t *testing.T) {
+	fromDir := makeOldDir(t, "")
+	oldDB := openOldDB(t, fromDir)
+
+	_, err := oldDB.Exec(`
+		INSERT INTO jobs (id, identity, title, company, original_url,
+		  description, description_status, first_seen, last_seen, description_html)
+		VALUES
+		  (1,'acme|eng','Engineer','Acme','https://example.com/jobs/1',
+		   'Salary: EUR 60,000 per year.','available','2024-01-01T00:00:00Z','2024-01-05T00:00:00Z',
+		   '<p>Salary: EUR 60,000 per year. Must know Go.</p>'),
+		  (2,'acme|pm','Product Manager','Acme','https://example.com/jobs/2',
+		   'full-time role','available','2024-01-01T00:00:00Z','2024-01-05T00:00:00Z',
+		   '<p>Product Manager, full-time role.</p>')`)
+	if err != nil {
+		t.Fatalf("insert jobs: %v", err)
+	}
+
+	_, err = oldDB.Exec(`
+		CREATE TABLE match_vacancy_extractions (
+		  job_id INTEGER NOT NULL,
+		  created_at TEXT NOT NULL,
+		  record TEXT NOT NULL
+		)`)
+	if err != nil {
+		t.Fatalf("create extractions table: %v", err)
+	}
+
+	_, err = oldDB.Exec(`
+		INSERT INTO match_vacancy_extractions (job_id, created_at, record) VALUES
+		  (1, '2024-02-01T10:00:00Z', '{"requirements":[{"text":"Go","kind":"skill","level":"required","quote":"Must know Go.","alternatives":null}],"conditions":{"compensation":{"value":"EUR 60,000 per year","quote":"Salary: EUR 60,000 per year."}}}'),
+		  (2, '2024-02-01T10:00:00Z', '{"requirements":[{"text":"roadmapping","kind":"skill","level":"required","quote":"roadmapping experience","alternatives":["roadmap"]}],"conditions":{"engagement":{"value":"full-time","quote":"full-time role"}}}'),
+		  (99, '2024-02-01T10:00:00Z', '{"requirements":[{"text":"Python","kind":"skill","level":"required","quote":"Python","alternatives":null}],"conditions":{}}')`)
+	if err != nil {
+		t.Fatalf("insert extractions: %v", err)
+	}
+
+	targetDir := t.TempDir()
+	report := runImport(t, fromDir, targetDir)
+	newDB := openNewDB(t, targetDir)
+
+	var recJSON1, readerVer1, created1 string
+	var version1 int64
+	if err := newDB.QueryRow(`SELECT version, reader_version, record, created FROM vacancy_reading WHERE vacancy_id=1`).
+		Scan(&version1, &readerVer1, &recJSON1, &created1); err != nil {
+		t.Fatalf("reading for vacancy 1: %v", err)
+	}
+	if version1 != 1 {
+		t.Errorf("reading version: got %d, want 1", version1)
+	}
+	if readerVer1 != "import-1" {
+		t.Errorf("reader_version: got %q, want import-1", readerVer1)
+	}
+	if created1 != "2024-02-01T10:00:00Z" {
+		t.Errorf("created: got %q, want 2024-02-01T10:00:00Z", created1)
+	}
+	if !strings.Contains(recJSON1, `"kind":"skill"`) {
+		t.Errorf("requirement kind not stored: %s", recJSON1)
+	}
+
+	var recJSON2 string
+	if err := newDB.QueryRow(`SELECT record FROM vacancy_reading WHERE vacancy_id=2`).Scan(&recJSON2); err != nil {
+		t.Fatalf("reading for vacancy 2: %v", err)
+	}
+	if !strings.Contains(recJSON2, `"engagement"`) {
+		t.Errorf("engagement condition not stored: %s", recJSON2)
+	}
+
+	var n int
+	newDB.QueryRow(`SELECT count(*) FROM vacancy_reading WHERE vacancy_id=99`).Scan(&n)
+	if n != 0 {
+		t.Errorf("reading for dropped vacancy 99 should not be imported: count=%d", n)
+	}
+
+	if !strings.Contains(report, "Readings: 2 written") {
+		t.Errorf("report missing readings count: %s", report)
+	}
+}
+
+func TestImport_ReadingQuoteLocatedAsOffset(t *testing.T) {
+	fromDir := makeOldDir(t, "")
+	oldDB := openOldDB(t, fromDir)
+
+	_, err := oldDB.Exec(`
+		INSERT INTO jobs (id, identity, title, company, original_url,
+		  description, description_status, first_seen, last_seen, description_html)
+		VALUES (1,'co|eng','Engineer','Co','https://example.com/jobs/1',
+		  '','available','2024-01-01T00:00:00Z','2024-01-05T00:00:00Z',
+		  '<p>Requirements: proficient in Go and distributed systems.</p>')`)
+	if err != nil {
+		t.Fatalf("insert job: %v", err)
+	}
+
+	_, err = oldDB.Exec(`
+		CREATE TABLE match_vacancy_extractions (
+		  job_id INTEGER NOT NULL,
+		  created_at TEXT NOT NULL,
+		  record TEXT NOT NULL
+		)`)
+	if err != nil {
+		t.Fatalf("create extractions table: %v", err)
+	}
+
+	_, err = oldDB.Exec(`
+		INSERT INTO match_vacancy_extractions (job_id, created_at, record) VALUES
+		  (1, '2024-03-01T00:00:00Z', '{"requirements":[{"text":"Go","kind":"skill","level":"required","quote":"proficient in Go","alternatives":null},{"text":"Kafka","kind":"skill","level":"nice_to_have","quote":"not in text anywhere","alternatives":null}],"conditions":{}}')`)
+	if err != nil {
+		t.Fatalf("insert extraction: %v", err)
+	}
+
+	targetDir := t.TempDir()
+	runImport(t, fromDir, targetDir)
+	newDB := openNewDB(t, targetDir)
+
+	var recJSON string
+	if err := newDB.QueryRow(`SELECT record FROM vacancy_reading WHERE vacancy_id=1`).Scan(&recJSON); err != nil {
+		t.Fatalf("reading for vacancy 1: %v", err)
+	}
+	if !strings.Contains(recJSON, `"start"`) {
+		t.Errorf("found quote not stored as offset: %s", recJSON)
+	}
+	if !strings.Contains(recJSON, `"text":"not in text anywhere"`) {
+		t.Errorf("unfound quote not stored as text fallback: %s", recJSON)
+	}
+}

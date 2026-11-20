@@ -32,7 +32,6 @@ var oldCriteria = map[string]string{
 }
 
 var expectedDifferences = []struct{ code, text string }{
-	{"E1", "a condition only the old model read"},
 	{"E2", "place given only as a city"},
 	{"E3", "a labelled line changed by the new normaliser"},
 	{"E4", "the previous version did not use the board's location or tags"},
@@ -44,6 +43,7 @@ var expectedDifferences = []struct{ code, text string }{
 	{"E10", "weekly-hours ranges"},
 	{"E11", "money range containing the minimum"},
 	{"E12", "the previous version did not compare places (location 0.5)"},
+	{"E13", "the old extraction had a condition the old facts did not confirm, so the old score treated it as unknown"},
 	{"S1", "number on one side only: the previous version read a text that only repeats the title or tags as unavailable"},
 	{"S2", "number on one side only: merged duplicates"},
 	{"W1", "same criteria, number differs: the old result was computed with other weights"},
@@ -210,11 +210,11 @@ func compareFit(ctx context.Context, old *sql.DB, newDB *db.DB, cfg config.Confi
 		pid, okP := report.profileIDs[r.profile]
 		view, okG := profiles[pid]
 		vid, merged := r.job, false
-		v, okV, err := fit.LoadVacancy(ctx, cat, r.job)
+		raw, now, okV, err := fit.LoadVacancy(ctx, cat, r.job)
 		if err == nil && !okV {
 			if newDB.QueryRowContext(ctx, `SELECT new_id FROM vacancy_alias WHERE old_id=?`, r.job).Scan(&vid) == nil {
 				merged = true
-				v, okV, err = fit.LoadVacancy(ctx, cat, vid)
+				raw, now, okV, err = fit.LoadVacancy(ctx, cat, vid)
 			}
 		}
 		if err != nil {
@@ -225,9 +225,13 @@ func compareFit(ctx context.Context, old *sql.DB, newDB *db.DB, cfg config.Confi
 			cmp.NotComp++
 			continue
 		}
-		d := diffCase{ctx: ctx, old: old, row: r, merged: merged, me: me, v: v, rules: rules,
-			pv: view, folded: report.foldedLabels(pid)}
-		d.now = reading.FromCode(v)
+		var recJSON string
+		newDB.QueryRowContext(ctx, `SELECT record FROM vacancy_reading WHERE vacancy_id=?`, vid).Scan(&recJSON)
+		var rec reading.Record
+		json.Unmarshal([]byte(recJSON), &rec)
+		d := diffCase{ctx: ctx, old: old, row: r, merged: merged, me: me, v: raw, rules: rules,
+			pv: view, folded: report.foldedLabels(pid), rec: rec}
+		d.now = now
 		got := fit.Score(d.pv, d.now, rules)
 		oldState, oldScore := map[string]string{"scored": fit.Scored, "unscored": fit.NoGoals, "unavailable": fit.NoText}[o.FitsYou.Status], 0
 		if o.FitsYou.Score != nil {
@@ -317,6 +321,7 @@ type diffCase struct {
 	rules      fit.Rules
 	v          reading.Vacancy
 	now        reading.VacancyReading
+	rec        reading.Record
 	oldV, newV map[string]value
 	folded     []string
 }
@@ -342,8 +347,6 @@ func (d diffCase) explain(name string) string {
 	for _, e := range expectedDifferences {
 		applies := false
 		switch e.code {
-		case "E1":
-			applies = o.known && !present(d.now, name) && modelOnly(d.ctx, d.old, d.row.job, name)
 		case "E2":
 			for _, l := range d.now.Locations {
 				pl := places.Resolve(l)
@@ -352,7 +355,7 @@ func (d diffCase) explain(name string) string {
 		case "E3":
 			before := d.v
 			before.Text = d.row.description
-			r := reading.FromCode(before)
+			r := reading.Merge(reading.FromCode(before), d.rec)
 			applies = !reflect.DeepEqual(r, d.now) && d.with(r, name).same(o)
 		case "E4":
 			if (name == "location" || name == "remote_restriction") && !o.known && o.u == 0.5 && (d.v.Location != "" || len(d.v.Tags) > 0) {
@@ -391,6 +394,8 @@ func (d diffCase) explain(name string) string {
 			}
 		case "E12":
 			applies = name == "location" && !o.known && o.u == 0.5 && n.known
+		case "E13":
+			applies = !o.known && n.known && extractionFillsFactsGap(d.ctx, d.old, d.row.job, name)
 		}
 		if applies {
 			return e.code
@@ -399,42 +404,7 @@ func (d diffCase) explain(name string) string {
 	return ""
 }
 
-var foldedCriteria = map[string][]string{
-	"work-mode limits": {"work_mode"}, "work arrangement": {"work_mode"},
-	"geography current": {"location", "time_zone"}, "geography desired": {"location", "time_zone"},
-	"relocation": {"location"}, "eligibility": {"remote_restriction"}, "sponsorship": {"remote_restriction"},
-	"engagement preferred": {"engagement"},
-}
-
-func scope(r reading.VacancyReading) (remote, open, known bool) {
-	remote = slices.Contains(r.WorkModes, "remote")
-	open, known = remote, true
-	for _, l := range r.Locations {
-		pl := places.Resolve(l)
-		open, known = open && pl.Worldwide, known && pl.Known()
-	}
-	return remote, open, known
-}
-
-func present(r reading.VacancyReading, name string) bool {
-	switch name {
-	case "money":
-		return r.Money != nil && r.Money.Max > 0
-	case "location", "remote_restriction":
-		return len(r.Locations) > 0
-	case "time_zone":
-		return r.TimeZone != "" || len(r.Locations) > 0
-	case "work_mode":
-		return len(r.WorkModes) > 0
-	case "engagement":
-		return r.Engagement != ""
-	case "hours":
-		return r.Hours != nil
-	}
-	return true
-}
-
-func modelOnly(ctx context.Context, old *sql.DB, job int64, name string) bool {
+func extractionFillsFactsGap(ctx context.Context, old *sql.DB, job int64, name string) bool {
 	var extJSON, factsJSON string
 	old.QueryRowContext(ctx, `SELECT record FROM match_vacancy_extractions WHERE job_id=? ORDER BY created_at DESC LIMIT 1`, job).Scan(&extJSON)
 	old.QueryRowContext(ctx, `SELECT facts FROM match_job_facts WHERE job_id=?`, job).Scan(&factsJSON)
@@ -457,21 +427,42 @@ func modelOnly(ctx context.Context, old *sql.DB, job int64, name string) bool {
 	json.Unmarshal([]byte(factsJSON), &facts)
 	has := func(r json.RawMessage) bool { return len(r) > 0 && string(r) != "null" }
 	locations := len(facts.Geography.HiringLocations) > 0
-	keys := map[string]map[string]bool{
-		"money":              {"compensation": has(facts.Compensation.Cash)},
-		"location":           {"location": locations},
-		"remote_restriction": {"location": locations, "workMode": len(facts.Conditions.WorkModes) > 0},
-		"time_zone":          {"timezone": has(facts.Conditions.Timezone), "location": locations},
-		"work_mode":          {"workMode": len(facts.Conditions.WorkModes) > 0},
-		"engagement":         {"engagement": has(facts.Conditions.Engagement)},
-		"hours":              {"hours": has(facts.Conditions.Hours)},
+	type pair struct {
+		extKey  string
+		inFacts bool
 	}
-	for key, inFacts := range keys[name] {
-		if c := ext.Conditions[key]; c != nil && strings.TrimSpace(c.Value) != "" && !inFacts {
+	pairs := map[string][]pair{
+		"money":              {{"compensation", has(facts.Compensation.Cash)}},
+		"location":           {{"location", locations}},
+		"remote_restriction": {{"location", locations}, {"workMode", len(facts.Conditions.WorkModes) > 0}},
+		"time_zone":          {{"timezone", has(facts.Conditions.Timezone)}, {"location", locations}},
+		"work_mode":          {{"workMode", len(facts.Conditions.WorkModes) > 0}},
+		"engagement":         {{"engagement", has(facts.Conditions.Engagement)}},
+		"hours":              {{"hours", has(facts.Conditions.Hours)}},
+	}
+	for _, p := range pairs[name] {
+		if c := ext.Conditions[p.extKey]; c != nil && strings.TrimSpace(c.Value) != "" && !p.inFacts {
 			return true
 		}
 	}
 	return false
+}
+
+var foldedCriteria = map[string][]string{
+	"work-mode limits": {"work_mode"}, "work arrangement": {"work_mode"},
+	"geography current": {"location", "time_zone"}, "geography desired": {"location", "time_zone"},
+	"relocation": {"location"}, "eligibility": {"remote_restriction"}, "sponsorship": {"remote_restriction"},
+	"engagement preferred": {"engagement"},
+}
+
+func scope(r reading.VacancyReading) (remote, open, known bool) {
+	remote = slices.Contains(r.WorkModes, "remote")
+	open, known = remote, true
+	for _, l := range r.Locations {
+		pl := places.Resolve(l)
+		open, known = open && pl.Worldwide, known && pl.Known()
+	}
+	return remote, open, known
 }
 
 func metadataOnly(r oldRow) bool {

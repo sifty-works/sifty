@@ -47,7 +47,7 @@ Weights live in configuration. The weights of onsite work authorization and of r
 
 ## Facts of a vacancy
 
-Structured fields the source states, the location, the tags and labelled lines ("Salary: …", "Location: …", "Time zone: …") are read by code first. A model fills only what code did not find. Every value the model gives must cite an exact excerpt of the vacancy text, or it is dropped. Engagement, work mode and hours are accepted from the model only when the excerpt is a phrase of the right kind.
+Structured fields the source states, the location, the tags and labelled lines ("Salary: …", "Location: …", "Time zone: …") are read by code first. A stored reading fills what code did not find; a model fills only what neither found. Every value the model gives must cite an exact excerpt of the vacancy text, or it is dropped. Engagement, work mode and hours are accepted from the model only when the excerpt is a phrase of the right kind.
 
 ## In the lists
 

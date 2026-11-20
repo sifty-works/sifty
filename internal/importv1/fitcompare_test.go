@@ -107,8 +107,8 @@ func TestImport_FitsYouComparedWithPreviousResultsByCause(t *testing.T) {
 	out := runImport(t, from, target)
 	for _, want := range []string{
 		"weights.hours: 0", "rates.USD: 0.9",
-		"  equal: 3\n  different by expected difference: 7",
-		"    E1 a condition only the old model read: 1\n    E3 a labelled line changed by the new normaliser: 1\n" +
+		"  equal: 4\n  different by expected difference: 6",
+		"    E3 a labelled line changed by the new normaliser: 1\n" +
 			"    E4 the previous version did not use the board's location or tags: 1\n" +
 			"    E11 money range containing the minimum: 1\n    E12 the previous version did not compare places (location 0.5): 1\n" +
 			"    S1 number on one side only: the previous version read a text that only repeats the title or tags as unavailable: 1\n" +
@@ -127,7 +127,6 @@ func TestImport_FitsYouComparedWithPreviousResultsByCause(t *testing.T) {
 1	3	no_text	66	state=S1	S1
 1	5	79	92	money=E11	E11
 1	6	66	71	location=E12	E12
-1	7	92	79	money=E1	E1
 1	8	92	86	money=?	unexplained
 1	9	79	92	money=E3	E3
 1	10	46	92	role=?,money=E11	unexplained
@@ -140,5 +139,55 @@ func TestImport_FitsYouComparedWithPreviousResultsByCause(t *testing.T) {
 	settings, _ := os.ReadFile(filepath.Join(target, "sifty.yaml"))
 	if !strings.Contains(string(settings), "hours: 0") || !strings.Contains(string(settings), "USD: 0.9") {
 		t.Errorf("settings file lacks carried weights and rates:\n%s", settings)
+	}
+}
+
+func TestImport_FitsYouE13ExtractionFilledFact(t *testing.T) {
+	from := makeOldDir(t, "")
+	old := openOldDB(t, from)
+	if _, err := old.Exec(oldFitSchema); err != nil {
+		t.Fatal(err)
+	}
+	cfg := filepath.Join(from, "config")
+	os.WriteFile(filepath.Join(cfg, "runtime.yaml"), []byte(`quick_match:
+  version: 1
+  criterion_weights: {role.title: 0.25, compensation.cash: 0.20, geography.location: 0.075,
+    geography.remote_restriction: 0.075, conditions.work_mode: 0.04, conditions.engagement: 0.03,
+    conditions.hours: 0, conditions.timezone: 0.10}
+`), 0600)
+	exec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := old.Exec(q, args...); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+	}
+	exec(`INSERT INTO users (id, revision, data, created_at, updated_at) VALUES ('u', 1, '{}', 'x', 'x')`)
+	insertProfile(t, old, "p1", "Main", "2024-01-01T00:00:00Z", false)
+	exec(`UPDATE user_profiles SET revision=1, data=? WHERE id='p1'`,
+		`{"targetRoles":["Go Engineer"],"workModes":{"modes":["remote"]},"compensation":{"cashMin":90000,"currency":"EUR","period":"year"},`+
+			`"geography":{"preferredLocationsSet":true,"preferredLocations":[{"country":"DE"}]}}`)
+	const remote = "We build tools.\nWork mode: Remote"
+	insertJob(t, old, 1, "https://jobs.example.org/1")
+	exec(`UPDATE jobs SET title='Go Engineer', description=?, description_status='available' WHERE id=1`, remote)
+	sum := sha256.Sum256([]byte(remote))
+	exec(`INSERT INTO match_fit_results VALUES ('p1',1,1,1,'rules-a',?,NULL,NULL,'1',?,'x')`,
+		hex.EncodeToString(sum[:]), oldRecord(79, nil))
+	exec(`INSERT INTO match_vacancy_extractions (job_id, record, created_at) VALUES (1,'{"conditions":{"compensation":{"value":"EUR 100,000 per year","quote":"compensation"}}}','2024-01-01T00:00:00Z')`)
+	exec(`INSERT INTO match_job_facts (job_id, facts) VALUES (1, '{"compensation":{}}')`)
+
+	target := filepath.Join(t.TempDir(), "data")
+	out := runImport(t, from, target)
+	if !strings.Contains(out, "E13") {
+		t.Errorf("report lacks E13:\n%s", out)
+	}
+	if strings.Contains(out, "E3") {
+		t.Errorf("E3 fired for a reading-provided condition; report:\n%s", out)
+	}
+	tsv, err := os.ReadFile(filepath.Join(target, "fit-comparison.tsv"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(tsv), "money=E13") {
+		t.Errorf("fit-comparison.tsv lacks money=E13:\n%s", tsv)
 	}
 }

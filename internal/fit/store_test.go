@@ -11,7 +11,6 @@ import (
 	"github.com/sifty-works/sifty-server/internal/db"
 	"github.com/sifty-works/sifty-server/internal/fit"
 	"github.com/sifty-works/sifty-server/internal/listing"
-	"github.com/sifty-works/sifty-server/internal/reading"
 )
 
 var ctx = context.Background()
@@ -75,8 +74,8 @@ func TestRecomputeStoresTheResultOfScoreForEveryProfileAndVacancy(t *testing.T) 
 			t.Fatal(err)
 		}
 		for _, vid := range ids {
-			v, _, _ := fit.LoadVacancy(ctx, cat, vid)
-			want := fit.Score(p.View, reading.FromCode(v), rules())
+			_, v, _, _ := fit.LoadVacancy(ctx, cat, vid)
+			want := fit.Score(p.View, v, rules())
 			got := stored(t, d, pid, vid)
 			if got.inputs != p.Inputs || got.version != 1 || got.state != want.State || (want.State == fit.Scored) != got.score.Valid || int(got.score.Int64) != want.Score {
 				t.Errorf("profile %d vacancy %d: stored %+v, want %s %d", pid, vid, got, want.State, want.Score)
@@ -139,5 +138,137 @@ func TestListingChangeWithoutTextChangeIsRecomputed(t *testing.T) {
 	recompute(t, d, nil)
 	if got := stored(t, d, 1, ids[0]); got.version != 1 || got.score.Int64 == 7 {
 		t.Errorf("a location change without a text change was not recomputed: %+v", got)
+	}
+}
+
+func insertReading(t *testing.T, d *db.DB, vacancyID, version int64, readerVersion, record, created string) {
+	t.Helper()
+	_, err := d.Exec(
+		`INSERT OR REPLACE INTO vacancy_reading (vacancy_id, version, reader_version, record, created) VALUES (?,?,?,?,?)`,
+		vacancyID, version, readerVersion, record, created)
+	if err != nil {
+		t.Fatalf("insert reading: %v", err)
+	}
+}
+
+func noSalaryVacancy(t *testing.T, cat *catalog.Catalog) int64 {
+	t.Helper()
+	id, _, err := cat.Upsert(ctx, listing.Posting{
+		URL:       "https://jobs.example.org/10",
+		Title:     "Backend Engineer",
+		Company:   "Initech",
+		Text:      "<p>Senior role. Great team.</p>",
+		TextState: listing.TextFull,
+	}, "fixture")
+	if err != nil {
+		t.Fatalf("upsert no-salary vacancy: %v", err)
+	}
+	return id
+}
+
+const compensationProfile = `{"name":"One","targetRoles":["Backend Engineer"],"compensation":{"cashMin":50000,"currency":"EUR","period":"year"}}`
+
+func TestReadingMoneyFillsWhereCodeFoundNone(t *testing.T) {
+	d, cat, _ := fixture(t)
+	d.Exec(`UPDATE profile SET data='` + compensationProfile + `' WHERE id=1`)
+	id := noSalaryVacancy(t, cat)
+	insertReading(t, d, id, 1, "import-1",
+		`{"money":{"value":"EUR 80,000 per year","quote":"Salary: EUR 80,000 per year"}}`,
+		"2024-01-01T00:00:00Z")
+	recompute(t, d, nil)
+	withReading := stored(t, d, 1, id)
+	d.Exec(`DELETE FROM vacancy_reading WHERE vacancy_id=?`, id)
+	recompute(t, d, nil)
+	withoutReading := stored(t, d, 1, id)
+	if withReading.score.Int64 <= withoutReading.score.Int64 {
+		t.Errorf("reading money not used: with=%d without=%d", withReading.score.Int64, withoutReading.score.Int64)
+	}
+}
+
+func TestCodeMoneyWinsOverReadingMoney(t *testing.T) {
+	d, _, ids := fixture(t)
+	d.Exec(`UPDATE profile SET data='` + compensationProfile + `' WHERE id=1`)
+	recompute(t, d, nil)
+	codeOnly := stored(t, d, 1, ids[0])
+	insertReading(t, d, ids[0], 1, "import-1",
+		`{"money":{"value":"EUR 20,000 per year","quote":"Salary: EUR 20,000 per year"}}`,
+		"2024-01-01T00:00:00Z")
+	recompute(t, d, nil)
+	withReading := stored(t, d, 1, ids[0])
+	if withReading.score.Int64 != codeOnly.score.Int64 {
+		t.Errorf("code money overridden by reading: before=%d after=%d", codeOnly.score.Int64, withReading.score.Int64)
+	}
+}
+
+func TestReadingOfOlderVersionIsIgnored(t *testing.T) {
+	d, cat, _ := fixture(t)
+	d.Exec(`UPDATE profile SET data='` + compensationProfile + `' WHERE id=1`)
+	id := noSalaryVacancy(t, cat)
+	cat.Upsert(ctx, listing.Posting{URL: "https://jobs.example.org/10", Title: "Backend Engineer", Company: "Initech",
+		Text: "<p>Updated role description.</p>", TextState: listing.TextFull}, "fixture")
+	insertReading(t, d, id, 1, "import-1",
+		`{"money":{"value":"EUR 80,000 per year","quote":"Salary: EUR 80,000 per year"}}`,
+		"2024-01-01T00:00:00Z")
+	recompute(t, d, nil)
+	got := stored(t, d, 1, id)
+	if got.version != 2 {
+		t.Fatalf("vacancy should be at version 2, got %d", got.version)
+	}
+	d.Exec(`DELETE FROM vacancy_reading WHERE vacancy_id=?`, id)
+	recompute(t, d, nil)
+	noReading := stored(t, d, 1, id)
+	if got.score.Int64 != noReading.score.Int64 {
+		t.Errorf("reading for version 1 used for version 2: with-reading=%d without-reading=%d",
+			got.score.Int64, noReading.score.Int64)
+	}
+}
+
+func TestStoringReadingMakesStoredFitStale(t *testing.T) {
+	d, cat, _ := fixture(t)
+	d.Exec(`UPDATE profile SET data='` + compensationProfile + `' WHERE id=1`)
+	id := noSalaryVacancy(t, cat)
+	recompute(t, d, nil)
+	before := stored(t, d, 1, id)
+	insertReading(t, d, id, 1, "import-1",
+		`{"money":{"value":"EUR 80,000 per year","quote":"Salary: EUR 80,000 per year"}}`,
+		"2024-06-01T00:00:00Z")
+	recompute(t, d, nil)
+	after := stored(t, d, 1, id)
+	if before.score.Int64 == after.score.Int64 {
+		t.Errorf("fit not recomputed after reading stored: before=%d after=%d", before.score.Int64, after.score.Int64)
+	}
+}
+
+func TestDeletingVacancyRemovesReading(t *testing.T) {
+	d, cat, ids := fixture(t)
+	insertReading(t, d, ids[0], 1, "import-1", `{}`, "2024-01-01T00:00:00Z")
+	var n int
+	d.QueryRow(`SELECT count(*) FROM vacancy_reading WHERE vacancy_id=?`, ids[0]).Scan(&n)
+	if n != 1 {
+		t.Fatalf("reading not inserted: count=%d", n)
+	}
+	cat.Delete(ctx, ids[0])
+	d.QueryRow(`SELECT count(*) FROM vacancy_reading WHERE vacancy_id=?`, ids[0]).Scan(&n)
+	if n != 0 {
+		t.Errorf("reading not removed after vacancy deleted: count=%d", n)
+	}
+}
+
+func TestReadingReplacedUnderSameReaderVersionRecomputesFit(t *testing.T) {
+	d, cat, _ := fixture(t)
+	d.Exec(`UPDATE profile SET data='` + compensationProfile + `' WHERE id=1`)
+	id := noSalaryVacancy(t, cat)
+	insertReading(t, d, id, 1, "import-1",
+		`{"money":{"value":"EUR 60,000 per year","quote":"Salary: EUR 60,000 per year"}}`,
+		"2024-01-01T00:00:00Z")
+	recompute(t, d, nil)
+	first := stored(t, d, 1, id)
+	insertReading(t, d, id, 1, "import-1",
+		`{"money":{"value":"EUR 20,000 per year","quote":"Salary: EUR 20,000 per year"}}`,
+		"2024-06-01T00:00:00Z")
+	recompute(t, d, nil)
+	second := stored(t, d, 1, id)
+	if first.score.Int64 == second.score.Int64 {
+		t.Errorf("fit not recomputed after reading replaced: first=%d second=%d", first.score.Int64, second.score.Int64)
 	}
 }

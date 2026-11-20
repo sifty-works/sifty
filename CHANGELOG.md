@@ -4,6 +4,7 @@ Notable changes of Sifty, newest first. Versions follow `MAJOR.MINOR.PATCH`.
 
 ## Unreleased
 
+- The previous version's model readings are imported and Fits you uses their conditions where code found none; readings are kept per vacancy with the version and reader they belong to.
 - Command-line model providers work: the Claude command line and opencode, run with a reduced environment and no tools.
 - Web client 0.5.0: Settings no longer has an industries editor.
 - Industries come from what sources say: Getro company labels through an embedded table, and the industry of boards devoted to one (web3.career, Cryptocurrency Jobs, Remote3); keyword matching, the industries editor and its background reassignment are removed; a vacancy keeps every industry any source gave it.

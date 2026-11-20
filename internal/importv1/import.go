@@ -22,6 +22,7 @@ import (
 	"github.com/sifty-works/sifty-server/internal/config"
 	"github.com/sifty-works/sifty-server/internal/db"
 	"github.com/sifty-works/sifty-server/internal/listing"
+	"github.com/sifty-works/sifty-server/internal/reading"
 	"github.com/sifty-works/sifty-server/internal/source"
 	"gopkg.in/yaml.v3"
 	_ "modernc.org/sqlite"
@@ -108,6 +109,8 @@ type importReport struct {
 
 	QARead    int
 	QAWritten int
+
+	ReadingsWritten int
 
 	LegacyFolded  []string
 	LegacyDropped []string
@@ -1413,7 +1416,114 @@ func doImport(ctx context.Context, copyDB *sql.DB, newDB *db.DB, store *config.S
 	}
 	report.SourcesWritten = len(newSources)
 
+	n, err := importReadings(ctx, copyDB, newDB)
+	if err != nil {
+		return nil, fmt.Errorf("importing readings: %w", err)
+	}
+	report.ReadingsWritten = n
+
 	return report, nil
+}
+
+type oldExtRecord struct {
+	Requirements []struct {
+		Text         string   `json:"text"`
+		Kind         string   `json:"kind"`
+		Level        string   `json:"level"`
+		Quote        string   `json:"quote"`
+		Alternatives []string `json:"alternatives"`
+	} `json:"requirements"`
+	Conditions map[string]*struct {
+		Value string `json:"value"`
+		Quote string `json:"quote"`
+	} `json:"conditions"`
+}
+
+func importReadings(ctx context.Context, oldDB *sql.DB, newDB *db.DB) (int, error) {
+	var n int
+	if err := oldDB.QueryRowContext(ctx,
+		`SELECT count(*) FROM sqlite_master WHERE name='match_vacancy_extractions'`).Scan(&n); err != nil || n == 0 {
+		return 0, nil
+	}
+	rows, err := oldDB.QueryContext(ctx,
+		`SELECT job_id, record, created_at FROM match_vacancy_extractions ORDER BY job_id, created_at ASC`)
+	if err != nil {
+		return 0, fmt.Errorf("reading extractions: %w", err)
+	}
+	defer rows.Close()
+	written := 0
+	for rows.Next() {
+		var jobID int64
+		var recJSON, createdAt string
+		if err := rows.Scan(&jobID, &recJSON, &createdAt); err != nil {
+			return written, fmt.Errorf("scanning extraction: %w", err)
+		}
+		var ext oldExtRecord
+		if json.Unmarshal([]byte(recJSON), &ext) != nil {
+			continue
+		}
+		var body []byte
+		newDB.QueryRowContext(ctx, `SELECT body FROM vacancy WHERE id=?`, jobID).Scan(&body)
+		plainText := ""
+		if body != nil {
+			if h, e := catalog.Body(body); e == nil {
+				plainText = listing.PlainText(h)
+			}
+		}
+		rec := reading.Record{}
+		condFn := func(key string) *reading.Condition {
+			if c := ext.Conditions[key]; c != nil && c.Value != "" {
+				return &reading.Condition{Value: c.Value, Quote: c.Quote}
+			}
+			return nil
+		}
+		rec.Money = condFn("compensation")
+		rec.WorkMode = condFn("workMode")
+		rec.Engagement = condFn("engagement")
+		rec.Location = condFn("location")
+		rec.TimeZone = condFn("timezone")
+		rec.Hours = condFn("hours")
+		for _, req := range ext.Requirements {
+			r := reading.Requirement{
+				Text:  req.Text,
+				Kind:  req.Kind,
+				Level: req.Level,
+				Alts:  req.Alternatives,
+			}
+			if req.Quote != "" {
+				if idx := strings.Index(plainText, req.Quote); idx >= 0 {
+					r.Quote = reading.Quote{Start: idx, End: idx + len(req.Quote)}
+				} else {
+					r.Quote = reading.Quote{Text: req.Quote}
+				}
+			}
+			rec.Requirements = append(rec.Requirements, r)
+		}
+		if rec.Money == nil && rec.WorkMode == nil && rec.Engagement == nil &&
+			rec.Location == nil && rec.TimeZone == nil && rec.Hours == nil &&
+			len(rec.Requirements) == 0 {
+			continue
+		}
+		recBytes, err := json.Marshal(rec)
+		if err != nil {
+			continue
+		}
+		created := normDateUTC(createdAt)
+		if created == "" {
+			created = createdAt
+		}
+		res, err := newDB.ExecContext(ctx,
+			`INSERT OR REPLACE INTO vacancy_reading (vacancy_id, version, reader_version, record, created)
+			SELECT ?, 1, 'import-1', ?, ? WHERE EXISTS (SELECT 1 FROM vacancy WHERE id=?)`,
+			jobID, string(recBytes), created, jobID)
+		if err != nil {
+			return written, fmt.Errorf("inserting reading for vacancy %d: %w", jobID, err)
+		}
+		if k, _ := res.RowsAffected(); k > 0 {
+			written++
+		}
+	}
+	return written, rows.Err()
 }
 
 func importPhoto(fromDir, dataDir string, report *importReport) error {
@@ -2620,6 +2730,8 @@ func formatReport(r *importReport) string {
 	}
 
 	fmt.Fprintf(&sb, "Questions & Answers: %d read, %d written\n", r.QARead, r.QAWritten)
+
+	fmt.Fprintf(&sb, "Readings: %d written\n", r.ReadingsWritten)
 
 	if len(r.LegacyFolded) > 0 {
 		fmt.Fprintf(&sb, "Legacy values folded into Other requirements (%d):\n", len(r.LegacyFolded))

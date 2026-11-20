@@ -141,3 +141,28 @@ func TestFromCode_salary_both_k(t *testing.T) {
 		t.Errorf("max = %.f, want 300000", r.Money.Max)
 	}
 }
+
+func TestMergeMoneyWithEquityInQuote(t *testing.T) {
+	rec := reading.Record{
+		Money: &reading.Condition{
+			Value: "USD 135,000 - 150,000 per year",
+			Quote: "$135,000 - $150,000 + sign-on equity grant",
+		},
+	}
+	r := reading.Merge(reading.VacancyReading{}, rec)
+	if r.Money == nil {
+		t.Fatal("money is nil: equity in quote must not suppress the value")
+	}
+	if r.Money.Min != 135000 {
+		t.Errorf("min = %.f, want 135000", r.Money.Min)
+	}
+	if r.Money.Max != 150000 {
+		t.Errorf("max = %.f, want 150000", r.Money.Max)
+	}
+	if r.Money.Currency != "USD" {
+		t.Errorf("currency = %q, want USD", r.Money.Currency)
+	}
+	if r.Money.Period != "year" {
+		t.Errorf("period = %q, want year", r.Money.Period)
+	}
+}
