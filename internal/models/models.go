@@ -25,7 +25,6 @@ type Response struct {
 }
 
 var ErrOffline = errors.New("model calls are not available in offline mode")
-var ErrNotSupported = errors.New("Not supported yet")
 var ErrBulkOnPaid = errors.New("Bulk model work is not allowed on a paid provider. Enable 'Allow paid bulk work' first.")
 
 type WaitError struct {
@@ -56,16 +55,6 @@ type constructor func(endpoint, model, keyEnv string, timeoutMS, contextChars in
 var adapters = map[string]constructor{
 	"ollama":       newOllama,
 	"openai":       newOpenAI,
-	"cli-claude":   notSupportedCtor,
-	"cli-opencode": notSupportedCtor,
-}
-
-func notSupportedCtor(_, _, _ string, _, _ int, _ map[string]string) (Model, error) {
-	return notSupportedModel{}, nil
-}
-
-type notSupportedModel struct{}
-
-func (notSupportedModel) Complete(_ context.Context, _ Request) (Response, error) {
-	return Response{}, ErrNotSupported
+	"cli-claude":   newCLIClaude,
+	"cli-opencode": newCLIOpencode,
 }

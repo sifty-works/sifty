@@ -4,6 +4,7 @@ Notable changes of Sifty, newest first. Versions follow `MAJOR.MINOR.PATCH`.
 
 ## Unreleased
 
+- Command-line model providers work: the Claude command line and opencode, run with a reduced environment and no tools.
 - Web client 0.5.0: Settings no longer has an industries editor.
 - Industries come from what sources say: Getro company labels through an embedded table, and the industry of boards devoted to one (web3.career, Cryptocurrency Jobs, Remote3); keyword matching, the industries editor and its background reassignment are removed; a vacancy keeps every industry any source gave it.
 - Board platforms state more: a16z and Paradigm records give salary, remote work and locations, and Paradigm lists every vacancy on its board, including those on other sites; Getro gives work mode, salary and locations; Ashby gives workplace type, salary with its period and every location; Lever keeps every location and the salary period.
