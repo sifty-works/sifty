@@ -15,3 +15,7 @@ The order in which Sifty is built. Each slice delivers behaviour the user can se
 9. **Shortlist check.** The one model check when a vacancy enters Shortlist, shown next to the requirements code left undecided, run again only when its inputs change.
 10. **Application.** The employer's page search and the Apply button states; form reading; answers from My data; label classification; drafting all answers in one call; answer cards, Write, Paste and manual questions. The import adds drafts and learned phrasings.
 11. **Keep and release.** Text retention after 60 days; `sifty backup`; the Background work page; the release command with its version, changelog and rollback. Switch-over from the previous version follows this slice.
+
+## Status
+
+Slices 1 to 6 are accepted. Slice 7 has the model foundation (providers, the per-kind choice, the dispatcher, the cost barrier, the call journal and the command-line providers), the import of earlier readings, the model reader and its background job, the requirements counter with the Requirements criterion at weight 0, and the server side of What they ask with + and −. Remaining in slice 7: What they ask in the web client, What they offer, and Settings › Models in the web client; then the slice's acceptance (one model call per new text, none per change of profile).
