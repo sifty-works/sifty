@@ -30,7 +30,7 @@ type sitesFile struct {
 	Sites []siteEntry `yaml:"sites"`
 }
 
-var knownSiteModules = map[string]Module{"links": srcLinks, "feed": srcFeed, "getro": srcGetro, "a16z": srcA16Z}
+var knownSiteModules = map[string]Module{"links": srcLinks, "feed": srcFeed, "getro": srcGetro, "a16z": srcA16Z, "paradigm": srcParadigm}
 
 var sitesByHost map[string]knownSite
 

@@ -38,6 +38,7 @@ func TestEmbeddedSitesGiveCorrectModule(t *testing.T) {
 		{"cryptocurrencyjobs.co", "feed"},
 		{"jobs.framework.ventures", "getro"},
 		{"a16zfrontier.com", "a16z"},
+		{"paradigm.xyz", "paradigm"},
 	} {
 		t.Run(tc.host, func(t *testing.T) {
 			u, _ := url.Parse("https://" + tc.host + "/")

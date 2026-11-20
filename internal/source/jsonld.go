@@ -3,7 +3,6 @@ package source
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"strings"
 
 	"github.com/sifty-works/sifty-server/internal/listing"
@@ -188,31 +187,15 @@ func ldSalaryText(v any) string {
 	if !ok {
 		return ""
 	}
-	cur := ldStr(m, "currency")
 	qv, ok := m["value"].(map[string]any)
 	if !ok {
 		return ""
 	}
-	unit := strings.ToLower(ldStr(qv, "unitText"))
-	per := map[string]string{"year": "/year", "month": "/month", "hour": "/hour", "day": "/day"}[unit]
-	lo, hi, single := ldFloat(qv, "minValue"), ldFloat(qv, "maxValue"), ldFloat(qv, "value")
-	var num string
-	switch {
-	case lo > 0 && hi > 0:
-		num = fmt.Sprintf("%.0f–%.0f", lo, hi)
-	case single > 0:
-		num = fmt.Sprintf("%.0f", single)
-	case hi > 0:
-		num = fmt.Sprintf("%.0f", hi)
-	default:
-		return ""
+	lo, hi := ldFloat(qv, "minValue"), ldFloat(qv, "maxValue")
+	if lo == 0 && hi == 0 {
+		hi = ldFloat(qv, "value")
 	}
-	var parts []string
-	if cur != "" {
-		parts = append(parts, cur)
-	}
-	parts = append(parts, num)
-	return strings.Join(parts, " ") + per
+	return salaryRangeText(ldStr(m, "currency"), lo, hi, ldStr(qv, "unitText"))
 }
 
 func removePunct(s string) string {

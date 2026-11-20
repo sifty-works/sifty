@@ -9,13 +9,35 @@
       "location": "Austin, TX",
       "isRemote": true,
       "isListed": true,
+      "workplaceType": "Remote",
+      "secondaryLocations": [
+        {
+          "location": "New York",
+          "address": {
+            "postalAddress": {
+              "addressRegion": "NY",
+              "addressCountry": "US",
+              "addressLocality": "New York"
+            }
+          }
+        }
+      ],
       "department": "Data",
       "team": "AI Research",
       "employmentType": "FullTime",
       "publishedAt": "2024-03-10T10:00:00.000Z",
       "descriptionHtml": "<p>Join our AI research team.</p>",
       "compensation": {
-        "compensationTierSummary": "$140K–$180K"
+        "compensationTierSummary": "$140K–$180K",
+        "summaryComponents": [
+          {
+            "compensationType": "Salary",
+            "interval": "1 YEAR",
+            "currencyCode": "USD",
+            "minValue": 140000,
+            "maxValue": 180000
+          }
+        ]
       }
     },
     {
@@ -26,6 +48,8 @@
       "location": "Remote",
       "isRemote": false,
       "isListed": false,
+      "workplaceType": "",
+      "secondaryLocations": [],
       "department": "Operations",
       "team": "Ops",
       "employmentType": "FullTime",

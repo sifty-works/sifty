@@ -352,8 +352,8 @@ func TestLever_maps_all_fields(t *testing.T) {
 	if p.Company != "TechStartup" {
 		t.Errorf("company = %q, want TechStartup (source name)", p.Company)
 	}
-	if p.Location != "San Francisco" {
-		t.Errorf("location = %q", p.Location)
+	if p.Location != "San Francisco · Austin" {
+		t.Errorf("location = %q, want all locations joined (allLocations)", p.Location)
 	}
 	if len(p.Tags) < 2 {
 		t.Errorf("tags = %v, want at least team and department", p.Tags)
@@ -364,8 +364,8 @@ func TestLever_maps_all_fields(t *testing.T) {
 	if p.Fields["workplace_type"] != "hybrid" {
 		t.Errorf("workplace_type = %q", p.Fields["workplace_type"])
 	}
-	if p.Fields["salary"] == "" {
-		t.Errorf("salary field empty")
+	if p.Fields["salary"] != "USD 120000–160000/year" {
+		t.Errorf("salary = %q, want USD 120000–160000/year", p.Fields["salary"])
 	}
 	wantDate := time.UnixMilli(1709280000000).UTC()
 	if !p.Published.Equal(wantDate) {
@@ -438,8 +438,11 @@ func TestAshby_maps_all_fields(t *testing.T) {
 	if p.Company != "NexGen" {
 		t.Errorf("company = %q, want NexGen (source name)", p.Company)
 	}
-	if !strings.Contains(p.Location, "Austin, TX") || !strings.Contains(p.Location, "Remote") {
-		t.Errorf("location = %q, want Austin TX + Remote", p.Location)
+	if !strings.Contains(p.Location, "Austin, TX") || !strings.Contains(p.Location, "New York") {
+		t.Errorf("location = %q, want Austin, TX and New York (secondary location)", p.Location)
+	}
+	if strings.Contains(p.Location, "Remote") {
+		t.Errorf("location = %q must not contain Remote (workplace_type carries it)", p.Location)
 	}
 	if len(p.Tags) < 2 {
 		t.Errorf("tags = %v, want department + team", p.Tags)
@@ -447,8 +450,11 @@ func TestAshby_maps_all_fields(t *testing.T) {
 	if p.Fields["employment_type"] != "FullTime" {
 		t.Errorf("employment_type = %q", p.Fields["employment_type"])
 	}
-	if p.Fields["salary"] != "$140K–$180K" {
-		t.Errorf("salary = %q", p.Fields["salary"])
+	if p.Fields["workplace_type"] != "Remote" {
+		t.Errorf("workplace_type = %q, want Remote", p.Fields["workplace_type"])
+	}
+	if p.Fields["salary"] != "USD 140000–180000/year" {
+		t.Errorf("salary = %q, want USD 140000–180000/year (from summaryComponents)", p.Fields["salary"])
 	}
 	wantDate := time.Date(2024, 3, 10, 10, 0, 0, 0, time.UTC)
 	if !p.Published.Equal(wantDate) {
@@ -484,6 +490,70 @@ func TestAshby_company_falls_back_to_board_name(t *testing.T) {
 	}
 	if !postings[0].CompanyGuessed {
 		t.Error("CompanyGuessed should be true without source name")
+	}
+}
+
+func TestGetro_cents_become_whole_amounts(t *testing.T) {
+	body := mustReadFile(t, "testdata/getro.html")
+	addr := "https://jobs.framework.ventures/jobs"
+	m := fetchtest.NewMap()
+	m.Set(addr, fetchtest.MapEntry{Response: fetch.Response{URL: addr, Status: 200, Body: body}})
+	u := mustParseURL(t, "https://jobs.framework.ventures/")
+	mod, site := source.For(u)
+	ps, err := mod.List(context.Background(), m, site)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(ps) == 0 {
+		t.Fatal("no postings")
+	}
+	p := ps[0]
+	if p.Fields["salary"] != "USD 80000–120000/year" {
+		t.Errorf("salary = %q, want USD 80000–120000/year (cents / 100)", p.Fields["salary"])
+	}
+	if p.Fields["workplace_type"] != "on_site" {
+		t.Errorf("workplace_type = %q, want on_site", p.Fields["workplace_type"])
+	}
+	if p.Location != "Lisbon" {
+		t.Errorf("location = %q, want Lisbon (from locationDetails)", p.Location)
+	}
+}
+
+func TestAshby_1_YEAR_interval_gives_per_year(t *testing.T) {
+	body := mustReadFile(t, "testdata/ashby.json")
+	apiURL := "https://api.ashbyhq.com/posting-api/job-board/nexgen?includeCompensation=true"
+	m := fetchtest.NewMap()
+	m.Set(apiURL, fetchtest.MapEntry{Response: fetch.Response{URL: apiURL, Status: 200, Body: body}})
+	mod, site := source.For(mustParseURL(t, "https://jobs.ashbyhq.com/nexgen"))
+	ps, err := mod.List(context.Background(), m, site)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(ps) == 0 {
+		t.Fatal("no postings")
+	}
+	sal := ps[0].Fields["salary"]
+	if !strings.Contains(sal, "/year") {
+		t.Errorf("salary = %q, want /year period from 1 YEAR interval", sal)
+	}
+}
+
+func TestLever_keeps_every_location(t *testing.T) {
+	body := mustReadFile(t, "testdata/lever.json")
+	apiURL := "https://api.lever.co/v0/postings/techstartup?mode=json"
+	m := fetchtest.NewMap()
+	m.Set(apiURL, fetchtest.MapEntry{Response: fetch.Response{URL: apiURL, Status: 200, Body: body}})
+	mod, site := source.For(mustParseURL(t, "https://jobs.lever.co/techstartup"))
+	ps, err := mod.List(context.Background(), m, site)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(ps) == 0 {
+		t.Fatal("no postings")
+	}
+	loc := ps[0].Location
+	if !strings.Contains(loc, "San Francisco") || !strings.Contains(loc, "Austin") {
+		t.Errorf("location = %q, want all allLocations entries", loc)
 	}
 }
 
@@ -775,6 +845,106 @@ func TestDetail_company_recovery(t *testing.T) {
 			}
 			if result.Company != tc.wantCo {
 				t.Errorf("company = %q, want %q", result.Company, tc.wantCo)
+			}
+		})
+	}
+}
+
+func TestParadigm_js_literal_postings(t *testing.T) {
+	body := mustReadFile(t, "testdata/paradigm.html")
+	addr := "https://www.paradigm.xyz/careers"
+	m := fetchtest.NewMap()
+	m.Set(addr, fetchtest.MapEntry{Response: fetch.Response{URL: addr, Status: 200, Body: body}})
+	u := mustParseURL(t, addr)
+	mod, site := source.For(u)
+	ps, err := mod.List(context.Background(), m, site)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(ps) != 3 {
+		t.Fatalf("got %d postings, want 3", len(ps))
+	}
+	p0 := ps[0]
+	if p0.Title != "Protocol Engineer" {
+		t.Errorf("title[0] = %q", p0.Title)
+	}
+	if p0.Company != "Chain Labs" {
+		t.Errorf("company[0] = %q", p0.Company)
+	}
+	if p0.Fields["salary"] != "USD 80000–120000/year" {
+		t.Errorf("salary[0] = %q, want USD 80000–120000/year", p0.Fields["salary"])
+	}
+	if p0.Fields["workplace_type"] != "" {
+		t.Errorf("workplace_type[0] = %q, want empty (remote=false)", p0.Fields["workplace_type"])
+	}
+	if p0.Location != "New York" {
+		t.Errorf("location[0] = %q, want New York", p0.Location)
+	}
+	wantDate := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+	if !p0.Published.Equal(wantDate) {
+		t.Errorf("published[0] = %v, want %v", p0.Published, wantDate)
+	}
+	p1 := ps[1]
+	if p1.Fields["workplace_type"] != "remote" {
+		t.Errorf("workplace_type[1] = %q, want remote", p1.Fields["workplace_type"])
+	}
+	if p1.Fields["salary"] != "" {
+		t.Errorf("salary[1] = %q, want empty (null salary)", p1.Fields["salary"])
+	}
+}
+
+func TestParadigm_external_host_urls_listed(t *testing.T) {
+	body := mustReadFile(t, "testdata/paradigm.html")
+	addr := "https://www.paradigm.xyz/careers"
+	m := fetchtest.NewMap()
+	m.Set(addr, fetchtest.MapEntry{Response: fetch.Response{URL: addr, Status: 200, Body: body}})
+	u := mustParseURL(t, addr)
+	mod, site := source.For(u)
+	ps, err := mod.List(context.Background(), m, site)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	for _, p := range ps {
+		if strings.Contains(p.URL, "paradigm.xyz") {
+			t.Errorf("URL %q is on paradigm.xyz, want external host (record should be listed regardless)", p.URL)
+		}
+	}
+	if len(ps) != 3 {
+		t.Fatalf("got %d postings, want 3 (all records including external-host URLs)", len(ps))
+	}
+}
+
+func TestParadigm_js_literal_matches_json(t *testing.T) {
+	const baseURL = "https://www.paradigm.xyz/careers"
+	jsonBody := `<html><head><script>var d={jobs:[{"title":"Node Operator","url":"https://careers.proto.example.com/node-op-1","companyName":"Proto Labs","companyDomain":"proto.example.com","locations":["Berlin"],"remote":false,"createdAt":"2026-06-01T00:00:00Z","salary":null,"functions":[],"skills":[],"seniorities":[],"regions":[],"isFeatured":false}],companies:[]};</script></head></html>`
+	jsBody := `<html><head><script>var d={jobs:[{title:"Node Operator",url:"https://careers.proto.example.com/node-op-1",companyName:"Proto Labs",companyDomain:"proto.example.com",locations:["Berlin"],remote:false,createdAt:"2026-06-01T00:00:00Z",salary:null,functions:[],skills:[],seniorities:[],regions:[],isFeatured:false}],companies:[]};</script></head></html>`
+	u := mustParseURL(t, baseURL)
+	mod, site := source.For(u)
+	for _, tc := range []struct {
+		name string
+		body string
+	}{
+		{"json_keys", jsonBody},
+		{"bare_keys", jsBody},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := fetchtest.NewMap()
+			m.Set(baseURL, fetchtest.MapEntry{Response: fetch.Response{URL: baseURL, Status: 200, Body: []byte(tc.body)}})
+			ps, err := mod.List(context.Background(), m, site)
+			if err != nil {
+				t.Fatalf("List: %v", err)
+			}
+			if len(ps) != 1 {
+				t.Fatalf("got %d postings, want 1", len(ps))
+			}
+			if ps[0].Title != "Node Operator" {
+				t.Errorf("title = %q", ps[0].Title)
+			}
+			if ps[0].Company != "Proto Labs" {
+				t.Errorf("company = %q", ps[0].Company)
+			}
+			if ps[0].Location != "Berlin" {
+				t.Errorf("location = %q, want Berlin", ps[0].Location)
 			}
 		})
 	}

@@ -9,13 +9,23 @@ import (
 
 var srcGetro Module = &pageModule{"getro", parseGetro}
 
+type ndLocationDetail struct {
+	Name string `json:"name"`
+}
+
 type ndJob struct {
-	Title     string   `json:"title"`
-	Slug      string   `json:"slug"`
-	ApplyURL  string   `json:"url"`
-	Locations []string `json:"locations"`
-	CreatedAt float64  `json:"createdAt"`
-	Org       struct {
+	Title                string             `json:"title"`
+	Slug                 string             `json:"slug"`
+	ApplyURL             string             `json:"url"`
+	Locations            []string           `json:"locations"`
+	LocationDetails      []ndLocationDetail `json:"locationDetails"`
+	CreatedAt            float64            `json:"createdAt"`
+	WorkMode             string             `json:"workMode"`
+	CompensationMinCents int                `json:"compensationAmountMinCents"`
+	CompensationMaxCents int                `json:"compensationAmountMaxCents"`
+	CompensationCurrency string             `json:"compensationCurrency"`
+	CompensationPeriod   string             `json:"compensationPeriod"`
+	Org                  struct {
 		Name string `json:"name"`
 		Slug string `json:"slug"`
 	} `json:"organization"`
@@ -42,11 +52,22 @@ func parseGetro(body []byte, base string, _ Site) []listing.Posting {
 		if f.Title == "" || f.Org.Name == "" || f.Slug == "" {
 			continue
 		}
+		var locParts []string
+		for _, ld := range f.LocationDetails {
+			if n := trim(ld.Name); n != "" {
+				locParts = append(locParts, n)
+			}
+		}
+		if len(locParts) == 0 {
+			locParts = f.Locations
+		}
+		salary := salaryRangeText(f.CompensationCurrency, float64(f.CompensationMinCents)/100, float64(f.CompensationMaxCents)/100, f.CompensationPeriod)
 		p := listing.Posting{
 			URL:      resolveURL("/companies/"+f.Org.Slug+"/jobs/"+f.Slug, base),
 			Title:    f.Title,
 			Company:  f.Org.Name,
-			Location: strings.Join(f.Locations, ", "),
+			Location: strings.Join(locParts, " · "),
+			Fields:   setFields("workplace_type", f.WorkMode, "salary", salary),
 		}
 		p.ApplyURL = resolveURL(f.ApplyURL, base)
 		if f.CreatedAt > 0 {

@@ -2,7 +2,6 @@ package source
 
 import (
 	"context"
-	"fmt"
 	"html"
 	"net/url"
 	"strings"
@@ -55,19 +54,15 @@ func (s *leverSource) List(ctx context.Context, f fetch.Fetcher, cfg Site) ([]li
 			}
 		}
 		tb.WriteString(post.Additional)
+		var loc string
+		if len(post.Categories.AllLocations) > 0 {
+			loc = strings.Join(post.Categories.AllLocations, " · ")
+		} else {
+			loc = post.Categories.Location
+		}
 		var salary string
 		if sr := post.SalaryRange; sr != nil && (sr.Min != 0 || sr.Max != 0) {
-			if sr.Max > 0 {
-				salary = fmt.Sprintf("%d–%d", sr.Min, sr.Max)
-			} else {
-				salary = fmt.Sprintf("%d", sr.Min)
-			}
-			if c := trim(sr.Currency); c != "" {
-				salary += " " + c
-			}
-			if i := trim(sr.Interval); i != "" {
-				salary += " " + i
-			}
+			salary = salaryRangeText(sr.Currency, float64(sr.Min), float64(sr.Max), sr.Interval)
 		}
 		p := listing.Posting{
 			URL:            post.HostedURL,
@@ -75,7 +70,7 @@ func (s *leverSource) List(ctx context.Context, f fetch.Fetcher, cfg Site) ([]li
 			Title:          post.Text,
 			Company:        company,
 			CompanyGuessed: guessed,
-			Location:       post.Categories.Location,
+			Location:       loc,
 			Tags:           []string{post.Categories.Team, post.Categories.Department},
 			Fields:         setFields("employment_type", post.Categories.Commitment, "workplace_type", post.WorkplaceType, "salary", salary),
 			Text:           tb.String(),
@@ -104,10 +99,11 @@ type lvPosting struct {
 }
 
 type lvCategories struct {
-	Location   string `json:"location"`
-	Team       string `json:"team"`
-	Department string `json:"department"`
-	Commitment string `json:"commitment"`
+	Location     string   `json:"location"`
+	AllLocations []string `json:"allLocations"`
+	Team         string   `json:"team"`
+	Department   string   `json:"department"`
+	Commitment   string   `json:"commitment"`
 }
 
 type lvSalary struct {

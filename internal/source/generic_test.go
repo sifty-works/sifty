@@ -160,8 +160,14 @@ func TestList_getro_next_data(t *testing.T) {
 	if p.ApplyURL == "" {
 		t.Errorf("ApplyURL empty, want ATS link")
 	}
-	if p.Location != "Remote" {
-		t.Errorf("location = %q, want Remote", p.Location)
+	if p.Location != "Lisbon" {
+		t.Errorf("location = %q, want Lisbon (from locationDetails)", p.Location)
+	}
+	if p.Fields["workplace_type"] != "on_site" {
+		t.Errorf("workplace_type = %q, want on_site", p.Fields["workplace_type"])
+	}
+	if p.Fields["salary"] != "USD 80000–120000/year" {
+		t.Errorf("salary = %q, want USD 80000–120000/year (from cents)", p.Fields["salary"])
 	}
 	if p.TextState != listing.TextNotFetched {
 		t.Errorf("text state = %q, want not_fetched", p.TextState)
@@ -223,20 +229,29 @@ func TestList_a16z_portfolio_jobs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
-	if len(ps) != 2 {
-		t.Fatalf("got %d postings, want 2", len(ps))
+	if len(ps) != 3 {
+		t.Fatalf("got %d postings, want 3", len(ps))
 	}
 	if ps[0].Company != "Decentral Labs" {
 		t.Errorf("company[0] = %q", ps[0].Company)
 	}
 	if ps[0].Location != "New York" {
-		t.Errorf("location[0] = %q, want New York (not remote)", ps[0].Location)
+		t.Errorf("location[0] = %q, want New York", ps[0].Location)
+	}
+	if ps[0].Fields["salary"] != "USD 100000–150000/year" {
+		t.Errorf("salary[0] = %q, want USD 100000–150000/year", ps[0].Fields["salary"])
+	}
+	if ps[0].Fields["workplace_type"] != "" {
+		t.Errorf("workplace_type[0] = %q, want empty (remote=false)", ps[0].Fields["workplace_type"])
 	}
 	if ps[1].Company != "Chain Works" {
 		t.Errorf("company[1] = %q", ps[1].Company)
 	}
-	if ps[1].Location != "Remote" {
-		t.Errorf("location[1] = %q, want Remote", ps[1].Location)
+	if ps[1].Location != "" {
+		t.Errorf("location[1] = %q, want empty (locations is empty)", ps[1].Location)
+	}
+	if ps[1].Fields["workplace_type"] != "remote" {
+		t.Errorf("workplace_type[1] = %q, want remote", ps[1].Fields["workplace_type"])
 	}
 	if reqs := m.Requests(); len(reqs) != 1 {
 		t.Errorf("requests = %v, want exactly 1", reqs)

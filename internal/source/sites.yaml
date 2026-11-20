@@ -31,3 +31,5 @@ sites:
   - host: a16zfrontier.com
     module: a16z
     script_var: portfolioJobs
+  - host: paradigm.xyz
+    module: paradigm

@@ -6,12 +6,13 @@
     "createdAt": 1709280000000,
     "categories": {
       "location": "San Francisco",
+      "allLocations": ["San Francisco", "Austin"],
       "team": "Frontend",
       "department": "Engineering",
       "commitment": "Full-time"
     },
     "workplaceType": "hybrid",
-    "salaryRange": {"min": 120000, "max": 160000, "currency": "USD", "interval": "yearly"},
+    "salaryRange": {"min": 120000, "max": 160000, "currency": "USD", "interval": "per-year-salary"},
     "description": "<p>We are building great things.</p>",
     "lists": [
       {"text": "Requirements", "content": "<li>3+ years of Go or Python</li><li>Strong CS fundamentals</li>"}

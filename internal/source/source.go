@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/url"
 	"strings"
 	"time"
@@ -144,6 +145,33 @@ func setFields(kvs ...string) map[string]string {
 		}
 	}
 	return m
+}
+
+func salaryRangeText(currency string, min, max float64, period string) string {
+	if min == 0 && max == 0 {
+		return ""
+	}
+	per := map[string]string{
+		"year": "/year", "1 year": "/year", "yearly": "/year", "per-year-salary": "/year",
+		"month": "/month", "1 month": "/month",
+		"hour": "/hour", "1 hour": "/hour",
+		"day": "/day",
+	}[strings.ToLower(trim(period))]
+	var num string
+	switch {
+	case min > 0 && max > 0:
+		num = fmt.Sprintf("%.0f–%.0f", min, max)
+	case max > 0:
+		num = fmt.Sprintf("%.0f", max)
+	default:
+		num = fmt.Sprintf("%.0f", min)
+	}
+	var parts []string
+	if c := trim(currency); c != "" {
+		parts = append(parts, c)
+	}
+	parts = append(parts, num)
+	return strings.Join(parts, " ") + per
 }
 
 func finalise(p listing.Posting, base string) (listing.Posting, bool) {
