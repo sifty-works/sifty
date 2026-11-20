@@ -4,6 +4,7 @@ Notable changes of Sifty, newest first. Versions follow `MAJOR.MINOR.PATCH`.
 
 ## Unreleased
 
+- Web client 0.10.0: a tile of the Fits you band shows its converted amount on its own line under the value.
 - The money of a vacancy is written compactly, "$190–225k a year", and the approximate euro amount, rounded to the nearest thousand, stands on its own beside it instead of inside the same line.
 - Web client 0.9.0: the vacancy page shows What they offer beside What they ask, with a tile per benefit the listing names and an "Also offered" list.
 - What they offer (server): the vacancy view carries a "Base salary" tile with the band's money value, tiles for equity, health, time off, retirement, learning, equipment, bonus and flexibility read from the listing's own compensation and benefits sections, and the rest of those sections as "Also offered"; when no such section is recognised, or one is found with nothing in it, the block says so.
