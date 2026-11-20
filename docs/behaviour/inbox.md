@@ -134,7 +134,7 @@ Then the dialog "Did you submit your application?" asks for the outcome: Not yet
 **Overview, from top to bottom:**
 
 1. The Fits you band (see `assessment.md`).
-2. What they ask on the left (see `assessment.md`) and What they offer on the right. What they offer shows tiles built from the vacancy's compensation and benefits sections and an "Also offered" list; when nothing is found: "No Compensation or Benefits section recognised…" or "Section found but no specific items matched."
+2. What they ask on the left (see `assessment.md`) and What they offer on the right. What they offer shows a "Base salary" tile, carrying the value of the band's Money tile and left out when the vacancy states no money, then tiles built from the vacancy's compensation and benefits sections and an "Also offered" list; when nothing is found: "No Compensation or Benefits section recognised…" or "Section found but no specific items matched."
 3. Listing text, with its state in words: "Full text", "Listing summary only", "Blocked by site", "Not fetched" or "Text removed after 60 days unseen; it returns if the source shows the role again". The sanitised text is shown with its headings; without text: "A full description has not been retrieved…".
 4. The Shortlist check, in Shortlist and Archive when a check exists (see `assessment.md`).
 

@@ -448,6 +448,12 @@ type VacancySource struct {
 	URL  string `json:"url,omitempty"`
 }
 
+type OfferView struct {
+	Tiles []listing.OfferTile `json:"tiles"`
+	Items []string            `json:"items"`
+	Empty string              `json:"empty,omitempty"`
+}
+
 type VacancyView struct {
 	Row
 	Sources  []VacancySource `json:"sources"`
@@ -456,6 +462,27 @@ type VacancyView struct {
 	Actions  []Action        `json:"actions"`
 	Listing  ListingView     `json:"listing"`
 	Band     Band            `json:"band"`
+	Offer    OfferView       `json:"offer"`
+}
+
+func offerView(body string, tiles []fit.Tile) OfferView {
+	o := listing.ReadOffer(body)
+	v := OfferView{Tiles: []listing.OfferTile{}, Items: []string{}}
+	if !o.Found {
+		v.Empty = "No Compensation or Benefits section recognised in this listing."
+		return v
+	}
+	for _, t := range tiles {
+		if t.Name == "Money" && t.Value != "" && t.Value != "Not stated" {
+			v.Tiles = append(v.Tiles, listing.OfferTile{Key: "salary", Label: "Base salary", Value: t.Value})
+		}
+	}
+	v.Tiles = append(v.Tiles, o.Tiles...)
+	v.Items = append(v.Items, o.Items...)
+	if len(o.Tiles) == 0 && len(o.Items) == 0 {
+		v.Empty = "Section found but no specific items matched."
+	}
+	return v
 }
 
 func listingState(textState string) string {
@@ -637,5 +664,6 @@ func vacancyView(ctx context.Context, database *db.DB, now func() time.Time,
 		Actions:  stageActions(stage, vd.url, vd.applyURL, row.company),
 		Listing:  lv,
 		Band:     band,
+		Offer:    offerView(html, f.Tiles),
 	}, nil
 }
