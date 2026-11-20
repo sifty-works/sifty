@@ -4,6 +4,7 @@ Notable changes of Sifty, newest first. Versions follow `MAJOR.MINOR.PATCH`.
 
 ## Unreleased
 
+- Sources are read by one module per kind of site with one table of known sites; no visible change.
 - The import leaves out vacancies without full text that no profile acted on, without a removal mark, so collection can gather them again.
 - Web client 0.4.1: no comments in its sources; interface synced.
 - Fits you treats a vacancy that states no engagement as employment; the Contract tile shows "Employment (assumed)".

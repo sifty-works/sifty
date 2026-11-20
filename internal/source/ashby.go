@@ -10,18 +10,25 @@ import (
 	"github.com/sifty-works/sifty-server/internal/listing"
 )
 
+var srcAshby Module = &ashbySource{}
+
 type ashbySource struct{}
 
+func (s *ashbySource) Name() string { return "ashby" }
 func (s *ashbySource) Match(u *url.URL) bool {
 	return strings.ToLower(u.Host) == "jobs.ashbyhq.com" && isRoot(u)
 }
 
-func (s *ashbySource) List(ctx context.Context, f fetch.Fetcher, cfg SiteConfig) ([]listing.Posting, error) {
-	boardURL, err := url.Parse(cfg.URL)
+func (s *ashbySource) Group(u *url.URL) string {
+	return "api." + strings.ToLower(u.Host)[5:]
+}
+
+func (s *ashbySource) List(ctx context.Context, f fetch.Fetcher, cfg Site) ([]listing.Posting, error) {
+	boardURL, err := url.Parse(cfg.Address)
 	if err != nil {
 		return nil, ErrNothingRecognised
 	}
-	apiURL := fmt.Sprintf("https://%s/posting-api/job-board/%s?includeCompensation=true", Host(boardURL), boardSlug(boardURL))
+	apiURL := fmt.Sprintf("https://%s/posting-api/job-board/%s?includeCompensation=true", s.Group(boardURL), boardSlug(boardURL))
 	var body ashbyResponse
 	if err := fetchJSON(ctx, f, apiURL, &body); err != nil {
 		return nil, err

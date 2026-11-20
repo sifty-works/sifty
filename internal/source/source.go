@@ -14,6 +14,73 @@ import (
 
 var ErrNothingRecognised = errors.New("nothing recognised on the page")
 
+type Attr struct{ Attr, Substr string }
+
+type Site struct {
+	Name        string
+	Address     string
+	ListAddress string
+	Content     []Attr
+	LinkPattern string
+	ScriptVar   string
+	SkipJSONLD  bool
+}
+
+type Module interface {
+	Name() string
+	List(ctx context.Context, f fetch.Fetcher, s Site) ([]listing.Posting, error)
+}
+
+type Matcher interface {
+	Match(u *url.URL) bool
+}
+
+type Grouper interface {
+	Group(u *url.URL) string
+}
+
+var knownSites = map[string]struct {
+	mod  Module
+	site Site
+}{
+	"web3.career":             {mod: srcLinks, site: Site{SkipJSONLD: true, LinkPattern: `^/[a-z0-9][a-z0-9-]*/\d{5,}$`, Content: []Attr{{Attr: "class", Substr: "text-dark-grey-text"}}}},
+	"web3.careers":            {mod: srcLinks, site: Site{SkipJSONLD: true, LinkPattern: `^/[a-z0-9][a-z0-9-]*/\d{5,}$`, Content: []Attr{{Attr: "class", Substr: "text-dark-grey-text"}}}},
+	"remote3.co":              {mod: srcFeed, site: Site{ListAddress: "https://remote3.co/api/rss", Content: []Attr{{Attr: "class", Substr: "RemoteJobs_jobDescription"}}}},
+	"weworkremotely.com":      {mod: srcFeed, site: Site{ListAddress: "https://weworkremotely.com/remote-jobs.rss"}},
+	"cryptocurrencyjobs.co":   {mod: srcFeed, site: Site{ListAddress: "https://cryptocurrencyjobs.co/index.xml"}},
+	"jobs.framework.ventures": {mod: srcGetro, site: Site{ListAddress: "https://jobs.framework.ventures/jobs"}},
+	"a16zfrontier.com":        {mod: srcA16Z, site: Site{ScriptVar: "portfolioJobs"}},
+}
+
+var apiModules = []Module{srcGreenhouse, srcLever, srcAshby, srcHN}
+
+func canonHost(u *url.URL) string {
+	return strings.TrimPrefix(strings.ToLower(u.Host), "www.")
+}
+
+func For(u *url.URL) (Module, Site) {
+	s := Site{Address: u.String()}
+	for _, m := range apiModules {
+		if mm, ok := m.(Matcher); ok && mm.Match(u) {
+			return m, s
+		}
+	}
+	if entry, ok := knownSites[canonHost(u)]; ok {
+		site := entry.site
+		site.Address = s.Address
+		return entry.mod, site
+	}
+	return srcGeneric, s
+}
+
+func GroupKey(u *url.URL) string {
+	mod, _ := For(u)
+	if g, ok := mod.(Grouper); ok {
+		return g.Group(u)
+	}
+	return canonHost(u)
+}
+
 func fetchJSON(ctx context.Context, f fetch.Fetcher, apiURL string, dst any) error {
 	resp, err := f.Get(ctx, apiURL, fetch.Opt{})
 	if err != nil {
@@ -23,70 +90,6 @@ func fetchJSON(ctx context.Context, f fetch.Fetcher, apiURL string, dst any) err
 		return ErrNothingRecognised
 	}
 	return nil
-}
-
-type Attr struct{ Attr, Substr string }
-
-type SiteConfig struct {
-	Name        string
-	URL         string
-	Content     []Attr
-	LinkPattern string
-	ListURL     string
-	ScriptVar   string
-	SkipJSONLD  bool
-}
-
-func mergeConfig(s SiteConfig) SiteConfig {
-	u, _ := url.Parse(s.URL)
-	host := strings.TrimPrefix(strings.ToLower(u.Host), "www.")
-	switch host {
-	case "web3.career", "web3.careers":
-		return SiteConfig{Name: s.Name, URL: s.URL, SkipJSONLD: true, LinkPattern: `^/[a-z0-9][a-z0-9-]*/\d{5,}$`, Content: []Attr{{Attr: "class", Substr: "text-dark-grey-text"}}}
-	case "remote3.co":
-		return SiteConfig{Name: s.Name, URL: s.URL, ListURL: "https://remote3.co/api/rss", Content: []Attr{{Attr: "class", Substr: "RemoteJobs_jobDescription"}}}
-	case "weworkremotely.com":
-		return SiteConfig{Name: s.Name, URL: s.URL, ListURL: "https://weworkremotely.com/remote-jobs.rss"}
-	case "cryptocurrencyjobs.co":
-		return SiteConfig{Name: s.Name, URL: s.URL, ListURL: "https://cryptocurrencyjobs.co/index.xml"}
-	case "jobs.framework.ventures":
-		return SiteConfig{Name: s.Name, URL: s.URL, ListURL: "https://jobs.framework.ventures/jobs"}
-	case "a16zfrontier.com":
-		return SiteConfig{Name: s.Name, URL: s.URL, ScriptVar: "portfolioJobs"}
-	}
-	return s
-}
-
-type Source interface {
-	Match(u *url.URL) bool
-	List(ctx context.Context, f fetch.Fetcher, s SiteConfig) ([]listing.Posting, error)
-}
-
-var (
-	srcGreenhouse Source = &greenhouseSource{}
-	srcLever      Source = &leverSource{}
-	srcAshby      Source = &ashbySource{}
-	srcGeneric    Source = &genericSource{}
-)
-
-func Host(u *url.URL) string {
-	h := strings.ToLower(u.Host)
-	if strings.HasSuffix(h, ".greenhouse.io") {
-		return "boards-api." + h[strings.Index(h, ".")+1:]
-	}
-	if strings.HasPrefix(h, "jobs.") {
-		return "api." + h[5:]
-	}
-	return h
-}
-
-func For(u *url.URL) Source {
-	for _, s := range []Source{srcGreenhouse, srcLever, srcAshby, srcHN} {
-		if s.Match(u) {
-			return s
-		}
-	}
-	return srcGeneric
 }
 
 func trim(s string) string { return strings.TrimSpace(s) }
@@ -119,8 +122,8 @@ func parseDate(s string) (time.Time, bool) {
 	if s = trim(s); s == "" {
 		return time.Time{}, false
 	}
-	for _, f := range dateFormats {
-		if t, err := time.Parse(f, s); err == nil {
+	for _, fmt := range dateFormats {
+		if t, err := time.Parse(fmt, s); err == nil {
 			return t, true
 		}
 	}

@@ -10,10 +10,11 @@ import (
 	"github.com/sifty-works/sifty-server/internal/listing"
 )
 
-var srcHN Source = &hnSource{}
+var srcHN Module = &hnSource{}
 
 type hnSource struct{}
 
+func (s *hnSource) Name() string { return "hn" }
 func (s *hnSource) Match(u *url.URL) bool {
 	return strings.ToLower(u.Host) == "news.ycombinator.com"
 }
@@ -27,7 +28,7 @@ type hnComment struct {
 	Children  []*hnComment
 }
 
-func (s *hnSource) List(ctx context.Context, f fetch.Fetcher, cfg SiteConfig) ([]listing.Posting, error) {
+func (s *hnSource) List(ctx context.Context, f fetch.Fetcher, cfg Site) ([]listing.Posting, error) {
 	var sr hnSearchResult
 	if err := fetchJSON(ctx, f, "https://hn.algolia.com/api/v1/search_by_date?tags=story,author_whoishiring&hitsPerPage=5", &sr); err != nil {
 		return nil, err
@@ -49,7 +50,7 @@ func (s *hnSource) List(ctx context.Context, f fetch.Fetcher, cfg SiteConfig) ([
 	var out []listing.Posting
 	for _, c := range item.Children {
 		if p, ok := hnCommentToPosting(c); ok {
-			if p, ok = finalise(p, cfg.URL); ok {
+			if p, ok = finalise(p, cfg.Address); ok {
 				out = append(out, p)
 			}
 		}

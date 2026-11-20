@@ -14,6 +14,25 @@ import (
 	"github.com/sifty-works/sifty-server/internal/source"
 )
 
+func TestFor_module_choice(t *testing.T) {
+	for _, tc := range []struct {
+		addr string
+		want string
+	}{
+		{"https://boards.greenhouse.io/acme", "greenhouse"},
+		{"https://web3.career/", "links"},
+		{"https://unknown.example.com/jobs", "generic"},
+	} {
+		t.Run(tc.addr, func(t *testing.T) {
+			u := mustParseURL(t, tc.addr)
+			mod, _ := source.For(u)
+			if mod.Name() != tc.want {
+				t.Errorf("For(%q).Name() = %q, want %q", tc.addr, mod.Name(), tc.want)
+			}
+		})
+	}
+}
+
 func TestFor_routing(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -39,8 +58,8 @@ func TestFor_routing(t *testing.T) {
 			m.Set(tc.apiURL, fetchtest.MapEntry{
 				Response: fetch.Response{URL: tc.apiURL, Status: 200, Body: []byte(tc.body)},
 			})
-			cfg := source.SiteConfig{URL: tc.addr}
-			source.For(mustParseURL(t, tc.addr)).List(context.Background(), m, cfg)
+			mod, site := source.For(mustParseURL(t, tc.addr))
+			mod.List(context.Background(), m, site)
 			reqs := m.Requests()
 			if len(reqs) != 1 || reqs[0] != tc.apiURL {
 				t.Errorf("requested %v, want [%s]", reqs, tc.apiURL)
@@ -67,8 +86,8 @@ func TestList_unrecognised_format(t *testing.T) {
 			m.Set(tc.apiURL, fetchtest.MapEntry{
 				Response: fetch.Response{URL: tc.apiURL, Status: 200, Body: []byte(tc.body)},
 			})
-			cfg := source.SiteConfig{URL: tc.addr}
-			_, err := source.For(mustParseURL(t, tc.addr)).List(context.Background(), m, cfg)
+			mod, site := source.For(mustParseURL(t, tc.addr))
+			_, err := mod.List(context.Background(), m, site)
 			if err != source.ErrNothingRecognised {
 				t.Errorf("error = %v, want ErrNothingRecognised", err)
 			}
@@ -79,8 +98,8 @@ func TestList_unrecognised_format(t *testing.T) {
 func TestList_fetcher_error_returned(t *testing.T) {
 	m := fetchtest.NewMap()
 	m.Set("http://blocked.example.com/feed", fetchtest.MapEntry{Err: fetch.ErrBlocked})
-	cfg := source.SiteConfig{URL: "http://blocked.example.com/feed"}
-	_, err := source.For(mustParseURL(t, cfg.URL)).List(context.Background(), m, cfg)
+	mod, site := source.For(mustParseURL(t, "http://blocked.example.com/feed"))
+	_, err := mod.List(context.Background(), m, site)
 	if err != fetch.ErrBlocked {
 		t.Errorf("error = %v, want ErrBlocked", err)
 	}
@@ -93,8 +112,9 @@ func TestFeed_RSS_maps_all_fields(t *testing.T) {
 	m.Set(feedURL, fetchtest.MapEntry{
 		Response: fetch.Response{URL: feedURL, Status: 200, ContentType: "application/rss+xml", Body: body},
 	})
-	cfg := source.SiteConfig{Name: "Acme Jobs", URL: feedURL}
-	postings, err := source.For(mustParseURL(t, feedURL)).List(context.Background(), m, cfg)
+	mod, site := source.For(mustParseURL(t, feedURL))
+	site.Name = "Acme Jobs"
+	postings, err := mod.List(context.Background(), m, site)
 	if err != nil {
 		t.Fatalf("List error: %v", err)
 	}
@@ -145,8 +165,8 @@ func TestFeed_Atom_maps_all_fields(t *testing.T) {
 	m.Set(feedURL, fetchtest.MapEntry{
 		Response: fetch.Response{URL: feedURL, Status: 200, Body: body},
 	})
-	cfg := source.SiteConfig{URL: feedURL}
-	postings, err := source.For(mustParseURL(t, feedURL)).List(context.Background(), m, cfg)
+	mod, site := source.For(mustParseURL(t, feedURL))
+	postings, err := mod.List(context.Background(), m, site)
 	if err != nil {
 		t.Fatalf("List error: %v", err)
 	}
@@ -215,7 +235,8 @@ func TestFeed_title_split(t *testing.T) {
 			addr := "http://x.example.com/feed"
 			m := fetchtest.NewMap()
 			m.Set(addr, fetchtest.MapEntry{Response: fetch.Response{URL: addr, Status: 200, ContentType: "application/rss+xml", Body: []byte(tc.xml)}})
-			ps, err := source.For(mustParseURL(t, addr)).List(context.Background(), m, source.SiteConfig{URL: addr})
+			mod, site := source.For(mustParseURL(t, addr))
+			ps, err := mod.List(context.Background(), m, site)
 			if err != nil {
 				t.Fatalf("List: %v", err)
 			}
@@ -239,8 +260,9 @@ func TestGreenhouse_maps_all_fields(t *testing.T) {
 	m.Set(apiURL, fetchtest.MapEntry{
 		Response: fetch.Response{URL: apiURL, Status: 200, Body: body},
 	})
-	cfg := source.SiteConfig{Name: "Brightway Software", URL: "https://boards.greenhouse.io/brightway"}
-	postings, err := source.For(mustParseURL(t, cfg.URL)).List(context.Background(), m, cfg)
+	mod, site := source.For(mustParseURL(t, "https://boards.greenhouse.io/brightway"))
+	site.Name = "Brightway Software"
+	postings, err := mod.List(context.Background(), m, site)
 	if err != nil {
 		t.Fatalf("List error: %v", err)
 	}
@@ -308,8 +330,9 @@ func TestLever_maps_all_fields(t *testing.T) {
 	m.Set(apiURL, fetchtest.MapEntry{
 		Response: fetch.Response{URL: apiURL, Status: 200, Body: body},
 	})
-	cfg := source.SiteConfig{Name: "TechStartup", URL: "https://jobs.lever.co/techstartup"}
-	postings, err := source.For(mustParseURL(t, cfg.URL)).List(context.Background(), m, cfg)
+	mod, site := source.For(mustParseURL(t, "https://jobs.lever.co/techstartup"))
+	site.Name = "TechStartup"
+	postings, err := mod.List(context.Background(), m, site)
 	if err != nil {
 		t.Fatalf("List error: %v", err)
 	}
@@ -370,8 +393,8 @@ func TestLever_company_falls_back_to_site_slug(t *testing.T) {
 	m.Set(apiURL, fetchtest.MapEntry{
 		Response: fetch.Response{URL: apiURL, Status: 200, Body: mustReadFile(t, "testdata/lever.json")},
 	})
-	cfg := source.SiteConfig{Name: "", URL: "https://jobs.lever.co/techstartup"}
-	postings, err := source.For(mustParseURL(t, cfg.URL)).List(context.Background(), m, cfg)
+	mod, site := source.For(mustParseURL(t, "https://jobs.lever.co/techstartup"))
+	postings, err := mod.List(context.Background(), m, site)
 	if err != nil {
 		t.Fatalf("List error: %v", err)
 	}
@@ -393,8 +416,9 @@ func TestAshby_maps_all_fields(t *testing.T) {
 	m.Set(apiURL, fetchtest.MapEntry{
 		Response: fetch.Response{URL: apiURL, Status: 200, Body: body},
 	})
-	cfg := source.SiteConfig{Name: "NexGen", URL: "https://jobs.ashbyhq.com/nexgen"}
-	postings, err := source.For(mustParseURL(t, cfg.URL)).List(context.Background(), m, cfg)
+	mod, site := source.For(mustParseURL(t, "https://jobs.ashbyhq.com/nexgen"))
+	site.Name = "NexGen"
+	postings, err := mod.List(context.Background(), m, site)
 	if err != nil {
 		t.Fatalf("List error: %v", err)
 	}
@@ -447,8 +471,8 @@ func TestAshby_company_falls_back_to_board_name(t *testing.T) {
 	m.Set(apiURL, fetchtest.MapEntry{
 		Response: fetch.Response{URL: apiURL, Status: 200, Body: mustReadFile(t, "testdata/ashby.json")},
 	})
-	cfg := source.SiteConfig{Name: "", URL: "https://jobs.ashbyhq.com/nexgen"}
-	postings, err := source.For(mustParseURL(t, cfg.URL)).List(context.Background(), m, cfg)
+	mod, site := source.For(mustParseURL(t, "https://jobs.ashbyhq.com/nexgen"))
+	postings, err := mod.List(context.Background(), m, site)
 	if err != nil {
 		t.Fatalf("List error: %v", err)
 	}
@@ -476,8 +500,8 @@ func TestHN_list(t *testing.T) {
 	m := fetchtest.NewMap()
 	m.Set(searchURL, fetchtest.MapEntry{Response: fetch.Response{URL: searchURL, Status: 200, Body: []byte(searchBody)}})
 	m.Set(storyURL, fetchtest.MapEntry{Response: fetch.Response{URL: storyURL, Status: 200, Body: []byte(storyBody)}})
-	cfg := source.SiteConfig{URL: "https://news.ycombinator.com/"}
-	ps, err := source.For(mustParseURL(t, cfg.URL)).List(context.Background(), m, cfg)
+	mod, site := source.For(mustParseURL(t, "https://news.ycombinator.com/"))
+	ps, err := mod.List(context.Background(), m, site)
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -532,7 +556,7 @@ func TestDetail_company_recovery(t *testing.T) {
 			m := fetchtest.NewMap()
 			m.Set(pageURL, fetchtest.MapEntry{Response: fetch.Response{URL: pageURL, Status: 200, Body: []byte(tc.body)}})
 			p := listing.Posting{URL: pageURL, Title: tc.title}
-			result, err := source.Detail(context.Background(), m, p, source.SiteConfig{URL: pageURL})
+			result, err := source.Detail(context.Background(), m, p, source.Site{Address: pageURL})
 			if err != nil {
 				t.Fatalf("Detail: %v", err)
 			}

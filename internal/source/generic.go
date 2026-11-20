@@ -3,141 +3,76 @@ package source
 import (
 	"bytes"
 	"context"
-	"encoding/json"
-	"net/url"
-	"regexp"
-	"strings"
-	"time"
-
-	xhtml "golang.org/x/net/html"
-
 	"github.com/sifty-works/sifty-server/internal/fetch"
 	"github.com/sifty-works/sifty-server/internal/listing"
+	"strings"
 )
 
-type genericSource struct{}
+type pageModule struct {
+	name  string
+	parse func([]byte, string, Site) []listing.Posting
+}
 
-func (s *genericSource) Match(_ *url.URL) bool { return true }
-
-func (s *genericSource) List(ctx context.Context, f fetch.Fetcher, cfg SiteConfig) ([]listing.Posting, error) {
-	cfg = mergeConfig(cfg)
-	fetchURL := cfg.URL
-	if cfg.ListURL != "" {
-		fetchURL = cfg.ListURL
-	}
-	resp, err := f.Get(ctx, fetchURL, fetch.Opt{})
+func (m *pageModule) Name() string { return m.name }
+func (m *pageModule) List(ctx context.Context, f fetch.Fetcher, s Site) ([]listing.Posting, error) {
+	body, _, base, err := fetchPage(ctx, f, s)
 	if err != nil {
 		return nil, err
 	}
-	base := resp.URL
-	if base == "" {
-		base = fetchURL
-	}
-	if isXMLContent(resp.ContentType, resp.Body) {
-		if ps, err := parseFeedXML(resp.Body, base); err != ErrNothingRecognised {
-			return ps, err
-		}
-	}
-	if cfg.ScriptVar != "" {
-		if ps := a16zPostings(resp.Body, base, cfg.ScriptVar); len(ps) > 0 {
-			return ps, nil
-		}
-	}
-	if !cfg.SkipJSONLD {
-		if ps := jsonldPostings(resp.Body, base, false); len(ps) > 0 {
-			return ps, nil
-		}
-	}
-	if ps := getroPostings(resp.Body, base); len(ps) > 0 {
-		return ps, nil
-	}
-	if ps := linkPostings(resp.Body, base, cfg.LinkPattern); len(ps) > 0 {
+	if ps := m.parse(body, base, s); len(ps) > 0 {
 		return ps, nil
 	}
 	return nil, ErrNothingRecognised
 }
 
-func Detail(ctx context.Context, f fetch.Fetcher, p listing.Posting, s SiteConfig) (listing.Posting, error) {
-	s = mergeConfig(s)
-	resp, err := f.Get(ctx, p.URL, fetch.Opt{})
+func fetchPage(ctx context.Context, f fetch.Fetcher, s Site) (body []byte, ct, base string, err error) {
+	u := s.ListAddress
+	if u == "" {
+		u = s.Address
+	}
+	r, err := f.Get(ctx, u, fetch.Opt{})
 	if err != nil {
-		return p, err
+		return nil, "", "", err
 	}
-	base := resp.URL
+	base = r.URL
 	if base == "" {
-		base = p.URL
+		base = u
 	}
-	useBody := s.SkipJSONLD
-	tryPageTitle := false
-	if cs := jsonldPostings(resp.Body, base, true); len(cs) > 0 {
-		if m, ok, ambig := matchJSONLD(cs, p); ok {
-			if s.SkipJSONLD {
-				m.Text = ""
-			}
-			p = mergeDetail(p, m)
-		} else {
-			tryPageTitle = !ambig
-		}
-	} else {
-		useBody = true
-		tryPageTitle = true
-	}
-	if useBody {
-		if raw := extractBodyText(resp.Body, s.Content); raw != "" {
-			p.Text = raw
-			p.TextState = listing.TextFull
-		}
-	}
-	if tryPageTitle && p.Company == "" {
-		if co := companyFromPageTitle(resp.Body); co != "" {
-			p.Company = co
-		}
-	}
-	if p.ApplyURL == "" {
-		doc, _ := xhtml.Parse(bytes.NewReader(resp.Body))
-		htmlWalk(doc, func(n *xhtml.Node) bool {
-			if p.ApplyURL != "" || n.Type != xhtml.ElementNode || n.Data != "a" {
-				return p.ApplyURL == ""
-			}
-			for _, a := range n.Attr {
-				if a.Key == "href" {
-					if u, ok := listing.ConcreteATS(resolveURL(a.Val, base)); ok {
-						p.ApplyURL = u
-						return false
-					}
-				}
-			}
-			return true
-		})
-	}
-	return p, nil
+	return r.Body, r.ContentType, base, nil
 }
 
-func mergeDetail(p, m listing.Posting) listing.Posting {
-	if m.Text != "" {
-		p.Text = m.Text
-		p.TextState = listing.TextFull
+var srcGeneric Module = &genericModule{}
+
+type genericModule struct{}
+
+func (g *genericModule) Name() string { return "generic" }
+func (g *genericModule) List(ctx context.Context, f fetch.Fetcher, s Site) ([]listing.Posting, error) {
+	body, ct, base, err := fetchPage(ctx, f, s)
+	if err != nil {
+		return nil, err
 	}
-	for _, kv := range [][2]*string{{&p.Company, &m.Company}, {&p.Location, &m.Location}} {
-		if *kv[0] == "" {
-			*kv[0] = *kv[1]
+	if isXMLContent(ct, body) {
+		if ps, err := parseFeedXML(body, base); err != ErrNothingRecognised {
+			return ps, err
 		}
 	}
-	if p.Published.IsZero() && !m.Published.IsZero() {
-		p.Published, p.PublishedBasis = m.Published, m.PublishedBasis
-	}
-	if p.Expires.IsZero() && !m.Expires.IsZero() {
-		p.Expires = m.Expires
-	}
-	for k, v := range m.Fields {
-		if p.Fields == nil {
-			p.Fields = make(map[string]string)
-		}
-		if p.Fields[k] == "" {
-			p.Fields[k] = v
+	if s.ScriptVar != "" {
+		if ps := parseA16Z(body, base, s); len(ps) > 0 {
+			return ps, nil
 		}
 	}
-	return p
+	if !s.SkipJSONLD {
+		if ps := parseJSONLD(body, base, false); len(ps) > 0 {
+			return ps, nil
+		}
+	}
+	if ps := parseGetro(body, base, s); len(ps) > 0 {
+		return ps, nil
+	}
+	if ps := parseLinks(body, base, s); len(ps) > 0 {
+		return ps, nil
+	}
+	return nil, ErrNothingRecognised
 }
 
 func isXMLContent(ct string, body []byte) bool {
@@ -145,167 +80,6 @@ func isXMLContent(ct string, body []byte) bool {
 	b := bytes.TrimSpace(bytes.TrimPrefix(body, []byte{0xEF, 0xBB, 0xBF}))
 	return strings.Contains(ct, "xml") || strings.Contains(ct, "rss") || strings.Contains(ct, "atom") ||
 		bytes.HasPrefix(b, []byte("<?xml")) || bytes.HasPrefix(b, []byte("<rss")) || bytes.HasPrefix(b, []byte("<feed"))
-}
-
-func jsonldPostings(body []byte, pageURL string, keepNoURL bool) []listing.Posting {
-	doc, _ := xhtml.Parse(bytes.NewReader(body))
-	var items []map[string]any
-	htmlWalk(doc, func(n *xhtml.Node) bool {
-		if n.Type == xhtml.ElementNode && n.Data == "script" {
-			for _, a := range n.Attr {
-				if strings.ToLower(a.Key) == "type" && strings.ToLower(a.Val) == "application/ld+json" {
-					var v any
-					if n.FirstChild != nil && json.Unmarshal([]byte(n.FirstChild.Data), &v) == nil {
-						collectJobPostings(v, &items)
-					}
-				}
-			}
-		}
-		return true
-	})
-	out := make([]listing.Posting, 0, len(items))
-	for _, item := range items {
-		if p, ok := jsonldToPosting(item, pageURL, len(items), keepNoURL); ok {
-			if p, ok = finalise(p, pageURL); ok {
-				out = append(out, p)
-			}
-		}
-	}
-	return out
-}
-
-func collectJobPostings(v any, out *[]map[string]any) {
-	switch t := v.(type) {
-	case []any:
-		for _, e := range t {
-			collectJobPostings(e, out)
-		}
-	case map[string]any:
-		for _, e := range ldFlat(t["@type"]) {
-			if s, _ := e.(string); s == "JobPosting" {
-				*out = append(*out, t)
-				return
-			}
-		}
-		for k, val := range t {
-			if k != "description" {
-				collectJobPostings(val, out)
-			}
-		}
-	}
-}
-
-func jsonldToPosting(o map[string]any, pageURL string, nItems int, keepNoURL bool) (listing.Posting, bool) {
-	title := ldStr(o, "title")
-	if title == "" {
-		return listing.Posting{}, false
-	}
-	var company string
-	switch h := o["hiringOrganization"].(type) {
-	case string:
-		company = h
-	case map[string]any:
-		company = ldStr(h, "name")
-	}
-	postURL := resolveURL(ldStr(o, "url"), pageURL)
-	if postURL == "" && nItems != 1 && !keepNoURL {
-		return listing.Posting{}, false
-	}
-	if postURL == "" {
-		postURL = pageURL
-	}
-	var loc []string
-	if strings.EqualFold(ldStr(o, "jobLocationType"), "TELECOMMUTE") {
-		loc = append(loc, "Remote")
-	}
-	for _, jl := range ldFlat(o["jobLocation"]) {
-		if m, ok := jl.(map[string]any); ok {
-			if addr, _ := m["address"].(map[string]any); addr != nil {
-				for _, k := range []string{"addressLocality", "addressRegion", "addressCountry"} {
-					if s := ldStr(addr, k); s != "" {
-						loc = append(loc, s)
-					}
-				}
-			}
-		}
-	}
-	seen := map[string]bool{}
-	uniq := loc[:0]
-	for _, s := range loc {
-		if !seen[s] {
-			seen[s] = true
-			uniq = append(uniq, s)
-		}
-	}
-	p := listing.Posting{URL: postURL, Title: trim(title), Company: trim(company), Location: strings.Join(uniq, ", ")}
-	if desc := ldStr(o, "description"); desc != "" {
-		p.Text = desc
-	}
-	if t, ok := parseDate(ldStr(o, "datePosted")); ok {
-		p.Published, p.PublishedBasis = t, "datePosted"
-	}
-	if t, ok := parseDate(ldStr(o, "validThrough")); ok {
-		p.Expires = t
-	}
-	p.Fields = setFields("employment_type", ldStr(o, "employmentType"), "salary", ldSalaryText(o["baseSalary"]))
-	return p, true
-}
-
-func matchJSONLD(cs []listing.Posting, p listing.Posting) (listing.Posting, bool, bool) {
-	if pc, _ := listing.Canonical(p.URL); pc != "" {
-		var ms []listing.Posting
-		for _, c := range cs {
-			if cc, _ := listing.Canonical(c.URL); cc == pc {
-				ms = append(ms, c)
-			}
-		}
-		if len(ms) == 1 {
-			return ms[0], true, false
-		}
-	}
-	pt, pco := strings.ToLower(trim(p.Title)), strings.ToLower(trim(p.Company))
-	var ms []listing.Posting
-	for _, c := range cs {
-		ct, cc := strings.ToLower(trim(c.Title)), strings.ToLower(trim(c.Company))
-		if ct == pt && (pco == "" || pco == "unknown" || cc == pco) {
-			ms = append(ms, c)
-		}
-	}
-	if len(ms) == 1 {
-		return ms[0], true, false
-	}
-	return listing.Posting{}, false, len(ms) > 1
-}
-
-func ldStr(m map[string]any, k string) string { s, _ := m[k].(string); return s }
-func ldFlat(v any) []any {
-	if a, ok := v.([]any); ok {
-		return a
-	}
-	if v != nil {
-		return []any{v}
-	}
-	return nil
-}
-func ldSalaryText(v any) string {
-	b, _ := json.Marshal(v)
-	s := strings.Trim(string(b), `"`)
-	if s != "" && s != "null" {
-		return s
-	}
-	return ""
-}
-
-type ndJob struct {
-	Title     string   `json:"title"`
-	Slug      string   `json:"slug"`
-	ApplyURL  string   `json:"url"`
-	Locations []string `json:"locations"`
-	CreatedAt float64  `json:"createdAt"`
-	Org       struct {
-		Name string `json:"name"`
-		Slug string `json:"slug"`
-	} `json:"organization"`
 }
 
 func findScript(body []byte, marker string) string {
@@ -325,285 +99,4 @@ func findScript(body []byte, marker string) string {
 		return ""
 	}
 	return strings.TrimSpace(s[j+1 : k])
-}
-
-func getroPostings(body []byte, base string) []listing.Posting {
-	raw := findScript(body, `id="__NEXT_DATA__"`)
-	var nd struct {
-		Props struct {
-			PageProps struct {
-				InitialState struct {
-					Jobs struct {
-						Found []ndJob `json:"found"`
-					} `json:"jobs"`
-				} `json:"initialState"`
-			} `json:"pageProps"`
-		} `json:"props"`
-	}
-	if raw == "" || json.Unmarshal([]byte(raw), &nd) != nil {
-		return nil
-	}
-	var out []listing.Posting
-	for _, f := range nd.Props.PageProps.InitialState.Jobs.Found {
-		if f.Title == "" || f.Org.Name == "" || f.Slug == "" {
-			continue
-		}
-		p := listing.Posting{
-			URL:      resolveURL("/companies/"+f.Org.Slug+"/jobs/"+f.Slug, base),
-			Title:    f.Title,
-			Company:  f.Org.Name,
-			Location: strings.Join(f.Locations, ", "),
-		}
-		p.ApplyURL = resolveURL(f.ApplyURL, base)
-		if f.CreatedAt > 0 {
-			sec := int64(f.CreatedAt)
-			if sec > 1e10 {
-				sec /= 1000
-			}
-			p.Published, p.PublishedBasis = time.Unix(sec, 0).UTC(), "created_at"
-		}
-		if p, ok := finalise(p, base); ok {
-			out = append(out, p)
-		}
-	}
-	return out
-}
-
-var vacancyPathRE = regexp.MustCompile(`(?i)/(?:job|jobs|career|position)/[^/?]+`)
-
-func linkPostings(body []byte, base, pattern string) []listing.Posting {
-	var linkRE *regexp.Regexp
-	if pattern != "" {
-		linkRE, _ = regexp.Compile(pattern)
-	}
-	doc, _ := xhtml.Parse(bytes.NewReader(body))
-	seen := map[string]bool{}
-	keyToIdx := map[string]int{}
-	var out []listing.Posting
-	htmlWalk(doc, func(n *xhtml.Node) bool {
-		if n.Type != xhtml.ElementNode || n.Data != "a" {
-			return true
-		}
-		var href string
-		for _, a := range n.Attr {
-			if a.Key == "href" {
-				href = a.Val
-				break
-			}
-		}
-		abs := resolveURL(href, base)
-		if abs == "" {
-			return true
-		}
-		u, err := url.Parse(abs)
-		if err != nil {
-			return true
-		}
-		u.RawQuery, u.Fragment = "", ""
-		key := u.String()
-		isVacancy := linkRE != nil && linkRE.MatchString(u.Path)
-		if !isVacancy {
-			_, isVacancy = listing.ConcreteATS(u.String())
-		}
-		if !isVacancy {
-			isVacancy = vacancyPathRE.MatchString(u.Path)
-		}
-		if !isVacancy {
-			return true
-		}
-		switch strings.ToLower(u.Path[strings.LastIndex(u.Path, "/")+1:]) {
-		case "signup", "login", "search", "new", "rss", "feed":
-			return true
-		}
-		if seen[key] {
-			if idx, ok := keyToIdx[key]; ok && out[idx].Company == "" {
-				if co := firstText(n, func(c *xhtml.Node) bool {
-					return c.Type == xhtml.ElementNode && c.Data == "h3"
-				}); co != "" {
-					out[idx].Company = co
-				}
-			}
-			return true
-		}
-		seen[key] = true
-		var title, company string
-		for _, a := range n.Attr {
-			if a.Key == "aria-label" {
-				s := strings.Join(strings.Fields(a.Val), " ")
-				if i := strings.Index(s, " – "); i >= 0 {
-					company, title = s[:i], s[i+len(" – "):]
-				} else {
-					title = s
-				}
-				break
-			}
-		}
-		if title == "" {
-			title = firstText(n, func(c *xhtml.Node) bool {
-				return c.Type == xhtml.ElementNode && (c.Data == "h2" || c.Data == "h3" || c.Data == "h4")
-			})
-		}
-		if title == "" {
-			title = firstText(n, func(c *xhtml.Node) bool {
-				return c.Type == xhtml.TextNode && strings.TrimSpace(c.Data) != ""
-			})
-		}
-		lt := strings.ToLower(title)
-		if lt == "" || strings.HasPrefix(lt, "apply") || strings.HasPrefix(lt, "view") ||
-			strings.HasPrefix(lt, "see all") || strings.HasPrefix(lt, "learn") ||
-			strings.HasPrefix(lt, "next") || strings.HasPrefix(lt, "previous") {
-			return true
-		}
-		keyToIdx[key] = len(out)
-		out = append(out, listing.Posting{URL: key, Title: title, Company: company, TextState: listing.TextNotFetched})
-		return true
-	})
-	return out
-}
-
-func extractBodyText(body []byte, attrs []Attr) string {
-	doc, _ := xhtml.Parse(bytes.NewReader(body))
-	inner := func(n *xhtml.Node) string {
-		var b strings.Builder
-		for c := n.FirstChild; c != nil; c = c.NextSibling {
-			_ = xhtml.Render(&b, c)
-		}
-		return b.String()
-	}
-	if len(attrs) > 0 {
-		var blocks []string
-		seen := map[*xhtml.Node]bool{}
-		for _, a := range attrs {
-			attr := strings.ToLower(a.Attr)
-			htmlWalk(doc, func(n *xhtml.Node) bool {
-				if n.Type != xhtml.ElementNode || seen[n] {
-					return true
-				}
-				for _, na := range n.Attr {
-					if strings.ToLower(na.Key) == attr && strings.Contains(na.Val, a.Substr) {
-						seen[n] = true
-						blocks = append(blocks, inner(n))
-					}
-				}
-				return true
-			})
-		}
-		if len(blocks) > 0 {
-			return strings.Join(blocks, "\n")
-		}
-	}
-	for _, tag := range []string{"main", "article", "body"} {
-		var found *xhtml.Node
-		htmlWalk(doc, func(n *xhtml.Node) bool {
-			if found == nil && n.Type == xhtml.ElementNode && n.Data == tag {
-				found = n
-				return false
-			}
-			return found == nil
-		})
-		if found != nil {
-			return inner(found)
-		}
-	}
-	return ""
-}
-
-type a16zCompany struct {
-	Jobs []struct {
-		Title, URL, CompanyName, CreatedAt string
-		Locations                          []string
-		Remote                             bool
-	}
-}
-
-func a16zPostings(body []byte, base, varName string) []listing.Posting {
-	content := findScript(body, varName)
-	_, rest, ok := strings.Cut(content, varName)
-	at := strings.IndexByte(rest, '[')
-	var companies []a16zCompany
-	if !ok || at < 0 || json.NewDecoder(strings.NewReader(rest[at:])).Decode(&companies) != nil {
-		return nil
-	}
-	var out []listing.Posting
-	for _, c := range companies {
-		for _, j := range c.Jobs {
-			loc := strings.Join(j.Locations, ", ")
-			if j.Remote {
-				loc = strings.TrimLeft(loc+", Remote", ", ")
-			}
-			p := listing.Posting{URL: resolveURL(j.URL, base), Title: j.Title, Company: j.CompanyName, Location: loc}
-			if t, ok := parseDate(j.CreatedAt); ok {
-				p.Published, p.PublishedBasis = t, "createdAt"
-			}
-			if p, ok := finalise(p, base); ok {
-				out = append(out, p)
-			}
-		}
-	}
-	return out
-}
-
-func htmlWalk(n *xhtml.Node, fn func(*xhtml.Node) bool) {
-	if n != nil && fn(n) {
-		for c := n.FirstChild; c != nil; c = c.NextSibling {
-			htmlWalk(c, fn)
-		}
-	}
-}
-
-func companyFromPageTitle(body []byte) string {
-	doc, _ := xhtml.Parse(bytes.NewReader(body))
-	var text string
-	htmlWalk(doc, func(n *xhtml.Node) bool {
-		if text != "" {
-			return false
-		}
-		if n.Type == xhtml.ElementNode && n.Data == "title" && n.FirstChild != nil {
-			var sb strings.Builder
-			htmlWalk(n, func(c *xhtml.Node) bool {
-				if c.Type == xhtml.TextNode {
-					sb.WriteString(c.Data)
-				}
-				return true
-			})
-			text = strings.Join(strings.Fields(sb.String()), " ")
-			return false
-		}
-		return true
-	})
-	if text == "" {
-		return ""
-	}
-	for _, sep := range []string{" | ", " - "} {
-		if i := strings.Index(text, sep); i >= 0 {
-			text = text[:i]
-		}
-	}
-	text = strings.TrimSpace(text)
-	if i := strings.LastIndex(text, " at "); i >= 0 {
-		return strings.TrimSpace(text[i+4:])
-	}
-	return ""
-}
-
-func firstText(n *xhtml.Node, pred func(*xhtml.Node) bool) string {
-	var out string
-	htmlWalk(n, func(c *xhtml.Node) bool {
-		if out != "" {
-			return false
-		}
-		if !pred(c) {
-			return true
-		}
-		var sb strings.Builder
-		htmlWalk(c, func(t *xhtml.Node) bool {
-			if t.Type == xhtml.TextNode {
-				sb.WriteString(t.Data)
-			}
-			return true
-		})
-		out = strings.Join(strings.Fields(sb.String()), " ")
-		return false
-	})
-	return out
 }

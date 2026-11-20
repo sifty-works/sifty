@@ -11,24 +11,28 @@ import (
 	"github.com/sifty-works/sifty-server/internal/listing"
 )
 
+var srcGreenhouse Module = &greenhouseSource{}
+
 type greenhouseSource struct{}
 
+func (s *greenhouseSource) Name() string { return "greenhouse" }
 func (s *greenhouseSource) Match(u *url.URL) bool {
-	switch strings.ToLower(u.Host) {
-	case "boards.greenhouse.io", "job-boards.greenhouse.io",
-		"boards.eu.greenhouse.io", "job-boards.eu.greenhouse.io":
-		return isRoot(u)
-	}
-	return false
+	h := strings.ToLower(u.Host)
+	return (h == "boards.greenhouse.io" || h == "job-boards.greenhouse.io" ||
+		h == "boards.eu.greenhouse.io" || h == "job-boards.eu.greenhouse.io") && isRoot(u)
 }
 
-func (s *greenhouseSource) List(ctx context.Context, f fetch.Fetcher, cfg SiteConfig) ([]listing.Posting, error) {
-	boardURL, err := url.Parse(cfg.URL)
+func (s *greenhouseSource) Group(u *url.URL) string {
+	return "boards-api." + strings.SplitN(strings.ToLower(u.Host), ".", 2)[1]
+}
+
+func (s *greenhouseSource) List(ctx context.Context, f fetch.Fetcher, cfg Site) ([]listing.Posting, error) {
+	boardURL, err := url.Parse(cfg.Address)
 	if err != nil {
 		return nil, ErrNothingRecognised
 	}
 	board := boardSlug(boardURL)
-	apiURL := "https://" + Host(boardURL) + "/v1/boards/" + board + "/jobs?content=true"
+	apiURL := "https://" + s.Group(boardURL) + "/v1/boards/" + board + "/jobs?content=true"
 	var body ghResponse
 	if err := fetchJSON(ctx, f, apiURL, &body); err != nil {
 		return nil, err

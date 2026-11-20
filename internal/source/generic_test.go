@@ -19,7 +19,8 @@ func listGeneric(t *testing.T, m *fetchtest.Map, addr string) ([]listing.Posting
 	if err != nil {
 		t.Fatalf("url.Parse: %v", err)
 	}
-	return source.For(u).List(context.Background(), m, source.SiteConfig{URL: addr})
+	mod, site := source.For(u)
+	return mod.List(context.Background(), m, site)
 }
 
 func TestList_jsonld_single_maps_all_fields(t *testing.T) {
@@ -190,7 +191,8 @@ func TestList_links_pattern_web3career_config(t *testing.T) {
 	m := fetchtest.NewMap()
 	m.Set(addr, fetchtest.MapEntry{Response: fetch.Response{URL: addr, Status: 200, Body: body}})
 	u := mustParseURL(t, addr)
-	ps, err := source.For(u).List(context.Background(), m, source.SiteConfig{URL: addr})
+	mod, site := source.For(u)
+	ps, err := mod.List(context.Background(), m, site)
 	if err != nil || len(ps) != 2 {
 		t.Fatalf("List err=%v len=%d, want 2", err, len(ps))
 	}
@@ -216,7 +218,8 @@ func TestList_a16z_portfolio_jobs(t *testing.T) {
 	m := fetchtest.NewMap()
 	m.Set(addr, fetchtest.MapEntry{Response: fetch.Response{URL: addr, Status: 200, Body: body}})
 	u := mustParseURL(t, addr)
-	ps, err := source.For(u).List(context.Background(), m, source.SiteConfig{URL: addr})
+	mod, site := source.For(u)
+	ps, err := mod.List(context.Background(), m, site)
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -253,18 +256,25 @@ func TestList_nothing_recognised(t *testing.T) {
 
 func TestList_site_config_uses_list_url(t *testing.T) {
 	feedBody := mustReadFile(t, "testdata/rss.xml")
-	for _, tc := range []struct{ site, feed string }{
-		{"https://remote3.co/", "https://remote3.co/api/rss"},
-		{"https://www.remote3.co/", "https://remote3.co/api/rss"},
-		{"https://weworkremotely.com/", "https://weworkremotely.com/remote-jobs.rss"},
-		{"https://cryptocurrencyjobs.co/", "https://cryptocurrencyjobs.co/index.xml"},
-		{"https://jobs.framework.ventures/", "https://jobs.framework.ventures/jobs"},
+	getroBody := mustReadFile(t, "testdata/getro.html")
+	for _, tc := range []struct {
+		site string
+		feed string
+		body []byte
+		ct   string
+	}{
+		{"https://remote3.co/", "https://remote3.co/api/rss", feedBody, "application/rss+xml"},
+		{"https://www.remote3.co/", "https://remote3.co/api/rss", feedBody, "application/rss+xml"},
+		{"https://weworkremotely.com/", "https://weworkremotely.com/remote-jobs.rss", feedBody, "application/rss+xml"},
+		{"https://cryptocurrencyjobs.co/", "https://cryptocurrencyjobs.co/index.xml", feedBody, "application/rss+xml"},
+		{"https://jobs.framework.ventures/", "https://jobs.framework.ventures/jobs", getroBody, "text/html"},
 	} {
 		t.Run(tc.site, func(t *testing.T) {
 			m := fetchtest.NewMap()
-			m.Set(tc.feed, fetchtest.MapEntry{Response: fetch.Response{URL: tc.feed, Status: 200, ContentType: "application/rss+xml", Body: feedBody}})
+			m.Set(tc.feed, fetchtest.MapEntry{Response: fetch.Response{URL: tc.feed, Status: 200, ContentType: tc.ct, Body: tc.body}})
 			u := mustParseURL(t, tc.site)
-			if _, err := source.For(u).List(context.Background(), m, source.SiteConfig{URL: tc.site}); err != nil {
+			mod, site := source.For(u)
+			if _, err := mod.List(context.Background(), m, site); err != nil {
 				t.Fatalf("List: %v", err)
 			}
 			if reqs := m.Requests(); len(reqs) != 1 || reqs[0] != tc.feed {
@@ -280,7 +290,8 @@ func TestList_web3career_skips_jsonld_uses_link_pattern(t *testing.T) {
 	m := fetchtest.NewMap()
 	m.Set(addr, fetchtest.MapEntry{Response: fetch.Response{URL: addr, Status: 200, Body: body}})
 	u := mustParseURL(t, addr)
-	ps, err := source.For(u).List(context.Background(), m, source.SiteConfig{URL: addr})
+	mod, site := source.For(u)
+	ps, err := mod.List(context.Background(), m, site)
 	if err != nil || len(ps) == 0 {
 		t.Fatalf("List err=%v len=%d", err, len(ps))
 	}
@@ -299,8 +310,9 @@ func TestList_skipJSONLD_falls_to_links(t *testing.T) {
 	m := fetchtest.NewMap()
 	m.Set(addr, fetchtest.MapEntry{Response: fetch.Response{URL: addr, Status: 200, Body: []byte(body)}})
 	u := mustParseURL(t, addr)
-	cfg := source.SiteConfig{URL: addr, SkipJSONLD: true}
-	ps, err := source.For(u).List(context.Background(), m, cfg)
+	mod, site := source.For(u)
+	site.SkipJSONLD = true
+	ps, err := mod.List(context.Background(), m, site)
 	if err != nil || len(ps) == 0 {
 		t.Fatalf("List err=%v len=%d, want links", err, len(ps))
 	}
@@ -326,7 +338,7 @@ func TestDetail_match_by_address(t *testing.T) {
 	m := fetchtest.NewMap()
 	m.Set(pageURL, fetchtest.MapEntry{Response: fetch.Response{URL: pageURL, Status: 200, Body: body}})
 	p := listing.Posting{URL: pageURL, Title: "Protocol Engineer", Company: "Layer Protocol"}
-	result, err := source.Detail(context.Background(), m, p, source.SiteConfig{URL: pageURL})
+	result, err := source.Detail(context.Background(), m, p, source.Site{Address: pageURL})
 	if err != nil {
 		t.Fatalf("Detail: %v", err)
 	}
@@ -351,7 +363,7 @@ func TestDetail_match_by_title_and_company(t *testing.T) {
 	m := fetchtest.NewMap()
 	m.Set(altURL, fetchtest.MapEntry{Response: fetch.Response{URL: pageURL, Status: 200, Body: body}})
 	p := listing.Posting{URL: altURL, Title: "Protocol Engineer", Company: "Layer Protocol"}
-	result, err := source.Detail(context.Background(), m, p, source.SiteConfig{URL: altURL})
+	result, err := source.Detail(context.Background(), m, p, source.Site{Address: altURL})
 	if err != nil {
 		t.Fatalf("Detail: %v", err)
 	}
@@ -371,7 +383,7 @@ func TestDetail_ambiguous_page_no_text(t *testing.T) {
 	m := fetchtest.NewMap()
 	m.Set(pageURL, fetchtest.MapEntry{Response: fetch.Response{URL: pageURL, Status: 200, Body: []byte(body)}})
 	p := listing.Posting{URL: pageURL, Title: "Staff Engineer", Company: "Acme"}
-	result, err := source.Detail(context.Background(), m, p, source.SiteConfig{URL: pageURL})
+	result, err := source.Detail(context.Background(), m, p, source.Site{Address: pageURL})
 	if err != nil {
 		t.Fatalf("Detail: %v", err)
 	}
@@ -386,7 +398,7 @@ func TestDetail_body_fallback_main_element(t *testing.T) {
 	m := fetchtest.NewMap()
 	m.Set(pageURL, fetchtest.MapEntry{Response: fetch.Response{URL: pageURL, Status: 200, Body: body}})
 	p := listing.Posting{URL: pageURL, Title: "Security Auditor", Company: "Startup"}
-	result, err := source.Detail(context.Background(), m, p, source.SiteConfig{URL: pageURL})
+	result, err := source.Detail(context.Background(), m, p, source.Site{Address: pageURL})
 	if err != nil {
 		t.Fatalf("Detail: %v", err)
 	}
@@ -403,8 +415,8 @@ func TestDetail_content_selector(t *testing.T) {
 	pageURL := "https://web3.career/solidity-dev/123456"
 	m := fetchtest.NewMap()
 	m.Set(pageURL, fetchtest.MapEntry{Response: fetch.Response{URL: pageURL, Status: 200, Body: body}})
-	cfg := source.SiteConfig{
-		URL:        pageURL,
+	cfg := source.Site{
+		Address:    pageURL,
 		SkipJSONLD: true,
 		Content:    []source.Attr{{Attr: "class", Substr: "text-dark-grey-text"}},
 	}
@@ -432,7 +444,7 @@ func TestDetail_ats_link_becomes_apply_url(t *testing.T) {
 	m := fetchtest.NewMap()
 	m.Set(pageURL, fetchtest.MapEntry{Response: fetch.Response{URL: pageURL, Status: 200, Body: []byte(body)}})
 	p := listing.Posting{URL: pageURL, Title: "Engineer", Company: "CoolCo"}
-	result, err := source.Detail(context.Background(), m, p, source.SiteConfig{URL: pageURL})
+	result, err := source.Detail(context.Background(), m, p, source.Site{Address: pageURL})
 	if err != nil {
 		t.Fatalf("Detail: %v", err)
 	}
@@ -448,7 +460,7 @@ func TestDetail_fetch_error_returned(t *testing.T) {
 	m := fetchtest.NewMap()
 	m.Set("https://blocked.example.com/job/1", fetchtest.MapEntry{Err: fetch.ErrBlocked})
 	p := listing.Posting{URL: "https://blocked.example.com/job/1", Title: "Engineer"}
-	_, err := source.Detail(context.Background(), m, p, source.SiteConfig{URL: "https://blocked.example.com/job/1"})
+	_, err := source.Detail(context.Background(), m, p, source.Site{Address: "https://blocked.example.com/job/1"})
 	if err != fetch.ErrBlocked {
 		t.Errorf("error = %v, want ErrBlocked", err)
 	}
@@ -460,7 +472,7 @@ func TestDetail_one_request(t *testing.T) {
 	m := fetchtest.NewMap()
 	m.Set(pageURL, fetchtest.MapEntry{Response: fetch.Response{URL: pageURL, Status: 200, Body: body}})
 	p := listing.Posting{URL: pageURL, Title: "Auditor"}
-	source.Detail(context.Background(), m, p, source.SiteConfig{URL: pageURL})
+	source.Detail(context.Background(), m, p, source.Site{Address: pageURL})
 	if reqs := m.Requests(); len(reqs) != 1 {
 		t.Errorf("requests = %v, want exactly 1", reqs)
 	}

@@ -12,23 +12,27 @@ import (
 	"github.com/sifty-works/sifty-server/internal/listing"
 )
 
+var srcLever Module = &leverSource{}
+
 type leverSource struct{}
 
+func (s *leverSource) Name() string { return "lever" }
 func (s *leverSource) Match(u *url.URL) bool {
-	switch strings.ToLower(u.Host) {
-	case "jobs.lever.co", "jobs.eu.lever.co":
-		return isRoot(u)
-	}
-	return false
+	h := strings.ToLower(u.Host)
+	return (h == "jobs.lever.co" || h == "jobs.eu.lever.co") && isRoot(u)
 }
 
-func (s *leverSource) List(ctx context.Context, f fetch.Fetcher, cfg SiteConfig) ([]listing.Posting, error) {
-	boardURL, err := url.Parse(cfg.URL)
+func (s *leverSource) Group(u *url.URL) string {
+	return "api." + strings.ToLower(u.Host)[5:]
+}
+
+func (s *leverSource) List(ctx context.Context, f fetch.Fetcher, cfg Site) ([]listing.Posting, error) {
+	boardURL, err := url.Parse(cfg.Address)
 	if err != nil {
 		return nil, ErrNothingRecognised
 	}
 	site := boardSlug(boardURL)
-	apiURL := "https://" + Host(boardURL) + "/v0/postings/" + site + "?mode=json"
+	apiURL := "https://" + s.Group(boardURL) + "/v0/postings/" + site + "?mode=json"
 	var body []lvPosting
 	if err := fetchJSON(ctx, f, apiURL, &body); err != nil {
 		return nil, err
