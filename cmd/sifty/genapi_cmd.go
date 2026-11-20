@@ -37,6 +37,7 @@ func cmdGenAPI(args []string, stdout, stderr io.Writer) error {
 		inbox.RegisterIndustryRoutes(mux, devNull, nil, nil)
 		candidate.RegisterRoutes(mux, nil, "", devNull, nil)
 		collect.New(nil, nil, nil, nil, nil, false, nil, devNull).RegisterRoutes(mux)
+		registerModelRoutes(mux, nil, devNull)
 	})
 	routes := server.Routes()
 	data, err := genDoc(routes)

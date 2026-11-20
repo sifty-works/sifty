@@ -287,6 +287,21 @@ sources:
 	}
 }
 
+func TestProviderAPIKeyInSettingsRefused(t *testing.T) {
+	_, err := loadContent(t, `
+providers:
+  local:
+    type: ollama
+    api_key: mysecret
+`)
+	if err == nil {
+		t.Fatal("expected error for api_key in settings, got nil")
+	}
+	if !strings.Contains(err.Error(), "key_env") {
+		t.Errorf("error message should mention key_env: %v", err)
+	}
+}
+
 func TestWeightsAndRatesKeepDefaultsForAbsentKeys(t *testing.T) {
 	c, err := loadContent(t, "weights:\n  role: 0.5\nrates:\n  SEK: 0.09\n")
 	if err != nil {

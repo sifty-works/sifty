@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/sifty-works/sifty-server/internal/apperr"
+	"github.com/sifty-works/sifty-server/internal/models"
 )
 
 type CollectProgress struct {
@@ -39,13 +40,14 @@ type StatusExtra struct {
 }
 
 type StatusResp struct {
-	Version    string           `json:"version"`
-	Offline    bool             `json:"offline"`
-	Debug      bool             `json:"debug"`
-	Collecting *CollectProgress `json:"collecting"`
-	LastRun    *LastRun         `json:"lastRun"`
-	Catalogue  int64            `json:"catalogue"`
-	Attention  *Attention       `json:"attention"`
+	Version    string               `json:"version"`
+	Offline    bool                 `json:"offline"`
+	Debug      bool                 `json:"debug"`
+	Collecting *CollectProgress     `json:"collecting"`
+	LastRun    *LastRun             `json:"lastRun"`
+	Catalogue  int64                `json:"catalogue"`
+	Attention  *Attention           `json:"attention"`
+	Models     *models.ModelsStatus `json:"models,omitempty"`
 }
 
 type VersionResp struct {
@@ -70,6 +72,7 @@ type Options struct {
 	Logger            *slog.Logger
 	Static            fs.FS
 	Status            func() StatusExtra
+	ModelsStatus      func() *models.ModelsStatus
 	BinaryUploadPaths []string
 }
 
@@ -84,6 +87,9 @@ func New(opts Options, routes func(*http.ServeMux)) http.Handler {
 			resp.LastRun = extra.LastRun
 			resp.Catalogue = extra.Catalogue
 			resp.Attention = extra.Attention
+		}
+		if opts.ModelsStatus != nil {
+			resp.Models = opts.ModelsStatus()
 		}
 		return resp, nil
 	})

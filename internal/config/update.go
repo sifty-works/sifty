@@ -16,14 +16,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-func isAppErr(err error) bool {
-	switch err.(type) {
-	case apperr.Invalid, apperr.NotFound, apperr.Conflict, apperr.Busy:
-		return true
-	}
-	return false
-}
-
 func (s *Store) Update(fn func(c *Config) error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -34,8 +26,14 @@ func (s *Store) Update(fn func(c *Config) error) error {
 		copy(newCfg.Sources, s.cfg.Sources)
 	}
 	newCfg.Weights, newCfg.Rates = maps.Clone(s.cfg.Weights), maps.Clone(s.cfg.Rates)
+	newCfg.Providers = maps.Clone(s.cfg.Providers)
+	if s.cfg.Work != nil {
+		w := *s.cfg.Work
+		newCfg.Work = &w
+	}
 	if err := fn(&newCfg); err != nil {
-		if isAppErr(err) {
+		switch err.(type) {
+		case apperr.Invalid, apperr.NotFound, apperr.Conflict, apperr.Busy:
 			return err
 		}
 		return apperr.Invalid{Message: err.Error()}
@@ -94,19 +92,19 @@ func applyDiff(root *yaml.Node, old, new Config) {
 		setScalar(root, "port", fmt.Sprintf("%d", new.Port), "!!int")
 	}
 	if old.Debug != new.Debug {
-		setScalar(root, "debug", boolStr(new.Debug), "!!bool")
+		setScalar(root, "debug", strconv.FormatBool(new.Debug), "!!bool")
 	}
 	if old.Collection != new.Collection {
 		coll := ensureMapping(root, "collection")
 		if old.Collection.Auto != new.Collection.Auto {
-			setScalar(coll, "auto", boolStr(new.Collection.Auto), "!!bool")
+			setScalar(coll, "auto", strconv.FormatBool(new.Collection.Auto), "!!bool")
 		}
 		if old.Collection.Interval != new.Collection.Interval {
 			setScalar(coll, "interval",
 				shortDuration(time.Duration(new.Collection.Interval)), "!!str")
 		}
 	}
-	if !sourcesEqual(old.Sources, new.Sources) {
+	if !slices.Equal(old.Sources, new.Sources) {
 		updateSources(root, old.Sources, new.Sources)
 	}
 	for i, m := range [][2]map[string]float64{{old.Weights, new.Weights}, {old.Rates, new.Rates}} {
@@ -119,6 +117,51 @@ func applyDiff(root *yaml.Node, old, new Config) {
 			}
 		}
 	}
+	if !maps.Equal(old.Providers, new.Providers) {
+		applyProviders(root, new.Providers)
+	}
+	if !(old.Work == nil && new.Work == nil) && (old.Work == nil || new.Work == nil || *old.Work != *new.Work) {
+		applyWork(root, new.Work)
+	}
+	if old.AllowPaidBulk != new.AllowPaidBulk {
+		setScalar(root, "allow_paid_bulk", strconv.FormatBool(new.AllowPaidBulk), "!!bool")
+	}
+	if old.DailyModelLimit != new.DailyModelLimit {
+		setScalar(root, "daily_model_limit", strconv.Itoa(new.DailyModelLimit), "!!int")
+	}
+}
+
+func applyProviders(root *yaml.Node, providers map[string]ProviderConfig) {
+	if len(providers) == 0 {
+		removeMappingKey(root, "providers")
+		return
+	}
+	var doc yaml.Node
+	doc.Encode(providers)
+	setNodeValue(root, "providers", &doc)
+}
+
+func applyWork(root *yaml.Node, work *WorkConfig) {
+	if work == nil || (*work == WorkConfig{}) {
+		removeMappingKey(root, "work")
+		return
+	}
+	var doc yaml.Node
+	doc.Encode(work)
+	setNodeValue(root, "work", &doc)
+}
+
+func setNodeValue(parent *yaml.Node, key string, value *yaml.Node) {
+	for i := 0; i+1 < len(parent.Content); i += 2 {
+		if parent.Content[i].Value == key {
+			parent.Content[i+1] = value
+			return
+		}
+	}
+	parent.Content = append(parent.Content,
+		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key},
+		value,
+	)
 }
 
 func setScalar(parent *yaml.Node, key, value, tag string) {
@@ -247,44 +290,14 @@ func updateSourceNode(node *yaml.Node, old, new SourceConfig) {
 		setScalar(node, "url", new.URL, "!!str")
 	}
 	if old.Enabled != new.Enabled {
-		setScalar(node, "enabled", boolStr(new.Enabled), "!!bool")
+		setScalar(node, "enabled", strconv.FormatBool(new.Enabled), "!!bool")
 	}
 }
 
 func makeSourceNode(s SourceConfig) *yaml.Node {
-	node := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
-	if s.Name != "" {
-		node.Content = append(node.Content,
-			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "name"},
-			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: s.Name},
-		)
-	}
-	node.Content = append(node.Content,
-		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "url"},
-		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: s.URL},
-		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "enabled"},
-		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!bool", Value: boolStr(s.Enabled)},
-	)
-	return node
-}
-
-func sourcesEqual(a, b []SourceConfig) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
-}
-
-func boolStr(b bool) string {
-	if b {
-		return "true"
-	}
-	return "false"
+	var doc yaml.Node
+	doc.Encode(s)
+	return &doc
 }
 
 func writeBackup(settingsPath string, data []byte) error {

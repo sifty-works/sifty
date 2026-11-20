@@ -497,6 +497,16 @@ components:
                 - state
                 - html
             type: object
+        LoadingInfo:
+            properties:
+                model:
+                    type: string
+                startedAt:
+                    type: string
+            required:
+                - model
+                - startedAt
+            type: object
         Location:
             properties:
                 city:
@@ -643,6 +653,17 @@ components:
                     oneOf:
                         - type: string
                         - type: "null"
+            type: object
+        ModelsStatus:
+            properties:
+                paused:
+                    type: boolean
+                providers:
+                    additionalProperties:
+                        $ref: '#/components/schemas/ProviderState'
+                    type: object
+            required:
+                - paused
             type: object
         OptionItem:
             properties:
@@ -859,6 +880,17 @@ components:
                             type: string
                           type: array
                         - type: "null"
+            type: object
+        ProviderState:
+            properties:
+                loading:
+                    oneOf:
+                        - $ref: '#/components/schemas/LoadingInfo'
+                        - type: "null"
+                state:
+                    type: string
+            required:
+                - state
             type: object
         QACreateReq:
             properties:
@@ -1239,6 +1271,10 @@ components:
                     oneOf:
                         - $ref: '#/components/schemas/LastRun'
                         - type: "null"
+                models:
+                    oneOf:
+                        - $ref: '#/components/schemas/ModelsStatus'
+                        - type: "null"
                 offline:
                     type: boolean
                 version:
@@ -1372,12 +1408,26 @@ components:
                 - name
                 - url
             type: object
+        checkResp:
+            properties:
+                state:
+                    type: string
+            required:
+                - state
+            type: object
         collectReq:
             properties:
                 force:
                     type: boolean
             required:
                 - force
+            type: object
+        pauseReq:
+            properties:
+                paused:
+                    type: boolean
+            required:
+                - paused
             type: object
         removeSourceReq:
             properties:
@@ -1605,6 +1655,20 @@ paths:
                     $ref: '#/components/responses/Error'
                 "204":
                     description: No Content
+    /api/models/pause:
+        put:
+            operationId: putApiModelsPause
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/pauseReq'
+                required: true
+            responses:
+                4XX:
+                    $ref: '#/components/responses/Error'
+                "204":
+                    description: No Content
     /api/profiles:
         get:
             operationId: getApiProfiles
@@ -1673,6 +1737,18 @@ paths:
                         application/json:
                             schema:
                                 $ref: '#/components/schemas/ProfileDetailResp'
+                    description: OK
+    /api/providers/{name}/check:
+        post:
+            operationId: postApiProvidersNameCheck
+            responses:
+                4XX:
+                    $ref: '#/components/responses/Error'
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/checkResp'
                     description: OK
     /api/qa:
         delete:

@@ -43,7 +43,7 @@ func runRetentionJob(t *testing.T, d *db.DB, cat *catalog.Catalog, now time.Time
 		Name:   "retention",
 		Resume: true,
 		Run: func(runCtx context.Context, j *runner.Job) error {
-			return runRetention(runCtx, j, cat, slog.Default(), now)
+			return runRetention(runCtx, j, cat, d, slog.Default(), now)
 		},
 	})
 	r.Enqueue(runner.Spec{Kind: "retention"})

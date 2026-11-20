@@ -28,14 +28,13 @@ func shortDuration(d time.Duration) string {
 	if rem%time.Minute != 0 {
 		return d.String()
 	}
-	switch {
-	case h == 0:
+	if h == 0 {
 		return fmt.Sprintf("%dm", m)
-	case m == 0:
-		return fmt.Sprintf("%dh", h)
-	default:
-		return fmt.Sprintf("%dh%dm", h, m)
 	}
+	if m == 0 {
+		return fmt.Sprintf("%dh", h)
+	}
+	return fmt.Sprintf("%dh%dm", h, m)
 }
 
 func (d *Duration) UnmarshalYAML(value *yaml.Node) error {
@@ -82,13 +81,33 @@ func (s *SourceConfig) UnmarshalYAML(value *yaml.Node) error {
 	return nil
 }
 
+type ProviderConfig struct {
+	Type     string   `yaml:"type"`
+	Model    string   `yaml:"model,omitempty"`
+	Endpoint string   `yaml:"endpoint,omitempty"`
+	Cost     string   `yaml:"cost,omitempty"`
+	Timeout  Duration `yaml:"timeout,omitempty"`
+	Context  int      `yaml:"context,omitempty"`
+	KeyEnv   string   `yaml:"key_env,omitempty"`
+}
+
+type WorkConfig struct {
+	Reading        string `yaml:"reading,omitempty"`
+	ShortlistCheck string `yaml:"shortlist_check,omitempty"`
+	Preparation    string `yaml:"preparation,omitempty"`
+}
+
 type Config struct {
-	Port       int                `yaml:"port"`
-	Debug      bool               `yaml:"debug"`
-	Collection CollectionConfig   `yaml:"collection"`
-	Sources    []SourceConfig     `yaml:"sources"`
-	Weights    map[string]float64 `yaml:"weights"`
-	Rates      map[string]float64 `yaml:"rates"`
+	Port            int                       `yaml:"port"`
+	Debug           bool                      `yaml:"debug"`
+	Collection      CollectionConfig          `yaml:"collection"`
+	Sources         []SourceConfig            `yaml:"sources"`
+	Weights         map[string]float64        `yaml:"weights"`
+	Rates           map[string]float64        `yaml:"rates"`
+	Providers       map[string]ProviderConfig `yaml:"providers,omitempty"`
+	Work            *WorkConfig               `yaml:"work,omitempty"`
+	AllowPaidBulk   bool                      `yaml:"allow_paid_bulk,omitempty"`
+	DailyModelLimit int                       `yaml:"daily_model_limit,omitempty"`
 }
 
 func Defaults() Config {
@@ -106,23 +125,23 @@ func Defaults() Config {
 	}
 }
 
+func (c *Config) WorkProviderFor(kind string) string {
+	if c.Work == nil {
+		return ""
+	}
+	return map[string]string{"reading": c.Work.Reading, "shortlist_check": c.Work.ShortlistCheck, "preparation": c.Work.Preparation}[kind]
+}
+
 func SourceKey(rawURL string) (string, error) {
 	u, err := url.Parse(rawURL)
-	if err != nil {
-		return "", fmt.Errorf("invalid url: %w", err)
-	}
-	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-		return "", fmt.Errorf("url must be an absolute http or https address")
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return "", fmt.Errorf("url is not an absolute http or https address")
 	}
 	if u.User != nil {
 		return "", fmt.Errorf("url must not contain credentials")
 	}
-
-	host := strings.ToLower(u.Host)
-	host = strings.TrimPrefix(host, "www.")
-	path := strings.TrimRight(u.Path, "/")
-
-	key := u.Scheme + "://" + host + path
+	host := strings.TrimPrefix(strings.ToLower(u.Host), "www.")
+	key := u.Scheme + "://" + host + strings.TrimRight(u.Path, "/")
 	if u.RawQuery != "" {
 		key += "?" + u.RawQuery
 	}
@@ -160,6 +179,7 @@ func parse(data []byte) (Config, error) {
 
 	knownTop := map[string]bool{
 		"port": true, "debug": true, "collection": true, "sources": true, "weights": true, "rates": true,
+		"providers": true, "work": true, "allow_paid_bulk": true, "daily_model_limit": true,
 	}
 	for i := 0; i+1 < len(root.Content); i += 2 {
 		k := root.Content[i].Value
@@ -207,6 +227,50 @@ func parse(data []byte) (Config, error) {
 		}
 	}
 
+	knownProvider := map[string]bool{"type": true, "model": true, "endpoint": true, "cost": true, "timeout": true, "context": true, "key_env": true}
+	for i := 0; i+1 < len(root.Content); i += 2 {
+		if root.Content[i].Value != "providers" {
+			continue
+		}
+		provMap := root.Content[i+1]
+		if provMap.Kind != yaml.MappingNode {
+			break
+		}
+		for j := 0; j+1 < len(provMap.Content); j += 2 {
+			name := provMap.Content[j].Value
+			provNode := provMap.Content[j+1]
+			if provNode.Kind != yaml.MappingNode {
+				continue
+			}
+			for k := 0; k+1 < len(provNode.Content); k += 2 {
+				key := provNode.Content[k].Value
+				if key == "api_key" {
+					return c, fmt.Errorf("providers.%s: use key_env to name an environment variable; do not put a key in the settings file", name)
+				}
+				if !knownProvider[key] {
+					return c, fmt.Errorf("unknown settings key: %q in providers.%s", key, name)
+				}
+			}
+		}
+	}
+
+	knownWork := map[string]bool{"reading": true, "shortlist_check": true, "preparation": true}
+	for i := 0; i+1 < len(root.Content); i += 2 {
+		if root.Content[i].Value != "work" {
+			continue
+		}
+		workNode := root.Content[i+1]
+		if workNode.Kind != yaml.MappingNode {
+			break
+		}
+		for j := 0; j+1 < len(workNode.Content); j += 2 {
+			k := workNode.Content[j].Value
+			if !knownWork[k] {
+				return c, fmt.Errorf("unknown settings key: \"work.%s\"", k)
+			}
+		}
+	}
+
 	if err := node.Decode(&c); err != nil {
 		return c, fmt.Errorf("parsing settings file: %w", err)
 	}
@@ -216,6 +280,8 @@ func parse(data []byte) (Config, error) {
 	}
 	return c, nil
 }
+
+var validProviderTypes = map[string]bool{"ollama": true, "openai": true, "cli-claude": true, "cli-opencode": true}
 
 func Validate(c Config) error {
 	if c.Port < 0 || c.Port > 65535 {
@@ -235,6 +301,27 @@ func Validate(c Config) error {
 	for k, r := range c.Rates {
 		if len(k) != 3 || strings.ToUpper(k) != k || !(r > 0) || math.IsInf(r, 0) {
 			return fmt.Errorf("rates.%s: a rate is a currency code and a number above 0.", k)
+		}
+	}
+	validCosts := map[string]bool{"local": true, "free": true, "paid": true, "": true}
+	for name, pc := range c.Providers {
+		if !validProviderTypes[pc.Type] {
+			return fmt.Errorf("providers.%s: unknown type %q", name, pc.Type)
+		}
+		if !validCosts[pc.Cost] {
+			return fmt.Errorf("providers.%s: cost must be local, free or paid", name)
+		}
+	}
+	if c.Work != nil {
+		for kind, pname := range map[string]string{
+			"reading": c.Work.Reading, "shortlist_check": c.Work.ShortlistCheck, "preparation": c.Work.Preparation,
+		} {
+			if pname == "" {
+				continue
+			}
+			if _, ok := c.Providers[pname]; !ok {
+				return fmt.Errorf("work.%s: provider %q not found", kind, pname)
+			}
 		}
 	}
 	seen := make(map[string]bool, len(c.Sources))

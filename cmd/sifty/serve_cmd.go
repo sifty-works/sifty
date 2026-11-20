@@ -26,6 +26,7 @@ import (
 	"github.com/sifty-works/sifty-server/internal/inbox"
 	"github.com/sifty-works/sifty-server/internal/industry"
 	"github.com/sifty-works/sifty-server/internal/listing"
+	"github.com/sifty-works/sifty-server/internal/models"
 	"github.com/sifty-works/sifty-server/internal/runner"
 	"github.com/sifty-works/sifty-server/internal/server"
 	"github.com/sifty-works/sifty-server/web"
@@ -93,6 +94,15 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	}
 	defer database.Close()
 
+	secretsPath := filepath.Join(dataDir, "secrets.env")
+	secrets, err := models.LoadSecrets(secretsPath)
+	if err != nil {
+		logger.Warn("secrets.env load failed", "err", err)
+		secrets = map[string]string{}
+	}
+	gate := models.NewGate(database, store, offline, secrets)
+	defer gate.Stop(context.Background())
+
 	vocabPath := filepath.Join(dataDir, "vocab", "industries.yaml")
 	vocab, err := industry.LoadOrDefault(vocabPath)
 	if err != nil {
@@ -150,7 +160,7 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		Name:   "retention",
 		Resume: true,
 		Run: func(runCtx context.Context, j *runner.Job) error {
-			return runRetention(runCtx, j, cat, logger, time.Now())
+			return runRetention(runCtx, j, cat, database, logger, time.Now())
 		},
 	})
 
@@ -220,6 +230,7 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		Logger:            logger,
 		Static:            web.StaticFS(),
 		Status:            col.StatusFunc(),
+		ModelsStatus:      gate.Status,
 		BinaryUploadPaths: []string{"/api/me/photo"},
 	}, func(mux *http.ServeMux) {
 		getVocabNames := func() []string {
@@ -230,6 +241,7 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 			}
 			return names
 		}
+		registerModelRoutes(mux, gate, logger)
 		inbox.RegisterRoutes(mux, database, time.Now, logger, collectActive, func() map[string]string {
 			cfg := store.Get()
 			m := make(map[string]string, len(cfg.Sources))
@@ -317,7 +329,7 @@ func openLog(dataDir string, stderr io.Writer) (*slog.Logger, func(), error) {
 	return logger, func() { logFile.Close() }, nil
 }
 
-func runRetention(ctx context.Context, j *runner.Job, cat *catalog.Catalog, log *slog.Logger, now time.Time) error {
+func runRetention(ctx context.Context, j *runner.Job, cat *catalog.Catalog, database *db.DB, log *slog.Logger, now time.Time) error {
 	cutoff := now.UTC().Add(-24 * time.Hour)
 
 	ids, err := cat.RetainableExpired(ctx, cutoff)
@@ -336,6 +348,11 @@ func runRetention(ctx context.Context, j *runner.Job, cat *catalog.Catalog, log 
 		j.Progress(done+1, len(ids), "")
 	}
 	log.Info("retention: removed expired vacancies", "count", len(ids))
+
+	modelCallCutoff := now.UTC().Add(-90 * 24 * time.Hour)
+	if _, err := database.ExecContext(ctx, `DELETE FROM model_call WHERE created_at < ?`, modelCallCutoff.Format(time.RFC3339)); err != nil {
+		return fmt.Errorf("retention: model_call: %w", err)
+	}
 	return nil
 }
 

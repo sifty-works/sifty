@@ -416,6 +416,9 @@ func runImport(ctx context.Context, fromDir, dbPath, settingsPath, dataDir strin
 	if err := importRules(fromDir, store, report); err != nil {
 		return fmt.Errorf("writing weights and rates: %w", err)
 	}
+	if err := importProviders(ctx, fromDir, newDB, store, dataDir, report); err != nil {
+		return fmt.Errorf("writing provider settings: %w", err)
+	}
 	if err := compareFit(ctx, copyDB, newDB, store.Get(), report, dataDir); err != nil {
 		return fmt.Errorf("comparing Fits you: %w", err)
 	}
