@@ -4,6 +4,7 @@ Notable changes of Sifty, newest first. Versions follow `MAJOR.MINOR.PATCH`.
 
 ## Unreleased
 
+- Web client 0.8.0: a requirement that names several known skills offers one + per skill and one + for the requirement as a whole; answering for one skill records that skill alone and leaves the other choices in place.
 - Web client 0.7.0: the vacancy page lists what the employer asks, grouped Required and Nice to have, with the verdict, alternatives and evidence of each requirement, and + and − on the ones code could not decide.
 - What they ask (server): the vacancy view lists requirements in Required and Nice to have with verdict, alternatives and evidence (matched skills, Confirmed by you, or derived years when the requirement states years); `POST /api/me/skills` adds a requirement's skills or statement to My data with + and −, decides it, and recomputes the vacancy at once.
 - Web client 0.6.0: the requirements counter beside Fits you in list rows, with the state in the tooltip, and under the bucket in the vacancy band.

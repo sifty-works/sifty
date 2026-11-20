@@ -1,3 +1,3 @@
-version=0.7.0
-url=https://github.com/sifty-works/sifty-web/releases/download/v0.7.0/sifty-web-0.7.0.tar.gz
-sha256=eb23ed78c44e58878694000d289bd3a09a5d70245106c7d547db3663bc2ccac3
+version=0.8.0
+url=https://github.com/sifty-works/sifty-web/releases/download/v0.8.0/sifty-web-0.8.0.tar.gz
+sha256=523e3e81560354f331ec36d6c32eb3c2046c2ce04ae7031bd004b6f28d63b1ee
