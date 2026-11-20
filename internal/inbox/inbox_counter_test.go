@@ -132,6 +132,10 @@ func TestRequirementsCounter_bandNotAnalysedYet(t *testing.T) {
 	if got := bandReqText(body); got != "Not analysed yet" {
 		t.Errorf("band no reading: got %q", got)
 	}
+	band, _ := body["band"].(map[string]any)
+	if groups, ok := band["groups"].([]any); !ok || len(groups) != 0 {
+		t.Errorf("band groups without a reading: want an empty list, got %v", band["groups"])
+	}
 }
 
 func TestRequirementsCounter_bandAnalysingWhenJobQueued(t *testing.T) {

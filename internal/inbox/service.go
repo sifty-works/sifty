@@ -602,7 +602,7 @@ func vacancyView(ctx context.Context, database *db.DB, now func() time.Time,
 	if err != nil {
 		return VacancyView{}, err
 	}
-	var groups []RequirementGroup
+	groups := []RequirementGroup{}
 	if f.ReqRead && len(f.Requirements) > 0 {
 		var req, nice []fit.RequirementLine
 		for _, r := range f.Requirements {
