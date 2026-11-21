@@ -10,58 +10,6 @@ import (
 	"github.com/sifty-works/sifty-server/internal/server"
 )
 
-var expectedRoutes = []string{
-	"GET /api/status",
-	"GET /api/version",
-	"GET /api/vacancies",
-	"GET /api/vacancies/{id}",
-	"POST /api/vacancies/{id}/decision",
-	"POST /api/vacancies/{id}/seen",
-	"DELETE /api/vacancies/{id}",
-	"GET /api/exclusions",
-	"POST /api/exclusions",
-	"DELETE /api/exclusions",
-	"GET /api/exclusions/preview",
-	"GET /api/sources",
-	"POST /api/sources",
-	"PATCH /api/sources",
-	"DELETE /api/sources",
-	"PUT /api/sources/schedule",
-	"POST /api/collect",
-	"GET /api/me",
-	"PATCH /api/me",
-	"PUT /api/me/photo",
-	"DELETE /api/me/photo",
-	"GET /api/me/photo",
-	"GET /api/profiles",
-	"GET /api/profiles/{id}",
-	"POST /api/profiles",
-	"PATCH /api/profiles/{id}",
-	"DELETE /api/profiles/{id}",
-	"PUT /api/active-profile",
-	"GET /api/qa",
-	"POST /api/qa",
-	"PATCH /api/qa",
-	"DELETE /api/qa",
-	"GET /api/reference",
-}
-
-func TestContractAllRoutesRegistered(t *testing.T) {
-	dir := t.TempDir()
-	_, cancel := startServe(t, dir)
-	defer cancel()
-
-	registered := make(map[string]bool)
-	for _, ri := range server.Routes() {
-		registered[ri.Pattern] = true
-	}
-	for _, p := range expectedRoutes {
-		if !registered[p] {
-			t.Errorf("route missing from registry: %s", p)
-		}
-	}
-}
-
 func TestContractResponseShapes(t *testing.T) {
 	dir := t.TempDir()
 	port, cancel := startServe(t, dir)

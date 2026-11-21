@@ -10,9 +10,7 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/sifty-works/sifty-server/internal/candidate"
 	"github.com/sifty-works/sifty-server/internal/collect"
-	"github.com/sifty-works/sifty-server/internal/inbox"
 	"github.com/sifty-works/sifty-server/internal/server"
 	"gopkg.in/yaml.v3"
 )
@@ -32,12 +30,9 @@ func cmdGenAPI(args []string, stdout, stderr io.Writer) error {
 	}
 	server.ResetRoutes()
 	devNull := slog.New(slog.NewTextHandler(io.Discard, nil))
+	devColl := collect.New(nil, nil, nil, nil, nil, false, nil, devNull)
 	server.New(server.Options{Logger: devNull}, func(mux *http.ServeMux) {
-		inbox.RegisterRoutes(mux, nil, nil, devNull, nil, nil, nil, nil)
-		inbox.RegisterIndustryRoutes(mux, devNull)
-		candidate.RegisterRoutes(mux, nil, "", devNull, nil)
-		collect.New(nil, nil, nil, nil, nil, false, nil, devNull).RegisterRoutes(mux)
-		registerModelRoutes(mux, nil, devNull)
+		registerAllRoutes(mux, devNull, nil, nil, nil, nil, nil, nil, nil, "", devColl)
 	})
 	routes := server.Routes()
 	data, err := genDoc(routes)

@@ -14,7 +14,6 @@ import (
 	"time"
 
 	siftyapi "github.com/sifty-works/sifty-server/api"
-	"github.com/sifty-works/sifty-server/internal/candidate"
 	"github.com/sifty-works/sifty-server/internal/catalog"
 	"github.com/sifty-works/sifty-server/internal/collect"
 	"github.com/sifty-works/sifty-server/internal/config"
@@ -22,7 +21,6 @@ import (
 	"github.com/sifty-works/sifty-server/internal/fetch"
 	"github.com/sifty-works/sifty-server/internal/fetch/fetchtest"
 	"github.com/sifty-works/sifty-server/internal/fit"
-	"github.com/sifty-works/sifty-server/internal/inbox"
 	"github.com/sifty-works/sifty-server/internal/models"
 	"github.com/sifty-works/sifty-server/internal/reading"
 	"github.com/sifty-works/sifty-server/internal/runner"
@@ -218,7 +216,6 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		BinaryUploadPaths: []string{"/api/me/photo"},
 		Recovered:         recovered,
 	}, func(mux *http.ServeMux) {
-		registerModelRoutes(mux, gate, logger)
 		sourceNames := func() map[string]string {
 			cfg := store.Get()
 			m := make(map[string]string, len(cfg.Sources))
@@ -229,10 +226,7 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 			}
 			return m
 		}
-		inbox.RegisterRoutes(mux, database, time.Now, logger, collectActive, sourceNames, rules, recomputeFit)
-		inbox.RegisterIndustryRoutes(mux, logger)
-		candidate.RegisterRoutes(mux, database, filesDir, logger, recomputeFit)
-		col.RegisterRoutes(mux)
+		registerAllRoutes(mux, logger, gate, database, time.Now, collectActive, sourceNames, rules, recomputeFit, filesDir, col)
 	})
 
 	srv := &http.Server{
