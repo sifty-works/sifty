@@ -640,6 +640,144 @@ func RegisterRoutes(mux *http.ServeMux, database *db.DB, filesDir string, logger
 	server.Handle(mux, "GET /api/reference", logger, func(r *http.Request, _ struct{}) (ReferenceResp, error) {
 		return referenceData, nil
 	})
+
+	server.HandleRaw(mux, "POST /api/documents", func(w http.ResponseWriter, r *http.Request) {
+		if filesDir == "" {
+			server.MapError(w, fmt.Errorf("candidate: no files dir configured"), logger)
+			return
+		}
+		ct := r.Header.Get("Content-Type")
+		if strings.HasPrefix(ct, "application/json") {
+			var req struct {
+				Name string `json:"name"`
+				Text string `json:"text"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				server.MapError(w, apperr.Invalid{Message: "Invalid request body."}, logger)
+				return
+			}
+			req.Name = strings.TrimSpace(req.Name)
+			req.Text = strings.TrimSpace(req.Text)
+			if req.Name == "" {
+				server.MapError(w, apperr.Invalid{Message: "Name must not be empty."}, logger)
+				return
+			}
+			item, err := saveDocument(r.Context(), database, filesDir, req.Name, "text", nil, req.Text, "ready", "")
+			if server.MapError(w, err, logger) {
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(item)
+			return
+		}
+		name := strings.TrimSpace(r.URL.Query().Get("name"))
+		if name == "" {
+			server.MapError(w, apperr.Invalid{Message: "Name must not be empty."}, logger)
+			return
+		}
+		kind, ok := kindFromName(name)
+		if !ok {
+			server.MapError(w, apperr.Invalid{Message: "The file must be a PDF, Word document, Markdown or plain text file."}, logger)
+			return
+		}
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			server.MapError(w, apperr.Invalid{Message: "Could not read the upload."}, logger)
+			return
+		}
+		if len(body) == 0 {
+			server.MapError(w, apperr.Invalid{Message: "The file is empty."}, logger)
+			return
+		}
+		if err := checkDocumentBytes(kind, body); err != nil {
+			server.MapError(w, err, logger)
+			return
+		}
+		text, state, stateReason := extractText(kind, body)
+		item, err := saveDocument(r.Context(), database, filesDir, name, kind, body, text, state, stateReason)
+		if server.MapError(w, err, logger) {
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(item)
+	})
+
+	server.Handle(mux, "GET /api/documents", logger, func(r *http.Request, _ struct{}) (DocumentListResp, error) {
+		return listDocumentsFromDB(r.Context(), database)
+	})
+
+	server.Handle(mux, "DELETE /api/documents/{id}", logger, func(r *http.Request, _ struct{}) (struct{}, error) {
+		id, err := parseDocumentID(r)
+		if err != nil {
+			return struct{}{}, err
+		}
+		return struct{}{}, deleteDocument(r.Context(), database, filesDir, id)
+	})
+
+	server.Handle(mux, "PATCH /api/documents/{id}", logger, func(r *http.Request, req DocumentPatchReq) (DocumentItem, error) {
+		id, err := parseDocumentID(r)
+		if err != nil {
+			return DocumentItem{}, err
+		}
+		if req.Evidence == nil {
+			return DocumentItem{}, apperr.Invalid{Message: "Evidence field is required."}
+		}
+		return setDocumentEvidence(r.Context(), database, id, *req.Evidence)
+	})
+
+	server.HandleRaw(mux, "GET /api/documents/{id}/text", func(w http.ResponseWriter, r *http.Request) {
+		id, err := parseDocumentID(r)
+		if err != nil {
+			server.MapError(w, err, logger)
+			return
+		}
+		row, err := loadDocumentRow(r.Context(), database, id)
+		if server.MapError(w, err, logger) {
+			return
+		}
+		if row.State != "ready" {
+			server.MapError(w, apperr.NotFound{Message: "No text available for this document."}, logger)
+			return
+		}
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(row.Text))
+	})
+
+	server.HandleRaw(mux, "GET /api/documents/{id}/original", func(w http.ResponseWriter, r *http.Request) {
+		if filesDir == "" {
+			server.MapError(w, apperr.NotFound{Message: "No original file for this document."}, logger)
+			return
+		}
+		id, err := parseDocumentID(r)
+		if err != nil {
+			server.MapError(w, err, logger)
+			return
+		}
+		row, err := loadDocumentRow(r.Context(), database, id)
+		if server.MapError(w, err, logger) {
+			return
+		}
+		if row.FileName == "" {
+			server.MapError(w, apperr.NotFound{Message: "No original file for this document."}, logger)
+			return
+		}
+		body, err := os.ReadFile(filepath.Join(filesDir, row.FileName))
+		if os.IsNotExist(err) {
+			server.MapError(w, apperr.NotFound{Message: "No original file for this document."}, logger)
+			return
+		}
+		if err != nil {
+			server.MapError(w, fmt.Errorf("candidate: read document file: %w", err), logger)
+			return
+		}
+		ct := http.DetectContentType(body)
+		w.Header().Set("Content-Type", ct)
+		w.WriteHeader(http.StatusOK)
+		w.Write(body)
+	})
 }
 
 func listProfiles(ctx context.Context, database *db.DB) (ProfileListResp, error) {
@@ -706,6 +844,14 @@ func parseProfileID(r *http.Request) (int64, error) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
 		return 0, apperr.NotFound{Message: "Profile not found."}
+	}
+	return id, nil
+}
+
+func parseDocumentID(r *http.Request) (int64, error) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		return 0, apperr.NotFound{Message: "Document not found."}
 	}
 	return id, nil
 }

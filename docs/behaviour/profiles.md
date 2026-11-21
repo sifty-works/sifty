@@ -70,7 +70,7 @@ Files (with a badge counting suggestions to review), Profile (opened by default)
 **Files** ("CVs and notes. Nothing is analyzed until you choose Analyze."):
 
 - "+ Add files" accepts several pdf, docx, md or txt files of at most 2 MiB each, also by drag and drop. "Paste text instead" takes a file name and text.
-- A document card shows its name, its state, "kind · N characters" or a summary of its facts, an error with its cause and what to do ("Open Settings" when no provider is configured) with "Technical details", and the actions Analyze, Cancel analysis, Retry analysis, View or Hide text, and Original.
+- A document card shows its name, its state, "kind · N characters" or a summary of its facts, an error with its cause and what to do ("Open Settings" when no provider is configured) with "Technical details", and the actions Analyze, Cancel analysis, Retry analysis, View or Hide text, and Original. A PDF shows "PDF text extraction is not available yet." until its reader is added; Analyze and View text are not available for it.
 - "Use as evidence" marks a document whose text the Shortlist check and application preparation may read.
 - Deleting asks "Suggestions from it are removed; facts you already accepted stay in your profile."
 - "N of M uploads failed. Successful files are kept." with a Refresh button.

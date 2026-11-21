@@ -213,7 +213,7 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		Static:            web.StaticFS(),
 		Status:            col.StatusFunc(),
 		ModelsStatus:      gate.Status,
-		BinaryUploadPaths: []string{"/api/me/photo"},
+		BinaryUploadPaths: []string{"/api/me/photo", "/api/documents"},
 		Recovered:         recovered,
 	}, func(mux *http.ServeMux) {
 		sourceNames := func() map[string]string {

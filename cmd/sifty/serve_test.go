@@ -315,3 +315,41 @@ func TestVersionCommand(t *testing.T) {
 		t.Fatal("version: empty output")
 	}
 }
+
+func TestDocumentUploadLimitUsesRealServerWiring(t *testing.T) {
+	dir := t.TempDir()
+	port, cancel := startServe(t, dir)
+	defer cancel()
+
+	base := fmt.Sprintf("http://127.0.0.1:%d", port)
+
+	exactly2MiB := make([]byte, 2*1024*1024)
+	for i := range exactly2MiB {
+		exactly2MiB[i] = 'a'
+	}
+	req, _ := http.NewRequest(http.MethodPost, base+"/api/documents?name=big.txt", bytes.NewReader(exactly2MiB))
+	req.Header.Set("Content-Type", "text/plain")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST 2 MiB: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("file at exactly 2 MiB via real server: status %d, want 200", resp.StatusCode)
+	}
+
+	over2MiB := make([]byte, 2*1024*1024+1)
+	for i := range over2MiB {
+		over2MiB[i] = 'a'
+	}
+	req2, _ := http.NewRequest(http.MethodPost, base+"/api/documents?name=toobig.txt", bytes.NewReader(over2MiB))
+	req2.Header.Set("Content-Type", "text/plain")
+	resp2, err := http.DefaultClient.Do(req2)
+	if err != nil {
+		t.Fatalf("POST 2 MiB+1: %v", err)
+	}
+	resp2.Body.Close()
+	if resp2.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Errorf("file over 2 MiB via real server: status %d, want 413", resp2.StatusCode)
+	}
+}
