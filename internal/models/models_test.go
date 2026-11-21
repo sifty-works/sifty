@@ -3,12 +3,14 @@ package models_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -268,6 +270,57 @@ func TestBackgroundWaitsAtDailyLimit(t *testing.T) {
 	}
 }
 
+func TestDailyLimitOfZeroAllowsUnlimitedBackgroundCalls(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(ollamaReply("ok"))
+	}))
+	defer srv.Close()
+
+	cfg := config.Defaults()
+	cfg.Providers = map[string]config.ProviderConfig{"local": providerConfig("ollama", srv.URL, "phi3", "local")}
+	cfg.Work = &config.WorkConfig{Reading: "local"}
+	cfg.DailyModelLimit = 0
+	store := openTestStore(t, cfg)
+	d := openTestDB(t)
+	gate := models.NewGate(d, store, false, nil)
+	defer gate.Stop(context.Background())
+
+	for i := 0; i < 3; i++ {
+		_, err := gate.For("reading", "background").Complete(context.Background(), models.Request{Prompt: "call"})
+		if err != nil {
+			t.Fatalf("background call %d with zero daily limit: %v", i+1, err)
+		}
+	}
+}
+
+func TestDailyLimitReducedOnRunningGateIsEnforced(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(ollamaReply("ok"))
+	}))
+	defer srv.Close()
+
+	cfg := config.Defaults()
+	cfg.Providers = map[string]config.ProviderConfig{"local": providerConfig("ollama", srv.URL, "phi3", "local")}
+	cfg.Work = &config.WorkConfig{Reading: "local"}
+	cfg.DailyModelLimit = 0
+	store := openTestStore(t, cfg)
+	d := openTestDB(t)
+	gate := models.NewGate(d, store, false, nil)
+	defer gate.Stop(context.Background())
+
+	gate.For("reading", "background").Complete(context.Background(), models.Request{Prompt: "first"})
+	gate.For("reading", "background").Complete(context.Background(), models.Request{Prompt: "second"})
+
+	if err := store.Update(func(c *config.Config) error { c.DailyModelLimit = 2; return nil }); err != nil {
+		t.Fatalf("store.Update: %v", err)
+	}
+
+	_, err := gate.For("reading", "background").Complete(context.Background(), models.Request{Prompt: "third"})
+	if _, ok := err.(models.WaitError); !ok {
+		t.Fatalf("third background call after limit set to 2 on running gate: got %v, want WaitError", err)
+	}
+}
+
 func TestBulkOnPaidRefusedUnlessAllowed(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]interface{}{
@@ -295,6 +348,43 @@ func TestBulkOnPaidRefusedUnlessAllowed(t *testing.T) {
 	_, err = gate2.For("reading", "background").Complete(context.Background(), models.Request{Prompt: "hello"})
 	if err != nil {
 		t.Fatalf("expected success with AllowPaidBulk=true, got %v", err)
+	}
+}
+
+func TestRevokedPaidBulkPermissionRefusesNextCallOnSameGate(t *testing.T) {
+	var reqCount int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&reqCount, 1)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"choices": []map[string]interface{}{{"message": map[string]string{"content": "ok"}}},
+			"usage":   map[string]int{},
+		})
+	}))
+	defer srv.Close()
+
+	cfg := config.Defaults()
+	cfg.Providers = map[string]config.ProviderConfig{"remote": providerConfig("openai", srv.URL, "gpt-4o", "paid")}
+	cfg.Work = &config.WorkConfig{Reading: "remote"}
+	cfg.AllowPaidBulk = true
+	store := openTestStore(t, cfg)
+	gate := models.NewGate(openTestDB(t), store, false, nil)
+	defer gate.Stop(context.Background())
+
+	_, err := gate.For("reading", "background").Complete(context.Background(), models.Request{Prompt: "first"})
+	if err != nil {
+		t.Fatalf("first background call with paid bulk allowed: %v", err)
+	}
+
+	if err := store.Update(func(c *config.Config) error { c.AllowPaidBulk = false; return nil }); err != nil {
+		t.Fatalf("store.Update: %v", err)
+	}
+
+	_, err = gate.For("reading", "background").Complete(context.Background(), models.Request{Prompt: "second"})
+	if !errors.Is(err, models.ErrBulkOnPaid) {
+		t.Fatalf("second background call after revoking paid bulk permission: got %v, want ErrBulkOnPaid", err)
+	}
+	if n := atomic.LoadInt32(&reqCount); n != 1 {
+		t.Errorf("paid provider received %d requests, want 1 (the refused call must not reach the provider)", n)
 	}
 }
 

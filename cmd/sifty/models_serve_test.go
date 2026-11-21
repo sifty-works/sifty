@@ -126,6 +126,12 @@ func TestEachSwitchOfTheModelsSectionChangesOnlyWhatItNames(t *testing.T) {
 	if m := getModels(t, base); m.DailyLimit != 0 || !m.Paused || !m.AllowPaidBulk {
 		t.Errorf("after clearing the daily limit: %+v", m)
 	}
+	patchModels(t, base, `{"work":{"reading":"cloudbox"}}`)
+	if m := getModels(t, base); workProvider(m, "reading") != "cloudbox" ||
+		workProvider(m, "shortlist_check") != "localbox" || workProvider(m, "preparation") != "cloudbox" ||
+		!m.Paused || !m.AllowPaidBulk || m.DailyLimit != 0 {
+		t.Errorf("after changing reading provider: %+v", m)
+	}
 }
 
 func TestAnUnknownProviderOrKindOfWorkIsRefusedAndChangesNothing(t *testing.T) {
