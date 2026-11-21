@@ -31,6 +31,21 @@ These are the rules for every coding agent working in this repository. `docs/ARC
 - Use the fakes behind `Fetcher` and `Model`. Tests make no network request and no model call.
 - Do not write tests that read source files or check that some code exists.
 
+## Critical behaviour
+
+Before a branch is merged, every behaviour in this list that the change touches must have a test that actually exercises it. These are the behaviours whose failure is expensive: money spent without the owner's consent, the owner's data lost or corrupted, another party's data or the machine exposed, or an irreversible outward action. Each line names where the behaviour lives and the test that guards it.
+
+1. Sifty never fills or submits an application form; it only reads forms and drafts answers for the owner to copy. (`internal/answer`, `internal/formread`, `internal/fetch` — read-only GET only; no test: held by the absence of any path that writes to an employer form.)
+2. Bulk model work on a provider marked `paid` is refused unless the owner turned on "Allow paid bulk work". (`internal/models/gate.go`; test `internal/models/models_test.go` `TestBulkOnPaidRefusedUnlessAllowed`.)
+3. Background model calls stop for the rest of the day once the configured daily call limit is reached. (`internal/models/gate.go`; test `internal/models/models_test.go` `TestBackgroundWaitsAtDailyLimit`.)
+4. Only public http(s) addresses are requested: private, loopback, link-local, multicast, unspecified and credentialed addresses are refused before the request and on each of at most six redirects, and a response body is capped at 8 MB. (`internal/fetch/fetch.go`; tests `internal/fetch/fetch_test.go` `TestPublicOnly`, `TestGet_refused_conditions`, `TestGet_redirect_behaviour`, `TestGet_body_over_8MB_is_transient`.)
+5. The server listens on 127.0.0.1 only and rejects any request whose Host or Origin is not the local address, so no other web page can drive it. (`internal/server/server.go`, `cmd/sifty/serve_cmd.go`; test `internal/server/server_test.go` `TestCredentialRefusedWithJSON` covers the Host and Origin checks; the 127.0.0.1 listen address itself is not tested.)
+6. Saving a settings file that holds an API key in plain text is refused; keys come only from the environment or the secrets file. (`internal/config/config.go`; test `internal/config/config_test.go` `TestProviderAPIKeyInSettingsRefused`.)
+7. Command-line model adapters run with a reduced environment and reject a reply in which the model tried to call a tool. (`internal/models/cli.go`, `cli_claude.go`, `cli_opencode.go`; tests `internal/models/cli_test.go` `TestCLIClaudeIsolatedEnvironment`, `TestCLIOpencodeToolEventRefused`.)
+8. Migrations never drop data the owner entered (dropping derived rows nobody reads is allowed); before applying pending migrations the database is backed up, each migration runs in one transaction, and a database written by a newer version is refused. (`internal/db/db.go`, `internal/db/migrations/`; tests `internal/db/db_test.go` `TestBackupWrittenBeforeMigratingExistingDatabase`, `TestFailingMigrationLeavesVersionUnchanged`, `TestNewerDatabaseIsRefused`.)
+9. The daily retention run permanently deletes only expired vacancies that have no application, and each removal writes a tombstone so collection never brings the vacancy back. (`internal/catalog/retention.go`, `internal/catalog/catalog.go`; tests `cmd/sifty/retention_test.go` `TestRetentionExpiredVacanciesWithoutApplicationRemoved`, `internal/catalog/catalog_test.go` `TestUpsert_TombstonedURLIsRejected`.)
+10. A second server started on the same data folder is refused. (`cmd/sifty/serve_cmd.go`; test `cmd/sifty/serve_test.go` `TestSecondServeOnSameFolderIsRefused`.)
+
 ## Executor
 
 - Work only in the working copy and on the branch the coordinator gave you, and do not read the work repository or another working copy.
