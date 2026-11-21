@@ -1,0 +1,60 @@
+headings:
+  - {text: "about the role", kind: role}
+  - {text: "about this role", kind: role}
+  - {text: "about the position", kind: role}
+  - {text: "the role", kind: role}
+  - {text: "responsibilities", kind: role}
+  - {text: "what you'll do", kind: role}
+  - {text: "what you will do", kind: role}
+  - {text: "your responsibilities", kind: role}
+  - {text: "your role", kind: role}
+  - {text: "the opportunity", kind: role}
+  - {text: "requirements", kind: requirements}
+  - {text: "qualifications", kind: requirements}
+  - {text: "what we're looking for", kind: requirements}
+  - {text: "what we are looking for", kind: requirements}
+  - {text: "what you'll bring", kind: requirements}
+  - {text: "what you will bring", kind: requirements}
+  - {text: "who you are", kind: requirements}
+  - {text: "minimum qualifications", kind: requirements}
+  - {text: "preferred qualifications", kind: requirements}
+  - {text: "nice to have", kind: requirements}
+  - {text: "nice-to-have", kind: requirements}
+  - {text: "desirable", kind: requirements}
+  - {text: "bonus points", kind: requirements}
+  - {text: "base salary", kind: offer}
+  - {text: "benefits", kind: offer}
+  - {text: "bonus", kind: offer}
+  - {text: "compensation", kind: offer}
+  - {text: "employee benefits", kind: offer}
+  - {text: "our benefits", kind: offer}
+  - {text: "pay", kind: offer}
+  - {text: "pay transparency", kind: offer}
+  - {text: "perks", kind: offer}
+  - {text: "perks and benefits", kind: offer}
+  - {text: "remuneration", kind: offer}
+  - {text: "salary", kind: offer}
+  - {text: "salary range", kind: offer}
+  - {text: "total compensation", kind: offer}
+  - {text: "what is in it for you", kind: offer}
+  - {text: "what we bring", kind: offer}
+  - {text: "what we offer", kind: offer}
+  - {text: "what we pay", kind: offer}
+  - {text: "what we provide", kind: offer}
+  - {text: "what you get", kind: offer}
+  - {text: "what's in it for you", kind: offer}
+  - {text: "why join", kind: offer}
+  - {text: "why join us", kind: offer}
+  - {text: "why us", kind: offer}
+  - {text: "why work with us", kind: offer}
+  - {text: "why you'll love it here", kind: offer}
+  - {text: "about us", kind: company}
+  - {text: "about the company", kind: company}
+  - {text: "about the team", kind: company}
+  - {text: "who we are", kind: company}
+  - {text: "the team", kind: company}
+  - {text: "our team", kind: company}
+contains:
+  - {text: "benefits", kind: offer}
+  - {text: "compensation", kind: offer}
+  - {text: "salary", kind: offer}

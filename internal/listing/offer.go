@@ -33,9 +33,7 @@ type offerKind struct {
 }
 
 type offerVocabulary struct {
-	Headings        []string
-	HeadingContains []string `yaml:"headingContains"`
-	Kinds           []offerKind
+	Kinds []offerKind
 }
 
 var offerVocab = mustLoadOffer()
@@ -89,14 +87,14 @@ func blockLines(n *xhtml.Node) []string {
 }
 
 func offerHeading(text string) bool {
-	low := strings.TrimRight(strings.TrimSpace(strings.ToLower(strings.ReplaceAll(text, "\u2019", "'"))), ":")
-	for _, h := range offerVocab.Headings {
-		if low == h {
+	norm := normHeading(text)
+	for _, e := range sections.Headings {
+		if e.Kind == "offer" && norm == e.Text {
 			return true
 		}
 	}
-	for _, h := range offerVocab.HeadingContains {
-		if strings.Contains(low, h) {
+	for _, e := range sections.Contains {
+		if e.Kind == "offer" && strings.Contains(norm, e.Text) {
 			return true
 		}
 	}

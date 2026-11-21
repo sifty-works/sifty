@@ -54,9 +54,9 @@ func PlainText(h string) string {
 }
 
 func headingSet() map[string]bool {
-	hset := make(map[string]bool, len(headings))
-	for _, h := range headings {
-		hset[strings.ToLower(h)] = true
+	hset := make(map[string]bool, len(sections.Headings))
+	for _, e := range sections.Headings {
+		hset[strings.ToLower(e.Text)] = true
 	}
 	return hset
 }
@@ -115,10 +115,8 @@ func flattenToBlocks(nodes []*xhtml.Node) []string {
 		t = strings.ReplaceAll(t, "</em>", "")
 		t = html.UnescapeString(t)
 		t = strings.TrimSpace(t)
-		t = strings.TrimSuffix(t, ":")
-		t = strings.TrimSpace(t)
-		if t != "" && hset[strings.ToLower(t)] {
-			return t
+		if t != "" && hset[normHeading(t)] {
+			return strings.TrimSpace(strings.TrimRight(t, ":"))
 		}
 		return ""
 	}
