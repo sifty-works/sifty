@@ -11,6 +11,7 @@ import (
 	"github.com/sifty-works/sifty-server/internal/fit"
 	"github.com/sifty-works/sifty-server/internal/inbox"
 	"github.com/sifty-works/sifty-server/internal/models"
+	"github.com/sifty-works/sifty-server/internal/server"
 )
 
 func registerAllRoutes(
@@ -26,7 +27,9 @@ func registerAllRoutes(
 	filesDir string,
 	col *collect.Collector,
 ) {
-	registerModelRoutes(mux, gate, logger)
+	server.Handle(mux, "POST /api/providers/{name}/check", logger, models.CheckProviderHandler(gate))
+	server.Handle(mux, "GET /api/models", logger, models.ModelsHandler(gate))
+	server.Handle(mux, "PATCH /api/models", logger, models.PatchModelsHandler(gate))
 	inbox.RegisterRoutes(mux, database, now, logger, collectActive, sourceNames, rules, recomputeFit)
 	inbox.RegisterIndustryRoutes(mux, logger)
 	candidate.RegisterRoutes(mux, database, filesDir, logger, recomputeFit)

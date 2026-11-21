@@ -14,6 +14,29 @@ import (
 	"github.com/sifty-works/sifty-server/internal/db"
 )
 
+type providerView struct {
+	Name  string `json:"name"`
+	Kind  string `json:"kind"`
+	Model string `json:"model"`
+	Cost  string `json:"cost"`
+	State string `json:"state"`
+}
+
+type workView struct {
+	Kind     string   `json:"kind"`
+	Provider string   `json:"provider"`
+	Choices  []string `json:"choices"`
+}
+
+type modelsResp struct {
+	Providers     []providerView `json:"providers"`
+	Work          []workView     `json:"work"`
+	AllowPaidBulk bool           `json:"allowPaidBulk"`
+	Paused        bool           `json:"paused"`
+	DailyLimit    int            `json:"dailyLimit"`
+	TodayCalls    int            `json:"todayCalls"`
+}
+
 const twoProviderYAML = `# the providers of this data folder
 providers:
   localbox: {type: ollama, model: tiny-local, cost: local}
