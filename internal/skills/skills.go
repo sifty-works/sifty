@@ -4,6 +4,7 @@ import (
 	_ "embed"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -377,4 +378,61 @@ func verdictForGroups(gs []string, anyOf bool, idx *Index) string {
 		return "✕"
 	}
 	return "?"
+}
+
+type AnswerResult struct {
+	Me             candidate.MeData
+	AddedSkills    []string
+	AddedConfirmed []string
+}
+
+func Answer(req reading.Requirement, have bool, chosenSkill string, me candidate.MeData) AnswerResult {
+	named := NamedSkillsFor(req)
+	toAct := named
+	if chosenSkill != "" {
+		toAct = []string{chosenSkill}
+	}
+	eqName := func(n string) func(candidate.Skill) bool {
+		return func(s candidate.Skill) bool { return strings.EqualFold(s.Name, n) }
+	}
+	eqAbsent := func(n string) func(candidate.AbsentSkill) bool {
+		return func(a candidate.AbsentSkill) bool { return strings.EqualFold(a.Name, n) }
+	}
+	var addedSkills, addedConfirmed []string
+	addConfirmed := func() {
+		eqText := func(f candidate.ConfirmedFact) bool { return f.Text == req.Text }
+		if !slices.ContainsFunc(me.ConfirmedFacts, eqText) {
+			me.ConfirmedFacts = append(me.ConfirmedFacts, candidate.ConfirmedFact{Text: req.Text, Have: have})
+			addedConfirmed = append(addedConfirmed, req.Text)
+		}
+	}
+	if len(toAct) > 0 {
+		for _, name := range toAct {
+			if have {
+				if !slices.ContainsFunc(me.Skills, eqName(name)) {
+					me.Skills = append(me.Skills, candidate.Skill{Name: name, Level: "Proficient"})
+					addedSkills = append(addedSkills, name)
+				}
+				me.AbsentSkills = slices.DeleteFunc(me.AbsentSkills, eqAbsent(name))
+			} else {
+				if !slices.ContainsFunc(me.AbsentSkills, eqAbsent(name)) {
+					me.AbsentSkills = append(me.AbsentSkills, candidate.AbsentSkill{Name: name})
+					addedSkills = append(addedSkills, name)
+				}
+				me.Skills = slices.DeleteFunc(me.Skills, eqName(name))
+			}
+		}
+		if chosenSkill == "" || len(named) <= 1 {
+			want := "✓"
+			if !have {
+				want = "✕"
+			}
+			if Decide(req, NewIndex(me.Skills, me.AbsentSkills), me.ConfirmedFacts) != want {
+				addConfirmed()
+			}
+		}
+	} else {
+		addConfirmed()
+	}
+	return AnswerResult{Me: me, AddedSkills: addedSkills, AddedConfirmed: addedConfirmed}
 }

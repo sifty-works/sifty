@@ -472,10 +472,8 @@ func offerView(body string, tiles []fit.Tile) OfferView {
 		v.Empty = "No Compensation or Benefits section recognised in this listing."
 		return v
 	}
-	for _, t := range tiles {
-		if t.Name == "Money" && t.Value != "" && t.Value != "Not stated" {
-			v.Tiles = append(v.Tiles, listing.OfferTile{Key: "salary", Label: "Base salary", Value: t.Value})
-		}
+	if t, ok := fit.TileFor(tiles, "money"); ok && t.Value != "" && t.Value != "Not stated" {
+		v.Tiles = append(v.Tiles, listing.OfferTile{Key: "salary", Label: "Base salary", Value: t.Value})
 	}
 	v.Tiles = append(v.Tiles, o.Tiles...)
 	v.Items = append(v.Items, o.Items...)

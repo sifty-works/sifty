@@ -1,11 +1,29 @@
 package skills
 
 import (
+	"fmt"
+	"sort"
+	"strings"
 	"testing"
 
 	"github.com/sifty-works/sifty-server/internal/candidate"
 	"github.com/sifty-works/sifty-server/internal/reading"
 )
+
+func meSummaryOf(me candidate.MeData) string {
+	var out []string
+	for _, s := range me.Skills {
+		out = append(out, fmt.Sprintf("skill %s %s", s.Name, s.Level))
+	}
+	for _, a := range me.AbsentSkills {
+		out = append(out, "absent "+a.Name)
+	}
+	for _, c := range me.ConfirmedFacts {
+		out = append(out, fmt.Sprintf("fact %s %v", c.Text, c.Have))
+	}
+	sort.Strings(out)
+	return strings.Join(out, "; ")
+}
 
 func idx(haves, absents []string) *Index {
 	var skills []candidate.Skill
@@ -283,5 +301,69 @@ func TestDecideFull_namedSkillsFromAlts(t *testing.T) {
 	dr := DecideFull(req("Go or Rust", "skill", "Go", "Rust"), i, nil, candidate.DerivedYears{})
 	if len(dr.NamedSkills) < 2 {
 		t.Errorf("named skills from alts: got %v, want at least [Go Rust]", dr.NamedSkills)
+	}
+}
+
+func TestAnswer(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		me     candidate.MeData
+		r      reading.Requirement
+		have   bool
+		chosen string
+		wantMe string
+	}{
+		{name: "known skill added at Proficient",
+			r: req("Golang expertise", "skill"), have: true,
+			wantMe: "skill Go Proficient"},
+		{name: "chosen alternative added alone",
+			r: req("Go or Rust", "skill", "Go", "Rust"), have: true, chosen: "Rust",
+			wantMe: "skill Rust Proficient"},
+		{name: "unknown requirement confirmed as held",
+			r: req("Strong communication skills", "skill"), have: true,
+			wantMe: "fact Strong communication skills true"},
+		{name: "unknown requirement confirmed as missing",
+			r: req("Strong communication skills", "skill"), have: false,
+			wantMe: "fact Strong communication skills false"},
+		{name: "plus on absent skill removes it from absent list",
+			me: candidate.MeData{AbsentSkills: []candidate.AbsentSkill{{Name: "Docker"}}},
+			r:  req("Docker", "skill"), have: true,
+			wantMe: "skill Docker Proficient"},
+		{name: "minus on held skill moves it to absent list only",
+			me: candidate.MeData{Skills: []candidate.Skill{{Name: "Python", Level: "Expert"}}},
+			r:  req("Python", "skill"), have: false,
+			wantMe: "absent Python"},
+		{name: "plus on skill at higher level keeps its level",
+			me: candidate.MeData{Skills: []candidate.Skill{{Name: "Go", Level: "Expert"}}},
+			r:  req("Golang expertise", "skill"), have: true,
+			wantMe: "skill Go Expert"},
+		{name: "chosen skill of compound requirement added alone without confirmation",
+			r: req("Docker and Kubernetes in production", "skill"), have: true, chosen: "Docker",
+			wantMe: "skill Docker Proficient"},
+		{name: "minus on chosen skill of compound requirement added alone without confirmation",
+			r: req("Docker and Kubernetes in production", "skill"), have: false, chosen: "Docker",
+			wantMe: "absent Docker"},
+		{name: "compound requirement answered without choice records all skills and confirms",
+			r: req("Docker and Kubernetes in production", "skill"), have: true,
+			wantMe: "fact Docker and Kubernetes in production true; skill Docker Proficient; skill Kubernetes Proficient"},
+		{name: "compound requirement answered with minus records all as absent and confirms",
+			r: req("Docker and Kubernetes in production", "skill"), have: false,
+			wantMe: "absent Docker; absent Kubernetes; fact Docker and Kubernetes in production false"},
+		{name: "single skill in context confirmed too",
+			r: req("Kubernetes in production", "skill"), have: true,
+			wantMe: "fact Kubernetes in production true; skill Kubernetes Proficient"},
+		{name: "single skill in context confirmed when sent by name",
+			r: req("Kubernetes in production", "skill"), have: true, chosen: "Kubernetes",
+			wantMe: "fact Kubernetes in production true; skill Kubernetes Proficient"},
+		{name: "single skill in context confirmed as missing",
+			r: req("Kubernetes in production", "skill"), have: false,
+			wantMe: "absent Kubernetes; fact Kubernetes in production false"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			res := Answer(tc.r, tc.have, tc.chosen, tc.me)
+			if got := meSummaryOf(res.Me); got != tc.wantMe {
+				t.Errorf("Me: got %q, want %q", got, tc.wantMe)
+			}
+		})
 	}
 }

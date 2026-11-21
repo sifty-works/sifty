@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"sort"
-	"strings"
 	"testing"
 
 	"github.com/sifty-works/sifty-server/internal/candidate"
@@ -29,34 +27,6 @@ func addVacancyWithReading(t *testing.T, d *db.DB, url, title string, reqs []rea
 	d.Exec(`INSERT INTO vacancy_reading (vacancy_id, version, reader_version, record, created)
 		VALUES (?,1,'test',?,datetime('now'))`, id, string(b))
 	return id
-}
-
-func saveMeSkills(t *testing.T, d *db.DB, skills []candidate.Skill, absent []candidate.AbsentSkill) {
-	t.Helper()
-	me := candidate.MeData{Skills: skills, AbsentSkills: absent}
-	if err := candidate.SaveMe(context.Background(), d, me); err != nil {
-		t.Fatalf("saveMeSkills: %v", err)
-	}
-}
-
-func meSummary(t *testing.T, d *db.DB) string {
-	t.Helper()
-	me, err := candidate.LoadMe(context.Background(), d)
-	if err != nil {
-		t.Fatalf("loadMe: %v", err)
-	}
-	var out []string
-	for _, s := range me.Skills {
-		out = append(out, fmt.Sprintf("skill %s %s", s.Name, s.Level))
-	}
-	for _, a := range me.AbsentSkills {
-		out = append(out, "absent "+a.Name)
-	}
-	for _, c := range me.ConfirmedFacts {
-		out = append(out, fmt.Sprintf("fact %s %v", c.Text, c.Have))
-	}
-	sort.Strings(out)
-	return strings.Join(out, "; ")
 }
 
 func postSkills(t *testing.T, ts *httptest.Server, vacancyID int64, reqIndex int, have bool, chosen string) (map[string]any, int) {
@@ -100,14 +70,14 @@ func reqLine(resp map[string]any, idx int) map[string]any {
 	return nil
 }
 
-func reqVerdict(resp map[string]any, idx int) string {
-	v, _ := reqLine(resp, idx)["verdict"].(string)
-	return v
-}
-
 func reqNamedSkills(resp map[string]any, idx int) string {
 	names, _ := reqLine(resp, idx)["namedSkills"].([]any)
 	return fmt.Sprint(names)
+}
+
+func reqVerdict(resp map[string]any, idx int) string {
+	v, _ := reqLine(resp, idx)["verdict"].(string)
+	return v
 }
 
 func reqCounter(resp map[string]any) string {
@@ -117,87 +87,19 @@ func reqCounter(resp map[string]any) string {
 	return v
 }
 
-func TestSkillsDecision_RecordsTheAnswer(t *testing.T) {
-	for i, tc := range []struct {
-		name        string
-		skills      []candidate.Skill
-		absent      []candidate.AbsentSkill
-		req         reading.Requirement
-		have        bool
-		chosen      string
-		wantMe      string
-		wantVerdict string
-	}{
-		{name: "a known skill is added at Proficient",
-			req:  reading.Requirement{Text: "Golang expertise", Kind: "skill", Level: "required"},
-			have: true, wantMe: "skill Go Proficient", wantVerdict: "✓"},
-		{name: "only the chosen alternative is added",
-			req:    reading.Requirement{Text: "Go or Rust", Kind: "skill", Level: "required", Alts: []string{"Go", "Rust"}},
-			have:   true,
-			chosen: "Rust", wantMe: "skill Rust Proficient", wantVerdict: "✓"},
-		{name: "a requirement outside the vocabulary is confirmed as held",
-			req:  reading.Requirement{Text: "Strong communication skills", Kind: "skill", Level: "required"},
-			have: true, wantMe: "fact Strong communication skills true", wantVerdict: "✓"},
-		{name: "a requirement outside the vocabulary is confirmed as missing",
-			req:  reading.Requirement{Text: "Strong communication skills", Kind: "skill", Level: "required"},
-			have: false, wantMe: "fact Strong communication skills false", wantVerdict: "✕"},
-		{name: "a skill answered with minus moves to the absent list",
-			skills: []candidate.Skill{{Name: "Python", Level: "Expert"}},
-			req:    reading.Requirement{Text: "Python", Kind: "skill", Level: "required"},
-			have:   false, wantMe: "absent Python", wantVerdict: "✕"},
-		{name: "a skill answered with plus leaves the absent list",
-			absent: []candidate.AbsentSkill{{Name: "Docker"}},
-			req:    reading.Requirement{Text: "Docker", Kind: "skill", Level: "required"},
-			have:   true, wantMe: "skill Docker Proficient", wantVerdict: "✓"},
-		{name: "a chosen skill of a compound requirement is added alone",
-			req:    reading.Requirement{Text: "Docker and Kubernetes in production", Kind: "skill", Level: "required"},
-			have:   true,
-			chosen: "Docker", wantMe: "skill Docker Proficient", wantVerdict: "?"},
-		{name: "a compound requirement answered without a choice is confirmed as a whole",
-			req:    reading.Requirement{Text: "Docker and Kubernetes in production", Kind: "skill", Level: "required"},
-			have:   true,
-			wantMe: "fact Docker and Kubernetes in production true; skill Docker Proficient; skill Kubernetes Proficient", wantVerdict: "✓"},
-		{name: "a compound requirement answered with minus records every skill as absent",
-			req:    reading.Requirement{Text: "Docker and Kubernetes in production", Kind: "skill", Level: "required"},
-			have:   false,
-			wantMe: "absent Docker; absent Kubernetes; fact Docker and Kubernetes in production false", wantVerdict: "✕"},
-		{name: "a requirement naming one skill it cannot decide is confirmed too",
-			req:    reading.Requirement{Text: "Kubernetes in production", Kind: "skill", Level: "required"},
-			have:   true,
-			wantMe: "fact Kubernetes in production true; skill Kubernetes Proficient", wantVerdict: "✓"},
-		{name: "a chosen skill that is the only one named confirms the requirement",
-			req:    reading.Requirement{Text: "Kubernetes in production", Kind: "skill", Level: "required"},
-			have:   true,
-			chosen: "Kubernetes",
-			wantMe: "fact Kubernetes in production true; skill Kubernetes Proficient", wantVerdict: "✓"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			d := openTestDB(t)
-			if tc.skills != nil || tc.absent != nil {
-				saveMeSkills(t, d, tc.skills, tc.absent)
-			}
-			id := addVacancyWithReading(t, d, fmt.Sprintf("https://example.com/jobs/sk%d", i), "Role",
-				[]reading.Requirement{tc.req})
-			ts := newSkillsServer(t, d, nil)
+func TestSkillsDecision_addsSkillAndReturnsNotice(t *testing.T) {
+	d := openTestDB(t)
+	id := addVacancyWithReading(t, d, "https://example.com/jobs/sk1", "Role",
+		[]reading.Requirement{{Text: "Golang expertise", Kind: "skill", Level: "required"}})
+	ts := newSkillsServer(t, d, nil)
 
-			resp, status := postSkills(t, ts, id, 0, tc.have, tc.chosen)
-			if status != http.StatusOK {
-				t.Fatalf("POST /api/me/skills: status %d, body %v", status, resp)
-			}
-			if got := meSummary(t, d); got != tc.wantMe {
-				t.Errorf("My data: got %q, want %q", got, tc.wantMe)
-			}
-			if got := reqVerdict(resp, 0); got != tc.wantVerdict {
-				t.Errorf("verdict: got %q, want %q", got, tc.wantVerdict)
-			}
-			if notice, _ := resp["notice"].(string); notice == "" || notice == "Nothing new to add; your data is already up to date." {
-				t.Errorf("notice: %q — expected something added", notice)
-			}
-			wantCounter := map[string]string{"✓": "✓ 1 · ✕ 0 · ? 0", "✕": "✓ 0 · ✕ 1 · ? 0", "?": "Not checked yet"}[tc.wantVerdict]
-			if ct := reqCounter(resp); ct != wantCounter {
-				t.Errorf("requirements counter after the answer: got %q, want %q", ct, wantCounter)
-			}
-		})
+	resp, status := postSkills(t, ts, id, 0, true, "")
+	if status != http.StatusOK {
+		t.Fatalf("POST /api/me/skills: status %d, body %v", status, resp)
+	}
+	notice, _ := resp["notice"].(string)
+	if notice == "" || notice == "Nothing new to add; your data is already up to date." {
+		t.Errorf("notice: %q — expected something added", notice)
 	}
 }
 
@@ -212,9 +114,6 @@ func TestSkillsDecision_everyNamedSkillStaysAvailable(t *testing.T) {
 		t.Errorf("named skills after the first choice: got %q, want both", got)
 	}
 	second, _ := postSkills(t, ts, id, 0, true, "Kubernetes")
-	if got := meSummary(t, d); got != "skill Docker Proficient; skill Kubernetes Proficient" {
-		t.Errorf("My data after both choices: got %q, want both skills and no statement", got)
-	}
 	if notice, _ := second["notice"].(string); notice != `Added "Kubernetes" to your skills (level Proficient; change in your profile).` {
 		t.Errorf("notice of the second choice: %q", notice)
 	}
@@ -234,8 +133,60 @@ func TestSkillsDecision_secondAddDoesNotDuplicate(t *testing.T) {
 	if notice, _ := resp["notice"].(string); notice != "Nothing new to add; your data is already up to date." {
 		t.Errorf("second add notice: %q", notice)
 	}
-	if got := meSummary(t, d); got != "skill Docker Proficient" {
-		t.Errorf("My data after the second add: got %q, want one Docker skill", got)
+}
+
+func TestSkillsDecision_verdictAndCounterInResponse(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		req         reading.Requirement
+		chosen      string
+		wantVerdict string
+		wantCounter string
+	}{
+		{name: "single-skill plus gives verdict checked and counter",
+			req:         reading.Requirement{Text: "Go", Kind: "skill", Level: "required"},
+			wantVerdict: "✓", wantCounter: "✓ 1 · ✕ 0 · ? 0"},
+		{name: "chosen skill of compound requirement leaves verdict unchecked",
+			req:         reading.Requirement{Text: "Docker and Kubernetes in production", Kind: "skill", Level: "required"},
+			chosen:      "Docker",
+			wantVerdict: "?", wantCounter: "Not checked yet"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := openTestDB(t)
+			id := addVacancyWithReading(t, d, "https://example.com/jobs/vc"+tc.name, "Role",
+				[]reading.Requirement{tc.req})
+			ts := newSkillsServer(t, d, nil)
+			resp, _ := postSkills(t, ts, id, 0, true, tc.chosen)
+			if got := reqVerdict(resp, 0); got != tc.wantVerdict {
+				t.Errorf("verdict: got %q, want %q", got, tc.wantVerdict)
+			}
+			if got := reqCounter(resp); got != tc.wantCounter {
+				t.Errorf("counter: got %q, want %q", got, tc.wantCounter)
+			}
+		})
+	}
+}
+
+func TestSkillsDecision_unknownRequirementConfirmationIsSaved(t *testing.T) {
+	d := openTestDB(t)
+	id := addVacancyWithReading(t, d, "https://example.com/jobs/sk10", "Role",
+		[]reading.Requirement{{Text: "Strong communication skills", Kind: "skill", Level: "required"}})
+	ts := newSkillsServer(t, d, nil)
+
+	postSkills(t, ts, id, 0, true, "")
+
+	me, err := candidate.LoadMe(context.Background(), d)
+	if err != nil {
+		t.Fatalf("LoadMe: %v", err)
+	}
+	found := false
+	for _, f := range me.ConfirmedFacts {
+		if f.Text == "Strong communication skills" && f.Have {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("confirmed facts %v — want 'Strong communication skills' with Have true", me.ConfirmedFacts)
 	}
 }
 

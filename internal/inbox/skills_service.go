@@ -3,7 +3,6 @@ package inbox
 import (
 	"context"
 	"fmt"
-	"slices"
 	"strings"
 
 	"github.com/sifty-works/sifty-server/internal/apperr"
@@ -30,65 +29,20 @@ func applySkillsDecision(ctx context.Context, database *db.DB, vacancyID int64, 
 	if reqIndex < 0 || reqIndex >= len(vr.Requirements) {
 		return skillsResult{}, apperr.Invalid{Message: "Requirement index out of range."}
 	}
-	req := vr.Requirements[reqIndex]
-	named := skills.NamedSkillsFor(req)
-	toAct := named
-	if chosenSkill != "" {
-		toAct = []string{chosenSkill}
-	}
 	me, err := candidate.LoadMe(ctx, database)
 	if err != nil {
 		return skillsResult{}, err
 	}
-	var newSkills, newConfirmed []string
-	eqName := func(n string) func(candidate.Skill) bool {
-		return func(s candidate.Skill) bool { return strings.EqualFold(s.Name, n) }
-	}
-	eqAbsent := func(n string) func(candidate.AbsentSkill) bool {
-		return func(a candidate.AbsentSkill) bool { return strings.EqualFold(a.Name, n) }
-	}
-	addConfirmed := func() {
-		eqText := func(f candidate.ConfirmedFact) bool { return f.Text == req.Text }
-		if !slices.ContainsFunc(me.ConfirmedFacts, eqText) {
-			me.ConfirmedFacts = append(me.ConfirmedFacts, candidate.ConfirmedFact{Text: req.Text, Have: have})
-			newConfirmed = append(newConfirmed, req.Text)
-		}
-	}
-	if len(toAct) > 0 {
-		for _, name := range toAct {
-			if have {
-				if !slices.ContainsFunc(me.Skills, eqName(name)) {
-					me.Skills = append(me.Skills, candidate.Skill{Name: name, Level: "Proficient"})
-					newSkills = append(newSkills, name)
-				}
-				me.AbsentSkills = slices.DeleteFunc(me.AbsentSkills, eqAbsent(name))
-			} else {
-				if !slices.ContainsFunc(me.AbsentSkills, eqAbsent(name)) {
-					me.AbsentSkills = append(me.AbsentSkills, candidate.AbsentSkill{Name: name})
-					newSkills = append(newSkills, name)
-				}
-				me.Skills = slices.DeleteFunc(me.Skills, eqName(name))
-			}
-		}
-		if chosenSkill == "" || len(named) <= 1 {
-			upIdx := skills.NewIndex(me.Skills, me.AbsentSkills)
-			want := map[bool]string{true: "✓", false: "✕"}[have]
-			if skills.Decide(req, upIdx, me.ConfirmedFacts) != want {
-				addConfirmed()
-			}
-		}
-	} else {
-		addConfirmed()
-	}
-	if len(newSkills)+len(newConfirmed) > 0 {
-		if err := candidate.SaveMe(ctx, database, me); err != nil {
+	ans := skills.Answer(vr.Requirements[reqIndex], have, chosenSkill, me)
+	if len(ans.AddedSkills)+len(ans.AddedConfirmed) > 0 {
+		if err := candidate.SaveMe(ctx, database, ans.Me); err != nil {
 			return skillsResult{}, err
 		}
 		if err := fit.RecomputeVacancy(ctx, database, vacancyID, r); err != nil {
 			return skillsResult{}, err
 		}
 	}
-	return skillsResult{notice: buildNotice(newSkills, newConfirmed, have), added: len(newSkills)+len(newConfirmed) > 0}, nil
+	return skillsResult{notice: buildNotice(ans.AddedSkills, ans.AddedConfirmed, have), added: len(ans.AddedSkills)+len(ans.AddedConfirmed) > 0}, nil
 }
 
 func buildNotice(skillItems, confirmedItems []string, have bool) string {

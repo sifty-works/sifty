@@ -2,6 +2,7 @@ package fit
 
 import (
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode"
@@ -186,6 +187,15 @@ func Bucket(score int) string {
 		return "Partial"
 	}
 	return "Weak"
+}
+
+func TileFor(ts []Tile, criterion string) (Tile, bool) {
+	for i, td := range tiles {
+		if slices.Contains(td.criteria, criterion) && i < len(ts) {
+			return ts[i], true
+		}
+	}
+	return Tile{}, false
 }
 
 func verdict(cs []Criterion, names []string) string {
