@@ -4,6 +4,7 @@ Notable changes of Sifty, newest first. Versions follow `MAJOR.MINOR.PATCH`.
 
 ## Unreleased
 
+- The budget of the backend code is 18,500 lines instead of 16,000: the capabilities already delivered are 2,294 lines above the estimates they were given, and the estimates of the capabilities still to come were left as they are.
 - Web client 0.11.0: Settings has a Models section with the kind of model work and its provider, the providers with their cost and state, and the background work switches, the daily limit and the day's count; a settings file restored from a backup is named under the header.
 - Settings › Models has a server side: one address lists the providers with their cost and state, the provider chosen for each kind of model work, the paid-bulk permission, the pause switch, the daily limit of background calls and how many were made today, and changes any of them; the separate pause address is gone.
 - Web client 0.10.0: a tile of the Fits you band shows its converted amount on its own line under the value.

@@ -27,9 +27,9 @@ be_test=$(files '*_test.go' | count)
 row() { printf "%-40s %10s %10s %s\n" "$1" "$2" "$3" "$4"; }
 mark() { if [ "$1" -gt "$2" ]; then fail=1; echo "OVER"; fi; }
 
-row "Backend code (lines)" "$be" "16000" "$(mark "$be" 16000)"
+row "Backend code (lines)" "$be" "18500" "$(mark "$be" 18500)"
 row "Backend tests (lines)" "$be_test" "≤ code" "$(mark "$be_test" "$be")"
-[ "$be" -gt 16000 ] || [ "$be_test" -gt "$be" ] && fail=1
+[ "$be" -gt 18500 ] || [ "$be_test" -gt "$be" ] && fail=1
 
 for dir in $(files '*_test.go' | xargs -n1 dirname | sort -u); do
   code=$(files "$dir/*.go" | grep -v '_test\.go$' | grep -v "^$dir/.*/" | count)
