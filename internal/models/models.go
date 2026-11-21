@@ -26,6 +26,7 @@ type Response struct {
 
 var ErrOffline = errors.New("model calls are not available in offline mode")
 var ErrBulkOnPaid = errors.New("Bulk model work is not allowed on a paid provider. Enable 'Allow paid bulk work' first.")
+var ErrNoProvider = errors.New("no model provider configured")
 
 type WaitError struct {
 	RetryAfter time.Time

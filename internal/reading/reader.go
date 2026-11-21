@@ -253,6 +253,8 @@ func normRune(r rune) rune {
 	return r
 }
 
+func FoldString(s string) string { return fold(s).str }
+
 func fold(text string) foldedText {
 	var sb strings.Builder
 	var offsets []int

@@ -1,0 +1,20 @@
+{
+  "type": "object",
+  "properties": {
+    "facts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "field": {"type": "string", "enum": ["skill","language","targetRole","experience"]},
+          "value": {"type": "string"},
+          "quote": {"type": "string"}
+        },
+        "required": ["field","value","quote"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["facts"],
+  "additionalProperties": false
+}

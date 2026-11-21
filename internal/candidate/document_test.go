@@ -31,7 +31,7 @@ func newDocServerWithFiles(t *testing.T, d *db.DB, filesDir string) *httptest.Se
 		Logger:            logger,
 		BinaryUploadPaths: []string{"/api/me/photo", "/api/documents"},
 	}, func(mux *http.ServeMux) {
-		candidate.RegisterRoutes(mux, d, filesDir, logger, nil)
+		candidate.RegisterRoutes(mux, d, filesDir, logger, nil, nil)
 	})
 	ts := httptest.NewServer(h)
 	t.Cleanup(ts.Close)

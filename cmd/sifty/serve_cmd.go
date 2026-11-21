@@ -169,6 +169,14 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	recomputeFit()
 
 	r.Register(runner.Kind{
+		Name:   "analyze_document",
+		Resume: false,
+		Run: func(runCtx context.Context, j *runner.Job) error {
+			return runAnalyzeDocument(runCtx, j, database, gate.For("reading", "background"))
+		},
+	})
+
+	r.Register(runner.Kind{
 		Name:   "retention",
 		Resume: true,
 		Run: func(runCtx context.Context, j *runner.Job) error {
@@ -226,7 +234,7 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 			}
 			return m
 		}
-		registerAllRoutes(mux, logger, gate, database, time.Now, collectActive, sourceNames, rules, recomputeFit, filesDir, col)
+		registerAllRoutes(mux, logger, gate, database, time.Now, collectActive, sourceNames, rules, recomputeFit, filesDir, col, r)
 	})
 
 	srv := &http.Server{

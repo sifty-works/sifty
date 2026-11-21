@@ -319,7 +319,7 @@ func photoPath(filesDir string) string {
 	return filepath.Join(filesDir, "me_photo")
 }
 
-func RegisterRoutes(mux *http.ServeMux, database *db.DB, filesDir string, logger *slog.Logger, changed func()) {
+func RegisterRoutes(mux *http.ServeMux, database *db.DB, filesDir string, logger *slog.Logger, changed func(), enqueue func(kind, subject string) (int64, error)) {
 	notify := func() {
 		if changed != nil {
 			changed()
@@ -777,6 +777,36 @@ func RegisterRoutes(mux *http.ServeMux, database *db.DB, filesDir string, logger
 		w.Header().Set("Content-Type", ct)
 		w.WriteHeader(http.StatusOK)
 		w.Write(body)
+	})
+
+	server.Handle(mux, "POST /api/documents/{id}/analyze", logger, func(r *http.Request, _ struct{}) (DocumentItem, error) {
+		ctx := r.Context()
+		id, err := parseDocumentID(r)
+		if err != nil {
+			return DocumentItem{}, err
+		}
+		row, err := loadDocumentRow(ctx, database, id)
+		if err != nil {
+			return DocumentItem{}, err
+		}
+		if row.State == "unavailable" || strings.TrimSpace(row.Text) == "" {
+			return DocumentItem{}, apperr.Invalid{Message: "This document does not have text available for analysis."}
+		}
+		if err := updateDocumentAnalysing(ctx, database, id); err != nil {
+			return DocumentItem{}, fmt.Errorf("candidate: set analysing: %w", err)
+		}
+		if enqueue != nil {
+			enqueue("analyze_document", strconv.FormatInt(id, 10))
+		}
+		row, err = loadDocumentRow(ctx, database, id)
+		if err != nil {
+			return DocumentItem{}, err
+		}
+		return rowToItem(row), nil
+	})
+
+	server.Handle(mux, "GET /api/proposals", logger, func(r *http.Request, _ struct{}) (ProposalListResp, error) {
+		return listProposals(r.Context(), database)
 	})
 }
 

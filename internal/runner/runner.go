@@ -73,6 +73,42 @@ func (j *Job) Progress(done, total int, current string) {
 	j.r.writeProgress(j, done, total, current)
 }
 
+func (j *Job) SaveParams(ctx context.Context, params json.RawMessage) error {
+	_, err := j.r.db.ExecContext(ctx, `UPDATE job SET params=? WHERE id=?`, string(params), j.ID)
+	return err
+}
+
+func (r *Runner) AdoptInterrupted(kind, subject string) (int64, bool, error) {
+	var id int64
+	err := r.db.QueryRow(
+		`SELECT id FROM job WHERE kind=? AND subject=? AND state='interrupted' ORDER BY id DESC LIMIT 1`,
+		kind, subject,
+	).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, fmt.Errorf("runner: adopt interrupted: %w", err)
+	}
+	now := r.now().UTC().Format(time.RFC3339)
+	res, err := r.db.Exec(
+		`UPDATE job SET state='queued', not_before=?, updated=? WHERE id=? AND state='interrupted'`,
+		now, now, id,
+	)
+	if err != nil {
+		return 0, false, fmt.Errorf("runner: adopt interrupted: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, false, err
+	}
+	if n == 0 {
+		return 0, false, nil
+	}
+	r.signal()
+	return id, true, nil
+}
+
 func (j *Job) Lane(ctx context.Context, name string) (func(), error) {
 	return j.r.acquireLane(ctx, name)
 }

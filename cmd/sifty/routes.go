@@ -11,6 +11,7 @@ import (
 	"github.com/sifty-works/sifty-server/internal/fit"
 	"github.com/sifty-works/sifty-server/internal/inbox"
 	"github.com/sifty-works/sifty-server/internal/models"
+	"github.com/sifty-works/sifty-server/internal/runner"
 	"github.com/sifty-works/sifty-server/internal/server"
 )
 
@@ -26,12 +27,24 @@ func registerAllRoutes(
 	recomputeFit func(),
 	filesDir string,
 	col *collect.Collector,
+	r *runner.Runner,
 ) {
+	enqueue := func(kind, subject string) (int64, error) {
+		if r == nil {
+			return 0, nil
+		}
+		if id, ok, err := r.AdoptInterrupted(kind, subject); err != nil {
+			return 0, err
+		} else if ok {
+			return id, nil
+		}
+		return r.Enqueue(runner.Spec{Kind: kind, Subject: subject})
+	}
 	server.Handle(mux, "POST /api/providers/{name}/check", logger, models.CheckProviderHandler(gate))
 	server.Handle(mux, "GET /api/models", logger, models.ModelsHandler(gate))
 	server.Handle(mux, "PATCH /api/models", logger, models.PatchModelsHandler(gate))
 	inbox.RegisterRoutes(mux, database, now, logger, collectActive, sourceNames, rules, recomputeFit)
 	inbox.RegisterIndustryRoutes(mux, logger)
-	candidate.RegisterRoutes(mux, database, filesDir, logger, recomputeFit)
+	candidate.RegisterRoutes(mux, database, filesDir, logger, recomputeFit, enqueue)
 	col.RegisterRoutes(mux)
 }

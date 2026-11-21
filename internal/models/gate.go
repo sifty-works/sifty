@@ -70,7 +70,7 @@ func (c *gatedCall) Complete(ctx context.Context, r Request) (Response, error) {
 	cfg := c.gate.store.Get()
 	name := cfg.WorkProviderFor(c.kind)
 	if name == "" {
-		return Response{}, fmt.Errorf("no provider configured for %s", c.kind)
+		return Response{}, fmt.Errorf("%w for %s", ErrNoProvider, c.kind)
 	}
 	pc, ok := cfg.Providers[name]
 	if !ok {

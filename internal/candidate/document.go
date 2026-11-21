@@ -297,6 +297,21 @@ func deleteDocument(ctx context.Context, database *db.DB, filesDir string, id in
 	return nil
 }
 
+func DocumentText(ctx context.Context, database *db.DB, id int64) (string, bool, error) {
+	row, err := loadDocumentRow(ctx, database, id)
+	if err != nil {
+		if _, ok := err.(apperr.NotFound); ok {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	return row.Text, true, nil
+}
+
+func LoadProfileData(ctx context.Context, database *db.DB, profileID int64) (ProfileData, error) {
+	return loadProfileRow(ctx, database, profileID)
+}
+
 func setDocumentEvidence(ctx context.Context, database *db.DB, id int64, evidence bool) (DocumentItem, error) {
 	ev := 0
 	if evidence {
