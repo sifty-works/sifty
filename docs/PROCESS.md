@@ -99,7 +99,7 @@ Tests check behaviour through public boundaries, so the code behind those bounda
 - A test drives the HTTP application programming interface, a command, the store on a fixture database, or one of the interfaces `Fetcher`, `Model` and `Score`.
 - A test's name says the behaviour it checks. Test names contain no card names, card numbers, rule numbers or section numbers.
 - No test reads source files or checks that some code exists.
-- Tests use invented data and make no network request and no model call. Fakes stand behind the `Fetcher` and `Model` interfaces, and `sifty serve --offline` refuses both kinds of call. Behaviour that needs a job site is checked against recorded responses behind the fake `Fetcher`.
+- Tests use invented data and make no network request and no model call. Fakes stand behind the `Fetcher` and `Model` interfaces. Behaviour that needs a job site is checked against recorded responses behind the fake `Fetcher`.
 - `make check` runs every test, and tests are never selected by name.
 
 ## Budgets

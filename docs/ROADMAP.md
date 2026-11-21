@@ -18,4 +18,4 @@ The order in which Sifty is built. Each slice delivers behaviour the user can se
 
 ## Status
 
-Slices 1 to 6 are accepted. Slice 7 has the model foundation (providers, the per-kind choice, the dispatcher, the cost barrier, the call journal and the command-line providers), the import of earlier readings, the model reader and its background job, the requirements counter with the Requirements criterion at weight 0, What they ask with + and − on the server and in the web client, and its acceptance measure: a new vacancy text costs one model call and a change of profile costs none. Remaining in slice 7: What they offer, and Settings › Models in the web client.
+Slices 1 to 7 are accepted. Slice 7 was accepted on its own measure: a new vacancy text costs one model call and a change of profile costs none. Slice 8 is next.
