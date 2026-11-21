@@ -23,24 +23,6 @@ type ProfileData struct {
 	OtherRequirements  string        `json:"otherRequirements,omitempty"`
 }
 
-var inheritedFields = []string{
-	"compensation",
-	"engagement",
-	"hours",
-	"workModes",
-	"preferredLocations",
-	"targetIndustries",
-}
-
-func IsInheritable(field string) bool {
-	for _, f := range inheritedFields {
-		if f == field {
-			return true
-		}
-	}
-	return false
-}
-
 func Effective(p, base ProfileData) ProfileData {
 	out := p
 	if out.Compensation == nil {

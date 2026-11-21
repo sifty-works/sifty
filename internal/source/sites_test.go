@@ -143,17 +143,3 @@ func TestLoadSites_UnknownIndustryRenamesFile(t *testing.T) {
 		t.Errorf("error should mention 'unknown industry': %s", err)
 	}
 }
-
-func TestBoardIndustriesForURL_KnownBoardReturnsIndustries(t *testing.T) {
-	inds := source.BoardIndustriesForURL("https://web3.career/jobs/developer")
-	if len(inds) != 1 || inds[0] != "Web3" {
-		t.Errorf("web3.career industries: got %v, want [Web3]", inds)
-	}
-}
-
-func TestBoardIndustriesForURL_UnknownHostReturnsNil(t *testing.T) {
-	inds := source.BoardIndustriesForURL("https://unknown-board.example.com/jobs")
-	if inds != nil {
-		t.Errorf("unknown host: got %v, want nil", inds)
-	}
-}
